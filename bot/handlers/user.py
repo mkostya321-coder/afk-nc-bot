@@ -111,7 +111,10 @@ async def process_name(message: Message, state: FSMContext):
 
 @router.message(RegForm.tg_username)
 async def process_tg_username(message: Message, state: FSMContext):
-    await state.update_data(tg_username=message.text.strip())
+    raw = message.text.strip()
+# Убираем @ в начале и приводим к нижнему регистру
+clean = raw.lstrip("@").lower()
+await state.update_data(tg_username=clean)
     await state.set_state(RegForm.timezone)
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
