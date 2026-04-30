@@ -11,7 +11,7 @@ class AutoMenuMiddleware(BaseMiddleware):
         if isinstance(event, Message):
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
-            if event.text in ["📋 Профиль", "💼 Слоты", "❓ Помощь", "📝 Регистрация", "👥 Реферальная система"]:
+            if event.text in ["📋 Профиль", "💼 Слоты", "❓ Помощь", "📝 Регистрация", "👥 Реферальная система", "👥 Мои рефералы"]:
                 return await handler(event, data)
             state = data.get("state")
             if state and await state.get_state():
