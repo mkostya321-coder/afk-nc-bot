@@ -8,5 +8,6 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="❓ Помощь")
     builder.button(text="📝 Регистрация")
     builder.button(text="👥 Реферальная система")
-    builder.adjust(2, 2, 1)
+    builder.button(text="👥 Мои рефералы")          # ← новая кнопка
+    builder.adjust(2, 2, 2)
     return builder.as_markup(resize_keyboard=True)
