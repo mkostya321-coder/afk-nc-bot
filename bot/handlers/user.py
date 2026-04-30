@@ -1,19 +1,25 @@
+import asyncio
+import sqlite3
+from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, ReplyKeyboardRemove
-from datetime import datetime
-
-from bot.config import MANAGER_USERNAME
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from bot.config import MANAGER_USERNAME, DB_PATH
 from bot.database import (
     add_user, get_user, get_user_by_username,
-    is_registered, update_user_field
+    is_registered, update_user_field, is_blocked
 )
 from bot.keyboards.reply import main_menu_keyboard
+from bot.handlers.slots import active_slots  # для команды /job
 
 router = Router()
 
+REFERRAL_DEADLINE_DAYS = 28
+
+# Состояния регистрации
 class RegForm(StatesGroup):
     name = State()
     tg_username = State()
@@ -23,6 +29,7 @@ class RegForm(StatesGroup):
     phone_card = State()
     bank = State()
 
+# ---------- Команда /start ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -32,6 +39,7 @@ async def cmd_start(message: Message):
         reply_markup=main_menu_keyboard()
     )
 
+# ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
 async def menu_profile(message: Message):
     user = get_user(message.from_user.id)
@@ -53,7 +61,18 @@ async def menu_profile(message: Message):
         yandex = user.get("yandex_passed", 0) or 0
         google = user.get("google_passed", 0) or 0
         gis = user.get("gis_passed", 0) or 0
-        ref_status = "выполнено" if (yandex >= 10 and (google + gis) >= 15) else "в процессе"
+        if yandex >= 10 and (google + gis) >= 15:
+            ref_status = "выполнено"
+        else:
+            # проверка 28 дней
+            if user.get("registered_at"):
+                deadline = datetime.fromisoformat(user["registered_at"]) + timedelta(days=REFERRAL_DEADLINE_DAYS)
+                if datetime.now() > deadline:
+                    ref_status = "❌ Не выполнен"
+                else:
+                    ref_status = "в процессе"
+            else:
+                ref_status = "в процессе"
 
     text = (
         f"📋 Профиль\n\n"
@@ -79,6 +98,7 @@ async def menu_profile(message: Message):
     )
     await message.answer(text)
 
+# ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
 async def menu_help(message: Message):
     text = (
@@ -92,6 +112,7 @@ async def menu_help(message: Message):
     )
     await message.answer(text, reply_markup=main_menu_keyboard())
 
+# ---------- Регистрация ----------
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
@@ -112,9 +133,8 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(RegForm.tg_username)
 async def process_tg_username(message: Message, state: FSMContext):
     raw = message.text.strip()
-# Убираем @ в начале и приводим к нижнему регистру
-clean = raw.lstrip("@").lower()
-await state.update_data(tg_username=clean)
+    clean = raw.lstrip("@").lower()
+    await state.update_data(tg_username=clean)
     await state.set_state(RegForm.timezone)
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
@@ -167,10 +187,145 @@ async def process_bank(message: Message, state: FSMContext):
     update_user_field(user_id, "referrer", data["referrer"])
     update_user_field(user_id, "phone_card", data["phone_card"])
     update_user_field(user_id, "bank", message.text.strip())
-    update_user_field(user_id, "registered_at", datetime.now())
+    update_user_field(user_id, "registered_at", datetime.now().isoformat())
     await state.clear()
     await message.answer(
         "✅ Отлично, регистрация успешно пройдена! Используйте кнопки ниже для навигации.\n"
         "Хорошей работы и больших заработков!",
         reply_markup=main_menu_keyboard()
     )
+
+# ---------- /job – показать активные слоты ----------
+@router.message(Command("job"))
+@router.message(F.text == "💼 Слоты")
+async def cmd_job(message: Message):
+    if not active_slots:
+        await message.answer(
+            "😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\n"
+            "С уважением команда New Chapter."
+        )
+        return
+    lines = ["Открытые слоты:"]
+    for msg_id, data in active_slots.items():
+        lines.append(f"🔸 {data['command']} {data['price']} (ID: {msg_id})")
+    lines.append(f"\nДля получения слота напишите менеджеру @{MANAGER_USERNAME}")
+    await message.answer("\n".join(lines))
+
+# ---------- 👥 Мои рефералы ----------
+@router.message(F.text == "👥 Мои рефералы")
+async def show_my_referrals(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user or not user.get("name"):
+        await message.answer("❌ Вы не зарегистрированы.")
+        return
+
+    tg_username = user.get("tg_username")
+    if not tg_username:
+        await message.answer("❌ У вас не указан Telegram username. Заполните профиль.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT name, tg_username, registered_at, yandex_passed, google_passed, gis_passed "
+        "FROM users WHERE LOWER(referrer) = ?",
+        (tg_username.lower(),)
+    )
+    referrals = cur.fetchall()
+    conn.close()
+
+    if not referrals:
+        await message.answer("👥 У вас пока нет рефералов.")
+        return
+
+    now = datetime.now()
+    data = []
+    for ref in referrals:
+        name = ref["name"] or "Без имени"
+        username = ref["tg_username"] or "unknown"
+        reg_time_str = ref["registered_at"]
+        if reg_time_str:
+            try:
+                reg_time = datetime.fromisoformat(reg_time_str)
+            except:
+                reg_time = now
+            deadline = reg_time + timedelta(days=REFERRAL_DEADLINE_DAYS)
+            remaining = (deadline - now).days
+        else:
+            remaining = 0
+            deadline = now
+
+        yandex = ref["yandex_passed"] or 0
+        google = ref["google_passed"] or 0
+        gis = ref["gis_passed"] or 0
+
+        # Статусы
+        if yandex >= 10 and (google + gis) >= 15:
+            status = "✅ Выполнен"
+        elif remaining <= 0:
+            status = "❌ Не выполнен"
+        else:
+            status = "🚀 В процессе"
+
+        data.append((name, username, status))
+
+    PAGE_SIZE = 10
+    total_pages = (len(data) + PAGE_SIZE - 1) // PAGE_SIZE
+
+    # Сохраняем данные в FSM
+    await state.update_data(ref_page=0, ref_data=data, ref_total_pages=total_pages)
+
+    # Клавиатура первой страницы
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Страница 1", callback_data="ignore")
+    if total_pages > 1:
+        kb.button(text="Страница 2 →", callback_data="ref_nav:2")
+    kb.adjust(1)
+
+    text = build_page_text(data, 0, PAGE_SIZE)
+    await message.answer(text, reply_markup=kb.as_markup())
+
+
+def build_page_text(data, page, page_size):
+    start = page * page_size
+    end = start + page_size
+    page_items = data[start:end]
+    lines = [f"<b>👥 Мои рефералы (стр. {page+1})</b>"]
+    for name, username, status in page_items:
+        lines.append(f"{name} (@{username}) – {status}")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data.startswith("ref_nav:"))
+async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1]) - 1  # 0‑based
+    data_state = await state.get_data()
+    ref_data = data_state.get("ref_data", [])
+    total_pages = data_state.get("ref_total_pages", 1)
+
+    if not ref_data:
+        await callback.answer("Нет данных.", show_alert=True)
+        return
+
+    # Формируем кнопки навигации
+    buttons = []
+    if page > 0:
+        buttons.append(
+            InlineKeyboardButton(text=f"← Страница {page}", callback_data=f"ref_nav:{page}")
+        )
+    buttons.append(
+        InlineKeyboardButton(text=f"Страница {page+1}", callback_data="ignore")
+    )
+    if page < total_pages - 1:
+        buttons.append(
+            InlineKeyboardButton(text=f"Страница {page+2} →", callback_data=f"ref_nav:{page+2}")
+        )
+
+    keyboard = InlineKeyboardBuilder()
+    keyboard.row(*buttons)
+
+    text = build_page_text(ref_data, page, 10)
+    await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
+    await callback.answer()
