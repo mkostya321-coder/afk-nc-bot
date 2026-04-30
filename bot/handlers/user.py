@@ -71,7 +71,7 @@ async def menu_profile(message: Message):
         f"ВК: {user['vk_passed']}\n"
         f"Отзовик: {user['otzovik_passed']}\n"
         f"Doctoru: {user['doctoru_passed']}\n\n"
-        f"ℹ️ Статистика обновляется ежедневно в 15:00 МСК.\n\n"
+        f"ℹ️ Статистика обновляется каждый день в 10:00 и 20:00 МСК.\n\n"
         f"👥 Рефералка: {referrer if referrer != '0' else 'нет'} ({ref_status})\n\n"
         f"💳 Реквизиты\n"
         f"Номер телефона/карты: {user['phone_card']}\n"
