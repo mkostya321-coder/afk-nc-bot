@@ -57,11 +57,13 @@ def get_user(user_id: int) -> Optional[Dict[str, Any]]:
         row = cur.fetchone()
         return dict(row) if row else None
 
-def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+def get_user_by_username(username: str):
+    # Приводим к нижнему регистру без @ для единообразия
+    clean = username.lstrip("@").lower()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE tg_username = ?", (username,))
+        cur.execute("SELECT * FROM users WHERE LOWER(tg_username) = ?", (clean,))
         row = cur.fetchone()
         return dict(row) if row else None
 
