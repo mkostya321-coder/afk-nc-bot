@@ -33,55 +33,35 @@ async def cmd_helpadm(message: Message):
         "/userblock <user_id> — Заблокировать/разблокировать\n"
         "/useredit <user_id> <поле> <значение>\n"
         "Поля: payout, earned, phone, bank\n\n"
+        "⚠️ <b>Осторожно! Сброс баланса:</b>\n"
+        "/resetbalance — Обнулить выплаты и счётчики у ВСЕХ пользователей\n\n"
         "ℹ️ <b>Для пользователей:</b> /help"
     )
     await message.answer(text)
 
-@router.message(Command("userblock"))
-async def user_block(message: Message):
+@router.message(Command("resetbalance"))
+async def reset_balance(message: Message):
     if not is_admin(message.from_user.id):
         return
+    import sqlite3
+    from bot.config import DB_PATH
     try:
-        _, user_id = message.text.split()
-        user_id = int(user_id)
-    except:
-        await message.answer("Использование: /userblock <user_id>")
-        return
-    new_status = toggle_block(user_id)
-    if new_status is None:
-        await message.answer("❌ Пользователь не найден.")
-    else:
-        status_text = "заблокирован" if new_status else "разблокирован"
-        await message.answer(f"✅ Пользователь {user_id} {status_text}.")
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE users SET
+                    payout = 0,
+                    yandex_passed = 0,
+                    google_passed = 0,
+                    gis_passed = 0,
+                    avito_passed = 0,
+                    vk_passed = 0,
+                    otzovik_passed = 0,
+                    doctoru_passed = 0
+            """)
+            conn.commit()
+        await message.answer("✅ Баланс и счётчики всех пользователей сброшены.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
-@router.message(Command("useredit"))
-async def user_edit(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    parts = message.text.split(maxsplit=3)
-    if len(parts) < 4:
-        await message.answer(
-            "Использование: /useredit <user_id> <field> <value>\n"
-            "Поля: payout, earned, phone, bank"
-        )
-        return
-    try:
-        user_id = int(parts[1])
-    except:
-        await message.answer("❌ Неверный user_id.")
-        return
-    field = parts[2].lower()
-    value = parts[3]
-
-    if field == "payout":
-        update_user_field(user_id, "payout", int(value))
-    elif field == "earned":
-        update_user_field(user_id, "total_earned", int(value))
-    elif field == "phone":
-        update_user_field(user_id, "phone_card", value)
-    elif field == "bank":
-        update_user_field(user_id, "bank", value)
-    else:
-        await message.answer("Неизвестное поле. Допустимые: payout, earned, phone, bank")
-        return
-    await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
+# Остальные админские команды (/userblock, /useredit, /slots, /close, /closeall) оставьте без изменений (они уже были в вашем admin.py)
