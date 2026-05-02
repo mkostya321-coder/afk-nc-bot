@@ -1,3 +1,4 @@
+from datetime import datetime   # ← обязательный импорт
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -11,7 +12,6 @@ router = Router()
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# ---------- /helpadm ----------
 @router.message(Command("helpadm"))
 async def cmd_helpadm(message: Message):
     if not is_admin(message.from_user.id):
@@ -59,7 +59,6 @@ async def cmd_info(message: Message):
         await message.answer(f"❌ Пользователь с username '{username}' не найден.")
         return
 
-    # Формируем профиль для вывода
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
     days, seconds = delta.days, delta.seconds
@@ -79,7 +78,7 @@ async def cmd_info(message: Message):
             ref_status = "в процессе"
 
     text = (
-        f"🕵️ Профиль пользователя @{username}:\n\n"
+        f"🕵️ Профиль пользователя @{user.get('tg_username', username)}:\n\n"
         f"Имя: {user['name']}\n"
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n"
@@ -99,6 +98,6 @@ async def cmd_info(message: Message):
     )
     await message.answer(text)
 
-# ---------- Остальные админские команды (без изменений) ----------
-# Здесь должны быть обработчики /userblock, /useredit, /slots, /close, /closeall, /resetbalance
-# Они уже есть в вашем admin.py, поэтому не дублирую. Если нужны полные версии, дайте знать.
+# ---------- Остальные админские команды ----------
+# Здесь должны быть /userblock, /useredit, /slots, /close, /closeall, /resetbalance
+# Если их нет в вашем admin.py, скопируйте их из предыдущих версий.
