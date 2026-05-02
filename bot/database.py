@@ -62,7 +62,11 @@ def get_user_by_username(username: str) -> Optional[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE LOWER(tg_username) = ?", (clean,))
+        # Ищем и с @, и без
+        cur.execute(
+            "SELECT * FROM users WHERE LOWER(tg_username) IN (?, ?)",
+            (clean, f"@{clean}")
+        )
         row = cur.fetchone()
         return dict(row) if row else None
 
