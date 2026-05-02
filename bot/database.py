@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from .config import DB_PATH
 
 def init_db():
@@ -49,7 +49,7 @@ def update_user_field(user_id: int, field: str, value):
         cur.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
         conn.commit()
 
-def get_user(user_id: int) -> Optional[Dict[str, Any]]:
+def get_user(user_id: int) -> Optional[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -57,8 +57,7 @@ def get_user(user_id: int) -> Optional[Dict[str, Any]]:
         row = cur.fetchone()
         return dict(row) if row else None
 
-def get_user_by_username(username: str):
-    # Приводим к нижнему регистру без @ для единообразия
+def get_user_by_username(username: str) -> Optional[dict]:
     clean = username.lstrip("@").lower()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -75,7 +74,7 @@ def is_blocked(user_id: int) -> bool:
     user = get_user(user_id)
     return user.get("blocked", 0) == 1 if user else False
 
-def toggle_block(user_id: int) -> Optional[int]:
+def toggle_block(user_id: int):
     user = get_user(user_id)
     if not user:
         return None
