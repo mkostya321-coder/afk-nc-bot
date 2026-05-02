@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import logging
-from datetime import datetime, timedelta    # ← добавлен timedelta
+from datetime import datetime, timedelta    # ← обязательно есть timedelta
 import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
