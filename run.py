@@ -75,6 +75,9 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
+    # Закрываем сессию при остановке
+    dp.shutdown.register(lambda: bot.session.close())
+
     dp.message.middleware(AutoMenuMiddleware())
 
     dp.include_router(user.router)
