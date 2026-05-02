@@ -1,4 +1,3 @@
-import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 from aiogram import Router, F
@@ -21,7 +20,6 @@ REFERRAL_DEADLINE_DAYS = 28
 
 class RegForm(StatesGroup):
     name = State()
-    tg_username = State()
     timezone = State()
     city = State()
     referrer = State()
@@ -63,7 +61,6 @@ async def menu_profile(message: Message):
         if yandex >= 10 and (google + gis) >= 15:
             ref_status = "выполнено"
         else:
-            # проверка 28 дней
             if user.get("registered_at"):
                 try:
                     deadline = datetime.fromisoformat(user["registered_at"]) + timedelta(days=REFERRAL_DEADLINE_DAYS)
@@ -129,17 +126,26 @@ async def start_registration(message: Message, state: FSMContext):
 @router.message(RegForm.name)
 async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
-    await state.set_state(RegForm.tg_username)
-    await message.answer("2. Ваш User в TG?\n(Напишите ваш username, например @durov)")
 
-@router.message(RegForm.tg_username)
-async def process_tg_username(message: Message, state: FSMContext):
-    raw = message.text.strip()
-    clean = raw.lstrip("@").lower()
-    await state.update_data(tg_username=clean)
+    # Проверяем, есть ли у пользователя username в Telegram
+    tg_username = message.from_user.username
+    if not tg_username:
+        await message.answer(
+            "❌ У вас не установлен username в Telegram.\n"
+            "Пожалуйста, перейдите в Настройки Telegram → Изменить профиль и задайте имя пользователя (username).\n"
+            "После этого вернитесь сюда и снова нажмите /reg или кнопку «📝 Регистрация»."
+        )
+        await state.clear()
+        return
+
+    # Сохраняем очищенный username (без @, в нижнем регистре)
+    clean_username = tg_username.lstrip("@").lower()
+    await state.update_data(tg_username=clean_username)
+    await message.answer(f"✅ Ваш username: @{tg_username} — записан!")
     await state.set_state(RegForm.timezone)
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
+# ---------- Остальные шаги регистрации (timezone, city, referrer, phone_card, bank) без изменений ----------
 @router.message(RegForm.timezone)
 async def process_timezone(message: Message, state: FSMContext):
     await state.update_data(timezone=message.text.strip())
@@ -213,7 +219,7 @@ async def cmd_job(message: Message):
     lines.append(f"\nДля получения слота напишите менеджеру @{MANAGER_USERNAME}")
     await message.answer("\n".join(lines))
 
-# ---------- 👥 Мои рефералы ----------
+# ---------- 👥 Мои рефералы (без изменений) ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -290,7 +296,7 @@ def build_page_text(data, page, page_size):
     start = page * page_size
     end = start + page_size
     page_items = data[start:end]
-    lines = [f"<b>👥 Мои рефералы (стр. {page+1})</b>"]
+    lines = [f"👥 Мои рефералы (стр. {page+1})"]
     for name, username, status in page_items:
         lines.append(f"{name} (@{username}) – {status}")
     return "\n".join(lines)
