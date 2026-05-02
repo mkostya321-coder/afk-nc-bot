@@ -1,5 +1,7 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from bot.keyboards.reply import main_menu_keyboard
 
 router = Router()
 
@@ -20,4 +22,46 @@ async def referral_info(message: Message):
         "   • Приглашённый получает 200 рублей\n\n"
         "📅 Выплата производится в ближайшую среду или четверг (день зарплаты) после фиксации выполнения всех условий."
     )
-    await message.answer(text)
+
+    # Инлайн‑кнопки
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔙 Назад", callback_data="referral:back")
+    kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
+    kb.adjust(2)
+
+    await message.answer(text, reply_markup=kb.as_markup())
+
+
+# Обработчик нажатий на инлайн‑кнопки
+@router.callback_query(F.data == "referral:back")
+async def referral_back(callback: CallbackQuery):
+    await callback.message.delete()   # убираем сообщение с кнопками
+    await callback.message.answer(
+        "👋 Главное меню",
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "referral:invite")
+async def referral_invite(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    # Получаем tg_username пользователя из базы
+    from bot.database import get_user
+    user = get_user(user_id)
+    username = user.get("tg_username") if user else None
+    if not username:
+        await callback.answer("❌ У вас не указан Telegram username. Заполните профиль.", show_alert=True)
+        return
+
+    invite_text = (
+        "Привет.\n"
+        "Приглашаю в бот @ncjobbot. Схема такая:\n"
+        "Ты регистрируешься, указываешь мой юзернейм: **" + username + "**.\n"
+        "Получаешь бонус 200 рублей (один раз), когда сделаешь норму: 10 отзывов на Яндекс + 15 на Google или 2ГИС.\n"
+        "Все что нужно делать просить знакомых оставлять отзывы. Ты сам просишь своих друзей писать отзывы. Даёшь им готовый текст и ссылку — они оставляют, а платят тебе.\n"
+        "Всё просто. За каждого друга — свои деньги. Бот надёжный.\n\n"
+        "Найди @ncjobbot в Telegram и вводи мой юзернейм при старте."
+    )
+    await callback.message.answer(invite_text)
+    await callback.answer("Текст приглашения скопирован в чат.", show_alert=True)
