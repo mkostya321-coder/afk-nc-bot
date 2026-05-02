@@ -75,8 +75,10 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Закрываем сессию при остановке
-    dp.shutdown.register(lambda: bot.session.close())
+    # Корректное закрытие асинхронной сессии
+    async def close_session():
+        await bot.session.close()
+    dp.shutdown.register(close_session)
 
     dp.message.middleware(AutoMenuMiddleware())
 
