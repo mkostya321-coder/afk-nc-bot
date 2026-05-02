@@ -13,7 +13,6 @@ from .database import get_user_by_username
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
-# Расценки за один отзыв
 PRICES = {
     "яндекс": 150,
     "google": 50,
@@ -21,11 +20,10 @@ PRICES = {
     "авито": 700,
     "вк": 50,
     "отзовик": 100,
-    "доктору": 100,   # включая docto.ru
+    "доктору": 100,
 }
 
 async def update_stats_from_sheet():
-    """Обновляет статистику из Google Таблиц в 10:00 и 20:00 МСК."""
     while True:
         now = datetime.now(moscow_tz)
         target_times = [
@@ -38,7 +36,6 @@ async def update_stats_from_sheet():
         await asyncio.sleep(sleep_seconds)
 
         try:
-            # Определяем путь к JSON-ключу
             creds_path = "/data/google_key.json"
             if not os.path.exists(creds_path):
                 creds_path = "google_key.json"
@@ -57,7 +54,6 @@ async def update_stats_from_sheet():
 
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
-                # 1. Обнуляем счётчики всех пользователей
                 cur.execute(
                     "UPDATE users SET yandex_passed=0, google_passed=0, "
                     "gis_passed=0, avito_passed=0, vk_passed=0, "
@@ -65,15 +61,14 @@ async def update_stats_from_sheet():
                 )
                 conn.commit()
 
-                # 2. Собираем актуальные счётчики из таблицы
                 for row in records[1:]:
                     if len(row) < 6:
                         continue
-                    platform = row[0].strip().lower()   # столбец A
-                    status = row[4].strip().lower()     # столбец E
-                    executor = row[5].strip()           # столбец F
+                    platform = row[0].strip().lower()
+                    status = row[4].strip().lower()
+                    executor = row[5].strip()
 
-                    # Очистка: убираем @ и приводим к нижнему регистру
+                    # очистка: убираем @ и в нижний регистр
                     executor = executor.lstrip("@").lower()
 
                     if status != "опубликован":
@@ -86,7 +81,6 @@ async def update_stats_from_sheet():
                         continue
                     user_id = user["user_id"]
 
-                    # Увеличиваем нужный счётчик
                     if platform == "яндекс":
                         cur.execute("UPDATE users SET yandex_passed = yandex_passed + 1 WHERE user_id = ?", (user_id,))
                     elif platform == "google":
@@ -104,7 +98,7 @@ async def update_stats_from_sheet():
 
                 conn.commit()
 
-                # 3. Пересчитываем "к выплате" для каждого пользователя
+                # пересчитываем "к выплате"
                 cur.execute(
                     "SELECT user_id, yandex_passed, google_passed, gis_passed, "
                     "avito_passed, vk_passed, otzovik_passed, doctoru_passed FROM users"
@@ -123,7 +117,7 @@ async def update_stats_from_sheet():
                     cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
                 conn.commit()
 
-                # 4. Проверяем реферальные условия и добавляем бонус (если ещё не выплачен)
+                # реферальные бонусы
                 cur.execute(
                     "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
                     "FROM users WHERE referrer != '0'"
@@ -134,16 +128,11 @@ async def update_stats_from_sheet():
                         cur.execute("SELECT referral_bonus_paid FROM users WHERE user_id = ?", (user_id,))
                         paid = cur.fetchone()[0]
                         if not paid:
-                            # Бонус приглашённому +200
                             cur.execute("UPDATE users SET payout = payout + 200 WHERE user_id = ?", (user_id,))
                             cur.execute("UPDATE users SET referral_bonus_paid = 1 WHERE user_id = ?", (user_id,))
-                            # Бонус пригласившему +450
                             ref_user = get_user_by_username(referrer)
                             if ref_user:
-                                cur.execute(
-                                    "UPDATE users SET payout = payout + 450 WHERE user_id = ?",
-                                    (ref_user["user_id"],)
-                                )
+                                cur.execute("UPDATE users SET payout = payout + 450 WHERE user_id = ?", (ref_user["user_id"],))
                 conn.commit()
 
         except Exception as e:
