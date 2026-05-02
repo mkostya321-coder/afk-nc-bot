@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta    # ← добавлен timedelta
 import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -68,7 +68,6 @@ async def update_stats_from_sheet():
                     status = row[4].strip().lower()
                     executor = row[5].strip()
 
-                    # очистка: убираем @ и в нижний регистр
                     executor = executor.lstrip("@").lower()
 
                     if status != "опубликован":
@@ -98,7 +97,6 @@ async def update_stats_from_sheet():
 
                 conn.commit()
 
-                # пересчитываем "к выплате"
                 cur.execute(
                     "SELECT user_id, yandex_passed, google_passed, gis_passed, "
                     "avito_passed, vk_passed, otzovik_passed, doctoru_passed FROM users"
@@ -117,7 +115,6 @@ async def update_stats_from_sheet():
                     cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
                 conn.commit()
 
-                # реферальные бонусы
                 cur.execute(
                     "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
                     "FROM users WHERE referrer != '0'"
