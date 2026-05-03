@@ -2,14 +2,12 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.keyboards.reply import main_menu_keyboard
+from bot.database import get_user
 
 router = Router()
 
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
-    if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
     text = (
         "📢 Реферальная система\n\n"
         "👥 Как участвовать?\n"
@@ -26,7 +24,6 @@ async def referral_info(message: Message):
         "📅 Выплата производится в ближайшую среду или четверг (день зарплаты) после фиксации выполнения всех условий."
     )
 
-    # Инлайн‑кнопки
     kb = InlineKeyboardBuilder()
     kb.button(text="🔙 Назад", callback_data="referral:back")
     kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
@@ -34,23 +31,15 @@ async def referral_info(message: Message):
 
     await message.answer(text, reply_markup=kb.as_markup())
 
-
-# Обработчик нажатий на инлайн‑кнопки
 @router.callback_query(F.data == "referral:back")
 async def referral_back(callback: CallbackQuery):
-    await callback.message.delete()   # убираем сообщение с кнопками
-    await callback.message.answer(
-        "👋 Главное меню",
-        reply_markup=main_menu_keyboard()
-    )
+    await callback.message.delete()
+    await callback.message.answer("👋 Главное меню", reply_markup=main_menu_keyboard())
     await callback.answer()
-
 
 @router.callback_query(F.data == "referral:invite")
 async def referral_invite(callback: CallbackQuery):
     user_id = callback.from_user.id
-    # Получаем tg_username пользователя из базы
-    from bot.database import get_user
     user = get_user(user_id)
     username = user.get("tg_username") if user else None
     if not username:
