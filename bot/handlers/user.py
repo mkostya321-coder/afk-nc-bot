@@ -1,5 +1,4 @@
 import sqlite3
-import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -16,7 +15,6 @@ from bot.keyboards.reply import main_menu_keyboard
 from bot.handlers.slots import active_slots
 
 router = Router()
-logger = logging.getLogger(__name__)
 
 REFERRAL_DEADLINE_DAYS = 28
 
@@ -42,8 +40,8 @@ async def cmd_start(message: Message):
 @router.message(F.text == "📋 Профиль")
 async def menu_profile(message: Message):
     if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
+        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
         await message.answer("❌ Вы ещё не зарегистрированы. Используйте кнопку «📝 Регистрация».")
@@ -107,8 +105,8 @@ async def menu_profile(message: Message):
 @router.message(Command("myotz"))
 async def cmd_myotz(message: Message):
     if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
+        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
         await message.answer("❌ Вы не зарегистрированы.")
@@ -129,6 +127,7 @@ async def cmd_myotz(message: Message):
 # ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
 async def menu_help(message: Message):
+    # Помощь доступна даже заблокированным
     text = (
         "🆘 Доступные команды:\n"
         "/start – Главное меню\n"
@@ -146,8 +145,8 @@ async def menu_help(message: Message):
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
+        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        return
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
     if is_registered(user_id):
@@ -238,8 +237,8 @@ async def process_bank(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Слоты")
 async def cmd_job(message: Message):
     if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
+        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        return
     if not active_slots:
         await message.answer(
             "😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\n"
@@ -256,8 +255,8 @@ async def cmd_job(message: Message):
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
-    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
-    return
+        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        return
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user or not user.get("name"):
