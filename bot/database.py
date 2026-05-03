@@ -24,7 +24,7 @@ def init_db():
                 referrer TEXT,
                 referral_bonus_paid INTEGER DEFAULT 0,
 
-                -- периодические счётчики (сбрасываются)
+                -- периодические счётчики (сбрасываются /resetbalance)
                 yandex_passed INTEGER DEFAULT 0,
                 google_passed INTEGER DEFAULT 0,
                 gis_passed INTEGER DEFAULT 0,
@@ -33,7 +33,7 @@ def init_db():
                 otzovik_passed INTEGER DEFAULT 0,
                 doctoru_passed INTEGER DEFAULT 0,
 
-                -- общие счётчики (не сбрасываются)
+                -- общие счётчики (никогда не сбрасываются)
                 yandex_total INTEGER DEFAULT 0,
                 google_total INTEGER DEFAULT 0,
                 gis_total INTEGER DEFAULT 0,
@@ -73,6 +73,7 @@ def get_user_by_username(username: str) -> Optional[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
+        # Ищем и с @, и без
         cur.execute(
             "SELECT * FROM users WHERE LOWER(tg_username) IN (?, ?)",
             (clean, f"@{clean}")
