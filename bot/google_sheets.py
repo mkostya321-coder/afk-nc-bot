@@ -123,13 +123,12 @@ async def update_stats_from_sheet_once():
                 )
                 # К выплате = периодический заработок
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
-                # Заработано за всё время = старое + новое (добавляем, не перезаписываем)
+                # Заработано за всё время = старое + новое
                 old_total = user_row[8] or 0
                 cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
-
             conn.commit()
 
-            # Реферальные бонусы (как раньше)
+            # Реферальные бонусы
             cur.execute(
                 "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
                 "FROM users WHERE referrer != '0'"
@@ -149,3 +148,4 @@ async def update_stats_from_sheet_once():
 
     except Exception as e:
         logger.error(f"Ошибка при обновлении из Google Таблицы: {e}")
+        raise
