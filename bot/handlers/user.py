@@ -81,7 +81,7 @@ async def menu_profile(message: Message):
         f"С нами уже: {time_str}\n"
         f"К выплате ср/чт: {user['payout']}₽\n"
         f"Заработано за всё время: {user['total_earned']}₽\n\n"
-        f"📊 Статистика по слотам:\n"
+        f"📊 Статистика (текущий период):\n"
         f"Яндекс: {user['yandex_passed']}\n"
         f"Google: {user['google_passed']}\n"
         f"2ГИС: {user['gis_passed']}\n"
@@ -93,7 +93,28 @@ async def menu_profile(message: Message):
         f"👥 Рефералка: {referrer if referrer != '0' else 'нет'} ({ref_status})\n\n"
         f"💳 Реквизиты\n"
         f"Номер телефона/карты: {user['phone_card']}\n"
-        f"Банк: {user['bank']}"
+        f"Банк: {user['bank']}\n\n"
+        f"Чтобы посмотреть общие отзывы за всё время, используйте /myotz"
+    )
+    await message.answer(text)
+
+# ---------- /myotz ----------
+@router.message(Command("myotz"))
+async def cmd_myotz(message: Message):
+    user = get_user(message.from_user.id)
+    if not user or not user.get("name"):
+        await message.answer("❌ Вы не зарегистрированы.")
+        return
+
+    text = (
+        f"📊 Ваши пройденные отзывы за всё время:\n\n"
+        f"Яндекс: {user['yandex_total']}\n"
+        f"Google: {user['google_total']}\n"
+        f"2ГИС: {user['gis_total']}\n"
+        f"Авито: {user['avito_total']}\n"
+        f"ВК: {user['vk_total']}\n"
+        f"Отзовик: {user['otzovik_total']}\n"
+        f"Doctoru: {user['doctoru_total']}"
     )
     await message.answer(text)
 
@@ -106,6 +127,7 @@ async def menu_help(message: Message):
         "/reg – Регистрация\n"
         "/profile – Ваш профиль\n"
         "/job – Активные слоты\n"
+        "/myotz – Общая статистика за всё время\n"
         "/help – Эта справка\n\n"
         f"По всем вопросам: @{MANAGER_USERNAME}"
     )
@@ -127,7 +149,6 @@ async def start_registration(message: Message, state: FSMContext):
 async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
 
-    # Проверяем, есть ли у пользователя username в Telegram
     tg_username = message.from_user.username
     if not tg_username:
         await message.answer(
@@ -138,14 +159,12 @@ async def process_name(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Сохраняем очищенный username (без @, в нижнем регистре)
     clean_username = tg_username.lstrip("@").lower()
     await state.update_data(tg_username=clean_username)
     await message.answer(f"✅ Ваш username: @{tg_username} — записан!")
     await state.set_state(RegForm.timezone)
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
-# ---------- Остальные шаги регистрации (timezone, city, referrer, phone_card, bank) без изменений ----------
 @router.message(RegForm.timezone)
 async def process_timezone(message: Message, state: FSMContext):
     await state.update_data(timezone=message.text.strip())
@@ -219,7 +238,7 @@ async def cmd_job(message: Message):
     lines.append(f"\nДля получения слота напишите менеджеру @{MANAGER_USERNAME}")
     await message.answer("\n".join(lines))
 
-# ---------- 👥 Мои рефералы (без изменений) ----------
+# ---------- 👥 Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     user_id = message.from_user.id
