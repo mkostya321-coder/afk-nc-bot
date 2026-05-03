@@ -1,13 +1,14 @@
+import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL
-from bot.database import is_registered, is_blocked, get_user
+from bot.database import is_registered, is_blocked
 
 router = Router()
+logger = logging.getLogger(__name__)
 active_slots = {}  # msg_id -> {"command": str, "price": str, "post_text": str}
 
 def is_admin(user_id: int) -> bool:
@@ -138,7 +139,7 @@ async def process_take_slot(callback: CallbackQuery):
         return
 
     user_mention = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.full_name
-    msg = (
+    msg_to_manager = (
         f"📨 Запрос на слот от {user_mention}\n\n"
         f"Слот: {slot_name}\n"
         f"Цена: {price}\n\n"
@@ -146,11 +147,23 @@ async def process_take_slot(callback: CallbackQuery):
         f"Здравствуйте, меня интересует слот {slot_name} ({price}). "
         f"Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
     )
+
     try:
-        await callback.bot.send_message(f"@{MANAGER_USERNAME}", msg)
-        await callback.answer("✅ Ваша заявка отправлена!", show_alert=True)
+        await callback.bot.send_message(
+            chat_id=f"@{MANAGER_USERNAME}",
+            text=msg_to_manager,
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer("✅ Ваша заявка отправлена! Менеджер скоро свяжется с вами.", show_alert=True)
     except Exception as e:
-        await callback.answer("❌ Ошибка отправки. Попробуйте позже.", show_alert=True)
+        logger.error(f"Ошибка отправки менеджеру: {e}")
+        if "bot can't initiate conversation" in str(e):
+            await callback.answer(
+                "❌ Менеджер ещё не активировал бота. Пожалуйста, напишите ему напрямую: @New_Chapterr24",
+                show_alert=True
+            )
+        else:
+            await callback.answer("❌ Ошибка отправки. Попробуйте позже или свяжитесь с менеджером напрямую.", show_alert=True)
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -203,15 +216,3 @@ async def close_all_slots(message: Message):
             pass
         del active_slots[slot_id]
     await message.answer("✅ Все слоты закрыты.")
-
-# ---------- Кнопка "💼 Слоты" для пользователей ----------
-@router.message(F.text == "💼 Слоты")
-async def show_job(message: Message):
-    if not active_slots:
-        await message.answer("😔 На данный момент все слоты закрыты, ожидайте нового слота.\nС уважением команда New Chapter.")
-        return
-    lines = ["Открытые слоты:"]
-    for msg_id, data in active_slots.items():
-        lines.append(f"🔸 {data['command']} {data['price']} (ID: {msg_id})")
-    lines.append(f"\nДля получения слота напишите менеджеру @{MANAGER_USERNAME}")
-    await message.answer("\n".join(lines))
