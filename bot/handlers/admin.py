@@ -12,7 +12,6 @@ router = Router()
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# ---------- /helpadm ----------
 @router.message(Command("helpadm"))
 async def cmd_helpadm(message: Message):
     if not is_admin(message.from_user.id):
@@ -63,7 +62,7 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /useredit с поддержкой myotz ----------
+# ---------- /useredit ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_admin(message.from_user.id):
@@ -72,8 +71,7 @@ async def user_edit(message: Message):
     if len(parts) < 4:
         await message.answer(
             "Использование: /useredit <user_id> <поле> <значение>\n"
-            "Поля: payout, earned, phone, bank, myotz (1-7) (значение)\n"
-            "Пример: /useredit 123456 myotz 3 50 – установить 2ГИС за всё время 50"
+            "Поля: payout, earned, phone, bank, myotz (1-7) (значение)"
         )
         return
     try:
@@ -107,7 +105,6 @@ async def user_edit(message: Message):
         await message.answer(f"✅ Общий счётчик платформы {platform_num} обновлён.")
         return
 
-    # Остальные поля
     if field == "payout":
         update_user_field(user_id, "payout", int(value))
     elif field == "earned":
@@ -134,4 +131,4 @@ async def cmd_update_stats(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка при обновлении: {e}")
 
-# Остальные админские команды (/userblock, /slots, /close, /closeall) оставьте без изменений
+# Остальные админские команды (/userblock, /slots, /close, /closeall) оставьте без изменений (они уже есть в вашем admin.py)
