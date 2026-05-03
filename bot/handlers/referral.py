@@ -7,6 +7,9 @@ router = Router()
 
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     text = (
         "📢 Реферальная система\n\n"
         "👥 Как участвовать?\n"
