@@ -1,4 +1,5 @@
 import sqlite3
+import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -15,6 +16,7 @@ from bot.keyboards.reply import main_menu_keyboard
 from bot.handlers.slots import active_slots
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 REFERRAL_DEADLINE_DAYS = 28
 
@@ -108,13 +110,13 @@ async def cmd_myotz(message: Message):
 
     text = (
         f"📊 Ваши пройденные отзывы за всё время:\n\n"
-        f"Яндекс: {user['yandex_total']}\n"
-        f"Google: {user['google_total']}\n"
-        f"2ГИС: {user['gis_total']}\n"
-        f"Авито: {user['avito_total']}\n"
-        f"ВК: {user['vk_total']}\n"
-        f"Отзовик: {user['otzovik_total']}\n"
-        f"Doctoru: {user['doctoru_total']}"
+        f"Яндекс: {user.get('yandex_total', 0)}\n"
+        f"Google: {user.get('google_total', 0)}\n"
+        f"2ГИС: {user.get('gis_total', 0)}\n"
+        f"Авито: {user.get('avito_total', 0)}\n"
+        f"ВК: {user.get('vk_total', 0)}\n"
+        f"Отзовик: {user.get('otzovik_total', 0)}\n"
+        f"Doctoru: {user.get('doctoru_total', 0)}"
     )
     await message.answer(text)
 
@@ -183,7 +185,7 @@ async def process_city(message: Message, state: FSMContext):
 
 @router.message(RegForm.referrer)
 async def process_referrer(message: Message, state: FSMContext):
-    referrer = message.text.strip()
+    referrer = message.text.strip().lower()   # ← сохраняем в нижнем регистре
     if referrer != "0":
         ref_user = get_user_by_username(referrer)
         if not ref_user:
