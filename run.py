@@ -75,7 +75,7 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Корректное закрытие асинхронной сессии
+    # Корректное закрытие сессии
     async def close_session():
         await bot.session.close()
     dp.shutdown.register(close_session)
