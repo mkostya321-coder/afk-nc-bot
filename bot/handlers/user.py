@@ -41,6 +41,9 @@ async def cmd_start(message: Message):
 # ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
 async def menu_profile(message: Message):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
         await message.answer("❌ Вы ещё не зарегистрированы. Используйте кнопку «📝 Регистрация».")
@@ -103,6 +106,9 @@ async def menu_profile(message: Message):
 # ---------- /myotz ----------
 @router.message(Command("myotz"))
 async def cmd_myotz(message: Message):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
         await message.answer("❌ Вы не зарегистрированы.")
@@ -139,6 +145,9 @@ async def menu_help(message: Message):
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
     if is_registered(user_id):
@@ -228,6 +237,9 @@ async def process_bank(message: Message, state: FSMContext):
 @router.message(Command("job"))
 @router.message(F.text == "💼 Слоты")
 async def cmd_job(message: Message):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     if not active_slots:
         await message.answer(
             "😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\n"
@@ -243,6 +255,9 @@ async def cmd_job(message: Message):
 # ---------- 👥 Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
+    if is_blocked(message.from_user.id):
+    await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+    return
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user or not user.get("name"):
