@@ -52,7 +52,6 @@ async def user_block(message: Message):
     try:
         parts = message.text.split()
         target = parts[1]
-        # Пытаемся интерпретировать как число, иначе ищем по username
         if target.isdigit():
             user_id = int(target)
         else:
@@ -64,7 +63,6 @@ async def user_block(message: Message):
     except:
         await message.answer("Использование: /userblock <user_id или username>")
         return
-
     new_status = toggle_block(user_id)
     if new_status is None:
         await message.answer("❌ Пользователь не найден.")
@@ -72,7 +70,7 @@ async def user_block(message: Message):
         status_text = "заблокирован" if new_status else "разблокирован"
         await message.answer(f"✅ Пользователь {user_id} {status_text}.")
 
-# ---------- /useredit (поддержка username и myotz) ----------
+# ---------- /useredit (расширенный) ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_admin(message.from_user.id):
@@ -81,12 +79,10 @@ async def user_edit(message: Message):
     if len(parts) < 4:
         await message.answer(
             "Использование: /useredit <user_id или username> <поле> <значение>\n"
-            "Поля: payout, earned, phone, bank, myotz (1-7) (значение)"
+            "Поля: payout, earned, phone, bank, myotz 1/2/3/4/5/6/7 значение"
         )
         return
-
     target = parts[1]
-    # Определяем user_id
     if target.isdigit():
         user_id = int(target)
     else:
@@ -153,7 +149,7 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /info <username> ----------
+# ---------- /info ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
     if not is_admin(message.from_user.id):
@@ -167,7 +163,6 @@ async def cmd_info(message: Message):
     if not user:
         await message.answer(f"❌ Пользователь с username '{username}' не найден.")
         return
-
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
     days, seconds = delta.days, delta.seconds
@@ -219,6 +214,3 @@ async def cmd_update_stats(message: Message):
         await message.answer("✅ Статистика успешно обновлена! Проверьте профили.")
     except Exception as e:
         await message.answer(f"❌ Ошибка при обновлении: {e}")
-
-# ---------- Остальные админские команды (/slots, /close, /closeall) должны быть здесь же (они есть в вашем admin.py) ----------
-# Если они отсутствуют, скопируйте их из предыдущего полного файла slots.py (они висят на router'е slots, но можно оставить там)
