@@ -127,7 +127,6 @@ async def cmd_myotz(message: Message):
 # ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
 async def menu_help(message: Message):
-    # Помощь доступна даже заблокированным
     text = (
         "🆘 Доступные команды:\n"
         "/start – Главное меню\n"
@@ -158,7 +157,6 @@ async def start_registration(message: Message, state: FSMContext):
 @router.message(RegForm.name)
 async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
-
     tg_username = message.from_user.username
     if not tg_username:
         await message.answer(
@@ -168,7 +166,6 @@ async def process_name(message: Message, state: FSMContext):
         )
         await state.clear()
         return
-
     clean_username = tg_username.lstrip("@").lower()
     await state.update_data(tg_username=clean_username)
     await message.answer(f"✅ Ваш username: @{tg_username} — записан!")
@@ -193,7 +190,7 @@ async def process_city(message: Message, state: FSMContext):
 
 @router.message(RegForm.referrer)
 async def process_referrer(message: Message, state: FSMContext):
-    referrer = message.text.strip().lower()   # ← сохраняем в нижнем регистре
+    referrer = message.text.strip().lower()
     if referrer != "0":
         ref_user = get_user_by_username(referrer)
         if not ref_user:
@@ -262,7 +259,6 @@ async def show_my_referrals(message: Message, state: FSMContext):
     if not user or not user.get("name"):
         await message.answer("❌ Вы не зарегистрированы.")
         return
-
     tg_username = user.get("tg_username")
     if not tg_username:
         await message.answer("❌ У вас не указан Telegram username. Заполните профиль.")
@@ -315,7 +311,6 @@ async def show_my_referrals(message: Message, state: FSMContext):
 
     PAGE_SIZE = 10
     total_pages = (len(data) + PAGE_SIZE - 1) // PAGE_SIZE
-
     await state.update_data(ref_page=0, ref_data=data, ref_total_pages=total_pages)
 
     kb = InlineKeyboardBuilder()
