@@ -43,10 +43,99 @@ async def publish_slot(message: Message, slot_name: str, post_text: str, price: 
     }
     await message.answer(f"✅ Слот «{slot_name}» опубликован в канале! ID: {sent_msg.message_id}")
 
-# Команды публикации (/yandex, /google, /gis, /avito, /vk, /otzovik, /doctoru) – они у вас уже есть, я не дублирую для краткости.
-# Убедитесь, что они присутствуют.
+# ---------- Команды публикации ----------
+@router.message(Command("yandex"))
+async def yandex_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Яндекс карты\n"
+        "Задача: Выполнить отзыв/ы Яндекс карты\n"
+        "Оплата: 150 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Яндекс карты", text, "150₽")
 
-# ---------- Команды просмотра и закрытия слотов (админы) ----------
+@router.message(Command("google"))
+async def google_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: GOOGLE\n"
+        "Задача: Выполнить отзыв/ы GOOGLE\n"
+        "Оплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "GOOGLE", text, "50₽")
+
+@router.message(Command("gis"))
+async def gis_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: 2ГИС\n"
+        "Задача: Выполнить отзыв/ы 2ГИС\n"
+        "Оплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "2ГИС", text, "50₽")
+
+@router.message(Command("avito"))
+async def avito_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Авито\n"
+        "Задача: Выполнить отзыв/ы Авито\n"
+        "Оплата: 700 руб/шт\n"
+        "Дедлайн: 2 суток с момента принятия слота\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Авито", text, "700₽")
+
+@router.message(Command("vk"))
+async def vk_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: ВК\n"
+        "Задача: Выполнить отзыв/ы ВК\n"
+        "Оплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "ВК", text, "50₽")
+
+@router.message(Command("otzovik"))
+async def otzovik_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Отзовик\n"
+        "Задача: Выполнить отзыв/ы ОТЗОВИК\n"
+        "Оплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Отзовик", text, "100₽")
+
+@router.message(Command("doctoru"))
+async def doctoru_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Doctoru\n"
+        "Задача: Выполнить отзыв/ы Doctoru\n"
+        "Оплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\n"
+        "Требуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Doctoru", text, "100₽")
+
+# ---------- Команды просмотра и закрытия слотов ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_admin(message.from_user.id): return
