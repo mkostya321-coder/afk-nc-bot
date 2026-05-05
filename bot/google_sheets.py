@@ -39,11 +39,8 @@ async def update_stats_from_sheet():
         await update_stats_from_sheet_once()
 
 async def update_stats_from_sheet_once():
-    """
-    Однократное обновление статистики.
-    Учитывает только строки, у которых столбец B == '0' и статус == 'опубликован'.
-    После обработки меняет столбец B на '1'.
-    """
+    """Однократное обновление (используется и планировщиком, и командой /update_stats)."""
+    processed = 0
     try:
         creds_path = "/data/google_key.json"
         if not os.path.exists(creds_path):
@@ -63,7 +60,7 @@ async def update_stats_from_sheet_once():
 
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            # 1. Обнуляем периодические счётчики (но не total)
+            # Обнуляем периодические счётчики
             cur.execute(
                 "UPDATE users SET yandex_passed=0, google_passed=0, "
                 "gis_passed=0, avito_passed=0, vk_passed=0, "
@@ -71,8 +68,8 @@ async def update_stats_from_sheet_once():
             )
             conn.commit()
 
-            # 2. Обрабатываем строки таблицы
-            for row_idx, row in enumerate(records[1:], start=2):  # start=2, т.к. первая строка — заголовок
+            # Обработка строк
+            for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < 6:
                     continue
 
@@ -81,7 +78,6 @@ async def update_stats_from_sheet_once():
                 status = row[4].strip().lower()      # E
                 executor = row[5].strip()            # F
 
-                # Пропускаем, если уже обработана или статус не тот
                 if flag != "0" or status != "опубликован":
                     continue
                 if not executor:
@@ -91,63 +87,64 @@ async def update_stats_from_sheet_once():
 
                 user = get_user_by_username(executor)
                 if not user:
-                    logger.warning(f"Пользователь {executor} не найден в базе")
-                    # Всё равно помечаем как обработанную, чтобы не висло вечно
-                    sheet.update_cell(row_idx, 2, 1)  # столбец B = 1
+                    # Пользователя нет в базе – всё равно помечаем, чтобы не висло
+                    try:
+                        sheet.update_cell(row_idx, 2, 1)
+                    except Exception as e:
+                        logger.warning(f"Не удалось обновить флаг для {executor}: {e}")
                     continue
 
                 user_id = user["user_id"]
 
-                # Обновляем периодические и общие счётчики
                 if platform == "яндекс":
                     cur.execute(
-                        "UPDATE users SET yandex_passed = yandex_passed + 1, "
-                        "yandex_total = yandex_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET yandex_passed = yandex_passed + 1, yandex_total = yandex_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform == "google":
                     cur.execute(
-                        "UPDATE users SET google_passed = google_passed + 1, "
-                        "google_total = google_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET google_passed = google_passed + 1, google_total = google_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform == "2гис":
                     cur.execute(
-                        "UPDATE users SET gis_passed = gis_passed + 1, "
-                        "gis_total = gis_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET gis_passed = gis_passed + 1, gis_total = gis_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform == "авито":
                     cur.execute(
-                        "UPDATE users SET avito_passed = avito_passed + 1, "
-                        "avito_total = avito_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET avito_passed = avito_passed + 1, avito_total = avito_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform == "вк":
                     cur.execute(
-                        "UPDATE users SET vk_passed = vk_passed + 1, "
-                        "vk_total = vk_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET vk_passed = vk_passed + 1, vk_total = vk_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform == "отзовик":
                     cur.execute(
-                        "UPDATE users SET otzovik_passed = otzovik_passed + 1, "
-                        "otzovik_total = otzovik_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET otzovik_passed = otzovik_passed + 1, otzovik_total = otzovik_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
                 elif platform in ("доктору", "docto.ru"):
                     cur.execute(
-                        "UPDATE users SET doctoru_passed = doctoru_passed + 1, "
-                        "doctoru_total = doctoru_total + 1 WHERE user_id = ?",
+                        "UPDATE users SET doctoru_passed = doctoru_passed + 1, doctoru_total = doctoru_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
+                else:
+                    # Неизвестная платформа – пропускаем, но не помечаем
+                    continue
 
-                # Помечаем строку как обработанную
-                sheet.update_cell(row_idx, 2, 1)
+                # Отмечаем строку как обработанную
+                try:
+                    sheet.update_cell(row_idx, 2, 1)
+                    processed += 1
+                except Exception as e:
+                    logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
             conn.commit()
 
-            # 3. Пересчитываем «к выплате» и добавляем к total_earned
+            # Пересчитываем выплаты и total_earned
             cur.execute(
                 "SELECT user_id, yandex_passed, google_passed, gis_passed, "
                 "avito_passed, vk_passed, otzovik_passed, doctoru_passed, total_earned FROM users"
@@ -164,11 +161,10 @@ async def update_stats_from_sheet_once():
                     user_row[7] * PRICES.get("доктору", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
-                old_total = user_row[8] or 0
                 cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
-            # 4. Реферальные бонусы
+            # Реферальные бонусы
             cur.execute(
                 "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
                 "FROM users WHERE referrer != '0'"
@@ -180,19 +176,19 @@ async def update_stats_from_sheet_once():
                     paid = cur.fetchone()[0]
                     if not paid:
                         cur.execute(
-                            "UPDATE users SET payout = payout + 200, total_earned = total_earned + 200 "
-                            "WHERE user_id = ?", (user_id,)
+                            "UPDATE users SET payout = payout + 200, total_earned = total_earned + 200 WHERE user_id = ?",
+                            (user_id,)
                         )
                         cur.execute("UPDATE users SET referral_bonus_paid = 1 WHERE user_id = ?", (user_id,))
                         ref_user = get_user_by_username(referrer)
                         if ref_user:
                             cur.execute(
-                                "UPDATE users SET payout = payout + 450, total_earned = total_earned + 450 "
-                                "WHERE user_id = ?", (ref_user["user_id"],)
+                                "UPDATE users SET payout = payout + 450, total_earned = total_earned + 450 WHERE user_id = ?",
+                                (ref_user["user_id"],)
                             )
             conn.commit()
 
-        logger.info("Статистика успешно обновлена")
+        logger.info(f"Статистика успешно обновлена. Обработано новых строк: {processed}")
 
     except Exception as e:
         logger.error(f"Ошибка при обновлении из Google Таблицы: {e}")
