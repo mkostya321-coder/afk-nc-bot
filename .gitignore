@@ -3,4 +3,3 @@ __pycache__/
 venv/
 .env
 credentials.json
-google_key.json
