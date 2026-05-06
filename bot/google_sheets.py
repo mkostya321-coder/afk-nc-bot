@@ -23,7 +23,6 @@ PRICES = {
     "доктору": 100,
 }
 
-# Синонимы для распознавания платформ (всё в нижнем регистре)
 PLATFORM_ALIASES = {
     "яндекс":   ["яндекс", "ян", "yandex"],
     "google":   ["google", "гугл", "гугл"],
@@ -35,7 +34,6 @@ PLATFORM_ALIASES = {
 }
 
 def match_platform(raw_name: str) -> str | None:
-    """Возвращает стандартное имя платформы или None, если не найдено."""
     name = raw_name.strip().lower()
     for standard, aliases in PLATFORM_ALIASES.items():
         for alias in aliases:
@@ -44,7 +42,6 @@ def match_platform(raw_name: str) -> str | None:
     return None
 
 async def update_stats_from_sheet():
-    """Обновляет статистику из Google Таблиц в 10:00 и 20:00 МСК."""
     while True:
         now = datetime.now(moscow_tz)
         target_times = [
@@ -53,13 +50,11 @@ async def update_stats_from_sheet():
         ]
         future_times = [t if t > now else t + timedelta(days=1) for t in target_times]
         next_target = min(future_times)
-        sleep_seconds = (next_target - now).total_seconds()
-        await asyncio.sleep(sleep_seconds)
+        await asyncio.sleep((next_target - now).total_seconds())
 
         await update_stats_from_sheet_once()
 
 async def update_stats_from_sheet_once():
-    """Однократное обновление (используется и планировщиком, и командой /update_stats)."""
     processed = 0
     try:
         creds_path = "/data/google_key.json"
@@ -78,9 +73,15 @@ async def update_stats_from_sheet_once():
         sheet = client.open_by_key(SHEET_ID).sheet1
         records = sheet.get_all_values()
 
+        logger.info(f"Всего строк в таблице (включая заголовок): {len(records)}")
+
+        total_rows = len(records) - 1
+        flag_zero = 0
+        status_ok = 0
+        user_found = 0
+
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            # Обнуляем периодические счётчики
             cur.execute(
                 "UPDATE users SET yandex_passed=0, google_passed=0, "
                 "gis_passed=0, avito_passed=0, vk_passed=0, "
@@ -88,41 +89,40 @@ async def update_stats_from_sheet_once():
             )
             conn.commit()
 
-            # Обработка строк
             for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 7:          # нужны минимум столбцы A, B, F, G (индексы 0,1,5,6)
+                if len(row) < 7:
                     continue
 
-                platform_raw = row[0].strip()          # A
-                flag = row[1].strip()                  # B
-                status = row[5].strip().lower()        # F (статус)
-                executor = row[6].strip()              # G (исполнитель)
+                platform_raw = row[0].strip()
+                flag = row[1].strip()
+                status = row[5].strip().lower()
+                executor = row[6].strip()
+
+                if flag == "0":
+                    flag_zero += 1
 
                 if flag != "0" or status != "опубликован":
                     continue
+                status_ok += 1
                 if not executor:
                     continue
 
-                # Определяем платформу по синонимам
                 platform = match_platform(platform_raw)
                 if not platform:
-                    # Неизвестная платформа – пропускаем, но не помечаем
                     continue
 
-                executor = executor.lstrip("@").lower()
-
-                user = get_user_by_username(executor)
+                executor_clean = executor.lstrip("@").lower()
+                user = get_user_by_username(executor_clean)
                 if not user:
-                    # Пользователя нет в базе – всё равно помечаем, чтобы не висло
                     try:
-                        sheet.update_cell(row_idx, 2, 1)   # столбец B
+                        sheet.update_cell(row_idx, 2, 1)
                     except Exception as e:
                         logger.warning(f"Не удалось обновить флаг для {executor}: {e}")
                     continue
 
                 user_id = user["user_id"]
+                user_found += 1
 
-                # Обновляем счётчики в зависимости от платформы
                 if platform == "яндекс":
                     cur.execute(
                         "UPDATE users SET yandex_passed = yandex_passed + 1, yandex_total = yandex_total + 1 WHERE user_id = ?",
@@ -159,16 +159,24 @@ async def update_stats_from_sheet_once():
                         (user_id,)
                     )
 
-                # Отмечаем строку как обработанную (столбец B)
                 try:
                     sheet.update_cell(row_idx, 2, 1)
                     processed += 1
                 except Exception as e:
                     logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
+            logger.info(
+                f"Всего строк: {total_rows}, флаг=0: {flag_zero}, "
+                f"статус='опубликован': {status_ok}, пользователей найдено: {user_found}, "
+                f"обработано: {processed}"
+            )
+
+            if processed == 0:
+                logger.warning("Не обработано ни одной строки. Проверьте данные в таблице.")
+                return
+
             conn.commit()
 
-            # Пересчитываем выплаты и total_earned
             cur.execute(
                 "SELECT user_id, yandex_passed, google_passed, gis_passed, "
                 "avito_passed, vk_passed, otzovik_passed, doctoru_passed, total_earned FROM users"
@@ -188,7 +196,6 @@ async def update_stats_from_sheet_once():
                 cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
-            # Реферальные бонусы
             cur.execute(
                 "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
                 "FROM users WHERE referrer != '0'"
