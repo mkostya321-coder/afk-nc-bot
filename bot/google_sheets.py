@@ -70,13 +70,13 @@ async def update_stats_from_sheet_once():
 
             # Обработка строк
             for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 6:
+                if len(row) < 7:          # нужны минимум столбцы A, B, F, G (индексы 0,1,5,6)
                     continue
 
                 platform = row[0].strip().lower()   # A
                 flag = row[1].strip()                # B
-                status = row[4].strip().lower()      # E
-                executor = row[5].strip()            # F
+                status = row[5].strip().lower()      # F (статус)
+                executor = row[6].strip()            # G (исполнитель)
 
                 if flag != "0" or status != "опубликован":
                     continue
@@ -89,7 +89,7 @@ async def update_stats_from_sheet_once():
                 if not user:
                     # Пользователя нет в базе – всё равно помечаем, чтобы не висло
                     try:
-                        sheet.update_cell(row_idx, 2, 1)
+                        sheet.update_cell(row_idx, 2, 1)   # столбец B
                     except Exception as e:
                         logger.warning(f"Не удалось обновить флаг для {executor}: {e}")
                     continue
@@ -132,10 +132,9 @@ async def update_stats_from_sheet_once():
                         (user_id,)
                     )
                 else:
-                    # Неизвестная платформа – пропускаем, но не помечаем
                     continue
 
-                # Отмечаем строку как обработанную
+                # Отмечаем строку как обработанную (столбец B)
                 try:
                     sheet.update_cell(row_idx, 2, 1)
                     processed += 1
