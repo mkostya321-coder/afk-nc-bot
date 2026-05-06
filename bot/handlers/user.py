@@ -190,7 +190,8 @@ async def process_city(message: Message, state: FSMContext):
 
 @router.message(RegForm.referrer)
 async def process_referrer(message: Message, state: FSMContext):
-    referrer = message.text.strip().lower()
+    # Сохраняем БЕЗ @ и в нижнем регистре
+    referrer = message.text.strip().lstrip("@").lower()
     if referrer != "0":
         ref_user = get_user_by_username(referrer)
         if not ref_user:
@@ -267,9 +268,10 @@ async def show_my_referrals(message: Message, state: FSMContext):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
+    # Ищем рефералов, игнорируя @ в referrer
     cur.execute(
         "SELECT name, tg_username, registered_at, yandex_passed, google_passed, gis_passed "
-        "FROM users WHERE LOWER(referrer) = ?",
+        "FROM users WHERE LOWER(REPLACE(referrer, '@', '')) = ?",
         (tg_username.lower(),)
     )
     referrals = cur.fetchall()
