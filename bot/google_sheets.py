@@ -23,6 +23,26 @@ PRICES = {
     "доктору": 100,
 }
 
+# Синонимы для распознавания платформ (всё в нижнем регистре)
+PLATFORM_ALIASES = {
+    "яндекс":   ["яндекс", "ян", "yandex"],
+    "google":   ["google", "гугл", "гугл"],
+    "2гис":     ["2гис", "гис", "2 гис"],
+    "авито":    ["авито", "avito"],
+    "вк":       ["вк", "vk"],
+    "отзовик":  ["отзовик", "otzovik"],
+    "доктору":  ["доктору", "docto", "doctoru", "докто ру"],
+}
+
+def match_platform(raw_name: str) -> str | None:
+    """Возвращает стандартное имя платформы или None, если не найдено."""
+    name = raw_name.strip().lower()
+    for standard, aliases in PLATFORM_ALIASES.items():
+        for alias in aliases:
+            if alias in name:
+                return standard
+    return None
+
 async def update_stats_from_sheet():
     """Обновляет статистику из Google Таблиц в 10:00 и 20:00 МСК."""
     while True:
@@ -73,14 +93,20 @@ async def update_stats_from_sheet_once():
                 if len(row) < 7:          # нужны минимум столбцы A, B, F, G (индексы 0,1,5,6)
                     continue
 
-                platform = row[0].strip().lower()   # A
-                flag = row[1].strip()                # B
-                status = row[5].strip().lower()      # F (статус)
-                executor = row[6].strip()            # G (исполнитель)
+                platform_raw = row[0].strip()          # A
+                flag = row[1].strip()                  # B
+                status = row[5].strip().lower()        # F (статус)
+                executor = row[6].strip()              # G (исполнитель)
 
                 if flag != "0" or status != "опубликован":
                     continue
                 if not executor:
+                    continue
+
+                # Определяем платформу по синонимам
+                platform = match_platform(platform_raw)
+                if not platform:
+                    # Неизвестная платформа – пропускаем, но не помечаем
                     continue
 
                 executor = executor.lstrip("@").lower()
@@ -96,6 +122,7 @@ async def update_stats_from_sheet_once():
 
                 user_id = user["user_id"]
 
+                # Обновляем счётчики в зависимости от платформы
                 if platform == "яндекс":
                     cur.execute(
                         "UPDATE users SET yandex_passed = yandex_passed + 1, yandex_total = yandex_total + 1 WHERE user_id = ?",
@@ -126,13 +153,11 @@ async def update_stats_from_sheet_once():
                         "UPDATE users SET otzovik_passed = otzovik_passed + 1, otzovik_total = otzovik_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
-                elif platform in ("доктору", "docto.ru"):
+                elif platform == "доктору":
                     cur.execute(
                         "UPDATE users SET doctoru_passed = doctoru_passed + 1, doctoru_total = doctoru_total + 1 WHERE user_id = ?",
                         (user_id,)
                     )
-                else:
-                    continue
 
                 # Отмечаем строку как обработанную (столбец B)
                 try:
