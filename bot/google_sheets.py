@@ -73,13 +73,6 @@ async def update_stats_from_sheet_once():
         sheet = client.open_by_key(SHEET_ID).sheet1
         records = sheet.get_all_values()
 
-        logger.info(f"Всего строк в таблице (включая заголовок): {len(records)}")
-
-        total_rows = len(records) - 1
-        flag_zero = 0
-        status_ok = 0
-        user_found = 0
-
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute(
@@ -92,18 +85,13 @@ async def update_stats_from_sheet_once():
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < 7:
                     continue
-
                 platform_raw = row[0].strip()
                 flag = row[1].strip()
                 status = row[5].strip().lower()
                 executor = row[6].strip()
 
-                if flag == "0":
-                    flag_zero += 1
-
                 if flag != "0" or status != "опубликован":
                     continue
-                status_ok += 1
                 if not executor:
                     continue
 
@@ -116,12 +104,11 @@ async def update_stats_from_sheet_once():
                 if not user:
                     try:
                         sheet.update_cell(row_idx, 2, 1)
-                    except Exception as e:
-                        logger.warning(f"Не удалось обновить флаг для {executor}: {e}")
+                    except:
+                        pass
                     continue
 
                 user_id = user["user_id"]
-                user_found += 1
 
                 if platform == "яндекс":
                     cur.execute(
@@ -165,18 +152,9 @@ async def update_stats_from_sheet_once():
                 except Exception as e:
                     logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
-            logger.info(
-                f"Всего строк: {total_rows}, флаг=0: {flag_zero}, "
-                f"статус='опубликован': {status_ok}, пользователей найдено: {user_found}, "
-                f"обработано: {processed}"
-            )
-
-            if processed == 0:
-                logger.warning("Не обработано ни одной строки. Проверьте данные в таблице.")
-                return
-
             conn.commit()
 
+            # Пересчитываем выплаты и total_earned
             cur.execute(
                 "SELECT user_id, yandex_passed, google_passed, gis_passed, "
                 "avito_passed, vk_passed, otzovik_passed, doctoru_passed, total_earned FROM users"
@@ -196,8 +174,9 @@ async def update_stats_from_sheet_once():
                 cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
+            # Реферальные бонусы – проверяем по ОБЩИМ счётчикам
             cur.execute(
-                "SELECT user_id, referrer, yandex_passed, google_passed, gis_passed "
+                "SELECT user_id, referrer, yandex_total, google_total, gis_total "
                 "FROM users WHERE referrer != '0'"
             )
             for row in cur.fetchall():
