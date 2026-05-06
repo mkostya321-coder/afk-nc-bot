@@ -55,26 +55,27 @@ async def menu_profile(message: Message):
     time_str = f"{days} дн. {hours} ч. {minutes} мин."
 
     referrer = user.get("referrer", "0")
-    if referrer == "0":
-        ref_status = "нет"
-    else:
-        yandex = user.get("yandex_passed", 0) or 0
-        google = user.get("google_passed", 0) or 0
-        gis = user.get("gis_passed", 0) or 0
+    ref_status = "нет"
+    if referrer != "0":
+        # Используем ОБЩИЕ счётчики (total)
+        yandex = user.get("yandex_total", 0) or 0
+        google = user.get("google_total", 0) or 0
+        gis = user.get("gis_total", 0) or 0
         if yandex >= 10 and (google + gis) >= 15:
-            ref_status = "выполнено"
+            ref_status = "✅ выполнено"
         else:
+            # Проверка срока 28 дней
             if user.get("registered_at"):
                 try:
                     deadline = datetime.fromisoformat(user["registered_at"]) + timedelta(days=REFERRAL_DEADLINE_DAYS)
                     if datetime.now() > deadline:
                         ref_status = "❌ Не выполнен"
                     else:
-                        ref_status = "в процессе"
+                        ref_status = "🚀 в процессе"
                 except:
-                    ref_status = "в процессе"
+                    ref_status = "🚀 в процессе"
             else:
-                ref_status = "в процессе"
+                ref_status = "🚀 в процессе"
 
     text = (
         f"📋 Профиль\n\n"
@@ -270,7 +271,7 @@ async def show_my_referrals(message: Message, state: FSMContext):
     cur = conn.cursor()
     # Ищем рефералов, игнорируя @ в referrer
     cur.execute(
-        "SELECT name, tg_username, registered_at, yandex_passed, google_passed, gis_passed "
+        "SELECT name, tg_username, registered_at, yandex_total, google_total, gis_total "
         "FROM users WHERE LOWER(REPLACE(referrer, '@', '')) = ?",
         (tg_username.lower(),)
     )
@@ -298,9 +299,10 @@ async def show_my_referrals(message: Message, state: FSMContext):
             remaining = 0
             deadline = now
 
-        yandex = ref["yandex_passed"] or 0
-        google = ref["google_passed"] or 0
-        gis = ref["gis_passed"] or 0
+        # Используем ОБЩИЕ счётчики для статуса выполнения
+        yandex = ref["yandex_total"] or 0
+        google = ref["google_total"] or 0
+        gis = ref["gis_total"] or 0
 
         if yandex >= 10 and (google + gis) >= 15:
             status = "✅ Выполнен"
