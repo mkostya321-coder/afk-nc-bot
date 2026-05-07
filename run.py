@@ -11,7 +11,7 @@ import pytz
 
 from bot.config import BOT_TOKEN, CHANNEL_ID
 from bot.database import init_db
-from bot.google_sheets import update_stats_from_sheet
+from bot.google_sheets import monitor_schedule      # <-- заменили update_stats_from_sheet
 from bot.handlers import user, admin, slots, referral
 from bot.middlewares import AutoMenuMiddleware
 
@@ -88,7 +88,8 @@ async def main():
     dp.include_router(referral.router)
 
     asyncio.create_task(scheduler())
-    asyncio.create_task(update_stats_from_sheet())
+    # Новая задача мониторинга слотов (вместо update_stats_from_sheet)
+    asyncio.create_task(monitor_schedule(bot, slots.active_slots))
 
     await dp.start_polling(bot)
 
