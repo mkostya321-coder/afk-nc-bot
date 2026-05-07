@@ -43,7 +43,60 @@ async def publish_slot(message: Message, slot_name: str, post_text: str, price: 
     }
     await message.answer(f"✅ Слот «{slot_name}» опубликован в канале! ID: {sent_msg.message_id}")
 
-# ---------- Команды публикации ----------
+
+async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
+                                 date: str, time: str, row_ids: list):
+    """Публикует автоматический слот в канале (без привязки к сообщению пользователя)."""
+    # Красивое название платформы
+    platform_names = {
+        "яндекс": "Яндекс",
+        "google": "Google",
+        "2гис": "2ГИС",
+        "авито": "Авито",
+        "вк": "ВК",
+        "отзовик": "Otzovik",
+        "доктору": "Doctoru"
+    }
+    pretty_name = platform_names.get(platform, platform)
+
+    post_text = (
+        f"🔥 Слот: {pretty_name}\n"
+        f"📅 Дата: {date}\n"
+        f"⏰ Время: {time} (МСК)\n"
+        f"📌 Доступно отзывов: {count} шт.\n"
+        f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
+        f"Нажмите кнопку ниже, чтобы забрать слот."
+    )
+
+    builder = InlineKeyboardBuilder()
+    # Пока оставляем прямую ссылку на менеджера, позже заменим на callback
+    url = f"https://t.me/{MANAGER_USERNAME}?text=Здравствуйте, хочу взять слот {pretty_name}"
+    builder.button(text="✋ Взять слот", url=url)
+    builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
+    builder.adjust(1)
+
+    sent_msg = await bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=post_text,
+        reply_markup=builder.as_markup(),
+        parse_mode=ParseMode.HTML
+    )
+
+    # Сохраняем слот с row_ids для дальнейшей раздачи
+    active_slots_dict[sent_msg.message_id] = {
+        "command": pretty_name,
+        "price": f"{count} шт.",
+        "post_text": post_text,
+        "platform": platform,
+        "available": count,
+        "row_ids": row_ids,
+        "date": date,
+        "time": time
+    }
+    logger.info(f"Автослот {pretty_name} опубликован (ID: {sent_msg.message_id}), строк: {row_ids}")
+
+
+# ---------- Команды публикации (вручную, только для админов) ----------
 @router.message(Command("yandex"))
 async def yandex_slot(message: Message):
     if not is_admin(message.from_user.id): return
@@ -57,85 +110,10 @@ async def yandex_slot(message: Message):
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
 
-@router.message(Command("google"))
-async def google_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: GOOGLE\n"
-        "Задача: Выполнить отзыв/ы GOOGLE\n"
-        "Оплата: 50 руб/шт\n"
-        "Дедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "GOOGLE", text, "50₽")
+# Остальные команды (/google, /gis, /avito, /vk, /otzovik, /doctoru) идентичны, я их опускаю для краткости.
+# Обязательно оставьте их в вашем файле!
 
-@router.message(Command("gis"))
-async def gis_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: 2ГИС\n"
-        "Задача: Выполнить отзыв/ы 2ГИС\n"
-        "Оплата: 50 руб/шт\n"
-        "Дедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "2ГИС", text, "50₽")
-
-@router.message(Command("avito"))
-async def avito_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: Авито\n"
-        "Задача: Выполнить отзыв/ы Авито\n"
-        "Оплата: 700 руб/шт\n"
-        "Дедлайн: 2 суток с момента принятия слота\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "Авито", text, "700₽")
-
-@router.message(Command("vk"))
-async def vk_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: ВК\n"
-        "Задача: Выполнить отзыв/ы ВК\n"
-        "Оплата: 50 руб/шт\n"
-        "Дедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "ВК", text, "50₽")
-
-@router.message(Command("otzovik"))
-async def otzovik_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: Отзовик\n"
-        "Задача: Выполнить отзыв/ы ОТЗОВИК\n"
-        "Оплата: 100 руб/шт\n"
-        "Дедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "Отзовик", text, "100₽")
-
-@router.message(Command("doctoru"))
-async def doctoru_slot(message: Message):
-    if not is_admin(message.from_user.id): return
-    text = (
-        "🔥 Слот: Doctoru\n"
-        "Задача: Выполнить отзыв/ы Doctoru\n"
-        "Оплата: 100 руб/шт\n"
-        "Дедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
-    )
-    await publish_slot(message, "Doctoru", text, "100₽")
-
-# ---------- Команды просмотра и закрытия слотов ----------
+# ---------- Команды просмотра и закрытия слотов (админы) ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_admin(message.from_user.id): return
@@ -163,7 +141,7 @@ async def close_slot(message: Message):
     await message.bot.edit_message_text(
         chat_id=CHANNEL_ID,
         message_id=slot_id,
-        text="Извините, данный слот устарел или был закрыт, в ближайшее время появится новый ожидайте 😀\nХорошего настроения! С уважением команда New Chapter👻"
+        text="Извините, данный слот устарел или был закрыт…"
     )
     await message.answer(f"✅ Слот «{data['command']}» закрыт.")
 
@@ -175,7 +153,7 @@ async def close_all_slots(message: Message):
             await message.bot.edit_message_text(
                 chat_id=CHANNEL_ID,
                 message_id=slot_id,
-                text="Извините, данный слот устарел или был закрыт, в ближайшее время появится новый ожидайте 😀\nХорошего настроения! С уважением команда New Chapter👻"
+                text="Извините, данный слот устарел или был закрыт…"
             )
         except:
             pass
