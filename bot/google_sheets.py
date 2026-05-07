@@ -43,19 +43,15 @@ def match_platform(raw_name: str) -> str | None:
 
 
 async def monitor_schedule(bot, active_slots: dict):
-    """
-    Каждые 60 секунд проверяет таблицу на наступление времени публикации.
-    Если находит подходящие строки – группирует по платформе и времени,
-    публикует слот в канал и запоминает его в active_slots.
-    """
-    logger.info("Планировщик слотов запущен")
+    """Каждые 60 секунд проверяет таблицу и публикует слоты."""
+    logger.info("📅 Планировщик слотов запущен")
     while True:
         try:
             creds_path = "/data/google_key.json"
             if not os.path.exists(creds_path):
                 creds_path = "google_key.json"
             if not os.path.exists(creds_path):
-                logger.error("Файл google_key.json не найден – мониторинг остановлен")
+                logger.error("❌ Файл google_key.json не найден")
                 await asyncio.sleep(60)
                 continue
 
@@ -69,35 +65,41 @@ async def monitor_schedule(bot, active_slots: dict):
             records = sheet.get_all_values()
             now = datetime.now(moscow_tz)
 
-            # Ищем строки, у которых дата и время уже наступили, а слот ещё не опубликован
+            logger.info(f"🔍 Проверка таблицы: {len(records)} строк")
+
             to_publish = []   # (platform, row_idx, row_data)
             for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 8:        # минимально нужны столбцы A-H
+                if len(row) < 8:
                     continue
-                date_str = row[0].strip()   # A – дата (например, "07.05.2026")
-                time_str = row[1].strip()   # B – время (например, "14:00")
-                flag = row[4].strip()       # E – флаг обновления (0/1/2)
+
+                date_str = row[0].strip()   # A
+                time_str = row[1].strip()   # B
+                flag = row[4].strip()       # E
 
                 if flag != "0":
                     continue
 
                 try:
+                    # Формат даты: ДД.ММ.ГГГГ
                     slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                     slot_time = moscow_tz.localize(slot_time)
-                except:
+                except Exception as e:
+                    logger.warning(f"Строка {row_idx}: неверный формат даты/времени: {e}")
                     continue
 
                 if now >= slot_time:
-                    platform_raw = row[3].strip()   # D – платформа
+                    platform_raw = row[3].strip()   # D
                     platform = match_platform(platform_raw)
                     if platform:
                         to_publish.append((platform, row_idx, row))
+                        logger.info(f"✅ Строка {row_idx}: {platform} на {date_str} {time_str}")
 
             if not to_publish:
+                logger.info("Нет подходящих строк для публикации")
                 await asyncio.sleep(60)
                 continue
 
-            # Группируем по платформе и времени
+            # Группируем
             from collections import defaultdict
             groups = defaultdict(list)
             for platform, row_idx, row in to_publish:
@@ -105,19 +107,18 @@ async def monitor_schedule(bot, active_slots: dict):
                 time_str = row[1].strip()
                 groups[(platform, date_str, time_str)].append((row_idx, row))
 
-            # Публикуем слоты
             for (platform, date, time), items in groups.items():
                 count_available = len(items)
                 row_ids = [item[0] for item in items]
 
-                # Импортируем функцию публикации (чтобы избежать циклического импорта)
                 from .handlers.slots import publish_scheduled_slot
                 await publish_scheduled_slot(
                     bot, active_slots, platform, count_available,
                     date, time, row_ids
                 )
+                logger.info(f"📢 Опубликован слот {platform} ({count_available} шт.)")
 
-                # Помечаем строки флагом 1 (опубликовано)
+                # Помечаем флагом 1
                 for row_idx in row_ids:
                     try:
                         sheet.update_cell(row_idx, 5, 1)   # столбец E = 1
@@ -125,6 +126,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
         except Exception as e:
-            logger.error(f"Ошибка в планировщике слотов: {e}")
+            logger.error(f"Ошибка в планировщике: {e}")
 
         await asyncio.sleep(60)
