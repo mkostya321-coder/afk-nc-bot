@@ -39,7 +39,7 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация ----------
+# ---------- Ручная публикация (старые команды) ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
