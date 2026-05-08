@@ -2,7 +2,7 @@ import logging
 import os
 from urllib.parse import quote
 from aiogram import Router, F
-from aiagram.filters import Command, StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
@@ -64,8 +64,65 @@ async def yandex_slot(message: Message):
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
 
-# Остальные команды (/google, /gis, /avito, /vk, /otzovik, /doctoru) идентичны, я их опускаю для краткости.
-# Обязательно оставьте их в вашем файле!
+@router.message(Command("google"))
+async def google_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: GOOGLE\nЗадача: Выполнить отзыв/ы GOOGLE\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "GOOGLE", text, "50₽")
+
+@router.message(Command("gis"))
+async def gis_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: 2ГИС\nЗадача: Выполнить отзыв/ы 2ГИС\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "2ГИС", text, "50₽")
+
+@router.message(Command("avito"))
+async def avito_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Авито\nЗадача: Выполнить отзыв/ы Авито\nОплата: 700 руб/шт\n"
+        "Дедлайн: 2 суток с момента принятия слота\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Авито", text, "700₽")
+
+@router.message(Command("vk"))
+async def vk_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: ВК\nЗадача: Выполнить отзыв/ы ВК\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "ВК", text, "50₽")
+
+@router.message(Command("otzovik"))
+async def otzovik_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Отзовик\nЗадача: Выполнить отзыв/ы ОТЗОВИК\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Отзовик", text, "100₽")
+
+@router.message(Command("doctoru"))
+async def doctoru_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Doctoru\nЗадача: Выполнить отзыв/ы Doctoru\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Doctoru", text, "100₽")
 
 # ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
@@ -102,7 +159,6 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
 # ---------- Обработчик кнопки "Взять слот" ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery, state: FSMContext):
-    # Защита от старых форматов callback_data
     if not callback.data.startswith("take_slot|"):
         await callback.answer("Устаревшая кнопка. Попробуйте новый слот.", show_alert=True)
         return
@@ -116,7 +172,6 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
         return
 
     parts = callback.data.split("|")
-    # Ожидаем 6 частей: take_slot, platform, count, date, time_safe
     if len(parts) != 6:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
