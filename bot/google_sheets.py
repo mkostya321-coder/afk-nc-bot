@@ -43,14 +43,14 @@ def match_platform(raw_name: str) -> str | None:
 
 
 async def monitor_schedule(bot, active_slots: dict):
-    logger.info("📅 Планировщик слотов запущен")
+    logger.info("Планировщик слотов запущен")
     while True:
         try:
             creds_path = "/data/google_key.json"
             if not os.path.exists(creds_path):
                 creds_path = "google_key.json"
             if not os.path.exists(creds_path):
-                logger.error("❌ Файл google_key.json не найден")
+                logger.error("Файл google_key.json не найден")
                 await asyncio.sleep(60)
                 continue
 
@@ -71,7 +71,6 @@ async def monitor_schedule(bot, active_slots: dict):
 
                 date_str = row[0].strip()   # A
                 time_str = row[1].strip()   # B
-                # Пропускаем строки с пустыми датой или временем без логирования
                 if not date_str or not time_str:
                     continue
 
@@ -95,7 +94,6 @@ async def monitor_schedule(bot, active_slots: dict):
                 await asyncio.sleep(60)
                 continue
 
-            # Группируем по платформе и времени
             from collections import defaultdict
             groups = defaultdict(list)
             for platform, row_idx, row in to_publish:
@@ -112,6 +110,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     bot, active_slots, platform, count_available,
                     date, time, row_ids
                 )
+                logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
 
                 for row_idx in row_ids:
                     try:
