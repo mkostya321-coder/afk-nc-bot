@@ -43,7 +43,6 @@ def match_platform(raw_name: str) -> str | None:
 
 
 async def monitor_schedule(bot, active_slots: dict):
-    """Каждые 60 секунд проверяет таблицу и публикует слоты."""
     logger.info("📅 Планировщик слотов запущен")
     while True:
         try:
@@ -65,26 +64,25 @@ async def monitor_schedule(bot, active_slots: dict):
             records = sheet.get_all_values()
             now = datetime.now(moscow_tz)
 
-            logger.info(f"🔍 Проверка таблицы: {len(records)} строк")
-
-            to_publish = []   # (platform, row_idx, row_data)
+            to_publish = []
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < 8:
                     continue
 
                 date_str = row[0].strip()   # A
                 time_str = row[1].strip()   # B
-                flag = row[4].strip()       # E
+                # Пропускаем строки с пустыми датой или временем без логирования
+                if not date_str or not time_str:
+                    continue
 
+                flag = row[4].strip()       # E
                 if flag != "0":
                     continue
 
                 try:
-                    # Формат даты: ДД.ММ.ГГГГ
                     slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                     slot_time = moscow_tz.localize(slot_time)
-                except Exception as e:
-                    logger.warning(f"Строка {row_idx}: неверный формат даты/времени: {e}")
+                except:
                     continue
 
                 if now >= slot_time:
@@ -92,14 +90,12 @@ async def monitor_schedule(bot, active_slots: dict):
                     platform = match_platform(platform_raw)
                     if platform:
                         to_publish.append((platform, row_idx, row))
-                        logger.info(f"✅ Строка {row_idx}: {platform} на {date_str} {time_str}")
 
             if not to_publish:
-                logger.info("Нет подходящих строк для публикации")
                 await asyncio.sleep(60)
                 continue
 
-            # Группируем
+            # Группируем по платформе и времени
             from collections import defaultdict
             groups = defaultdict(list)
             for platform, row_idx, row in to_publish:
@@ -116,12 +112,10 @@ async def monitor_schedule(bot, active_slots: dict):
                     bot, active_slots, platform, count_available,
                     date, time, row_ids
                 )
-                logger.info(f"📢 Опубликован слот {platform} ({count_available} шт.)")
 
-                # Помечаем флагом 1
                 for row_idx in row_ids:
                     try:
-                        sheet.update_cell(row_idx, 5, 1)   # столбец E = 1
+                        sheet.update_cell(row_idx, 5, 1)   # E = 1
                     except Exception as e:
                         logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
