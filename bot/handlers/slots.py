@@ -2,9 +2,7 @@ import logging
 import os
 from urllib.parse import quote
 from aiogram import Router, F
-from aiogram.filters import Command, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
@@ -17,10 +15,8 @@ router = Router()
 logger = logging.getLogger(__name__)
 active_slots = {}
 
-class TakeSlotState(StatesGroup):
-    waiting_for_quantity = State()
-    sending_reviews = State()
-    waiting_for_screenshot = State()
+# Хранилище запросов на взятие слота (без FSM)
+slot_requests = {}
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -39,7 +35,7 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация (старые команды) ----------
+# ---------- Ручная публикация ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
@@ -158,7 +154,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
 
 # ---------- Обработчик кнопки "Взять слот" ----------
 @router.callback_query(F.data.startswith("take_slot|"))
-async def take_slot_start(callback: CallbackQuery, state: FSMContext):
+async def take_slot_start(callback: CallbackQuery):
     user_id = callback.from_user.id
     if not is_registered(user_id):
         await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
@@ -176,88 +172,115 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
     count = int(count_str)
     time = time_safe.replace('-', ':')
 
-    await state.update_data(
-        platform=platform, count=count, date=date, time=time,
-        slot_msg_id=callback.message.message_id
-    )
-    await state.set_state(TakeSlotState.waiting_for_quantity)
+    # Сохраняем запрос в словарь
+    slot_requests[user_id] = {
+        "platform": platform,
+        "count": count,
+        "date": date,
+        "time": time,
+        "slot_msg_id": callback.message.message_id,
+        "state": "waiting_quantity",
+        "assigned_rows": [],
+        "current_index": 0
+    }
 
-    # Отправляем вопрос в личку пользователю (НЕ в канал)
+    # Отправляем вопрос в личку
     await callback.bot.send_message(
         chat_id=user_id,
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
     await callback.answer()
 
-@router.message(TakeSlotState.waiting_for_quantity)
-async def process_quantity(message: Message, state: FSMContext):
-    try:
-        quantity = int(message.text.strip())
-    except:
-        await message.answer("Пожалуйста, введите число.")
+# ---------- Обработчик сообщений для активных запросов ----------
+@router.message(F.text)
+async def handle_slot_request(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        # Не наш запрос – пусть обрабатывают другие хендлеры или middleware
         return
 
-    data = await state.get_data()
-    available = data["count"]
-    if quantity > available or quantity <= 0:
-        await message.answer(f"❌ Можно взять от 1 до {available} отзывов.")
-        return
+    request = slot_requests[user_id]
+    state = request["state"]
 
-    slot_msg_id = data["slot_msg_id"]
-    slot_info = active_slots.get(slot_msg_id)
-    if not slot_info:
-        await message.answer("❌ Этот слот уже неактивен.")
-        await state.clear()
-        return
-
-    row_ids = slot_info["row_ids"]
-    if len(row_ids) < quantity:
-        await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
-        await state.clear()
-        return
-
-    assigned_rows = row_ids[:quantity]
-    slot_info["row_ids"] = row_ids[quantity:]
-    slot_info["count"] -= quantity
-    if slot_info["count"] == 0:
-        del active_slots[slot_msg_id]
+    if state == "waiting_quantity":
         try:
-            await message.bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=slot_msg_id,
-                text="Все отзывы этого слота разобраны."
-            )
+            quantity = int(message.text.strip())
         except:
-            pass
+            await message.answer("Пожалуйста, введите число.")
+            return
 
-    sheet = get_sheet()
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    for row_idx in assigned_rows:
-        try:
-            sheet.update_cell(row_idx, 5, 5)          # E = 5
-            sheet.update_cell(row_idx, 11, username)   # K
-            sheet.update_cell(row_idx, 10, "в работе") # J
-        except Exception as e:
-            logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+        if quantity <= 0 or quantity > request["count"]:
+            await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
+            return
 
-    await state.update_data(assigned_rows=assigned_rows, current_index=0)
-    await state.set_state(TakeSlotState.sending_reviews)
-    await send_next_review(message, state, sheet)
+        slot_msg_id = request["slot_msg_id"]
+        slot_info = active_slots.get(slot_msg_id)
+        if not slot_info:
+            await message.answer("❌ Этот слот уже неактивен.")
+            del slot_requests[user_id]
+            return
 
-async def send_next_review(message: Message, state: FSMContext, sheet):
-    data = await state.get_data()
-    assigned_rows = data["assigned_rows"]
-    current_index = data["current_index"]
+        row_ids = slot_info["row_ids"]
+        if len(row_ids) < quantity:
+            await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
+            del slot_requests[user_id]
+            return
+
+        assigned_rows = row_ids[:quantity]
+        slot_info["row_ids"] = row_ids[quantity:]
+        slot_info["count"] -= quantity
+        if slot_info["count"] == 0:
+            del active_slots[slot_msg_id]
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=CHANNEL_ID, message_id=slot_msg_id,
+                    text="Все отзывы этого слота разобраны."
+                )
+            except:
+                pass
+
+        sheet = get_sheet()
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        for row_idx in assigned_rows:
+            try:
+                sheet.update_cell(row_idx, 5, 5)          # E = 5
+                sheet.update_cell(row_idx, 11, username)   # K
+                sheet.update_cell(row_idx, 10, "в работе") # J
+            except Exception as e:
+                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+
+        request["assigned_rows"] = assigned_rows
+        request["current_index"] = 0
+        request["state"] = "sending_reviews"
+
+        # Отправляем первый отзыв
+        await send_next_review(message, request, sheet)
+
+    elif state == "waiting_screenshot":
+        if not message.photo:
+            await message.answer("Ожидается скриншот (фото). Пожалуйста, пришлите изображение.")
+            return
+
+        # Приняли скриншот
+        request["current_index"] += 1
+        request["state"] = "sending_reviews"
+        sheet = get_sheet()
+        await send_next_review(message, request, sheet)
+
+async def send_next_review(message: Message, request: dict, sheet):
+    assigned_rows = request["assigned_rows"]
+    current_index = request["current_index"]
 
     if current_index >= len(assigned_rows):
         await message.answer("✅ Все отзывы отправлены. Спасибо за работу!")
-        await state.clear()
+        del slot_requests[message.from_user.id]
         return
 
     row_idx = assigned_rows[current_index]
     row = sheet.row_values(row_idx)
     if len(row) < 14:
         await message.answer("❌ Ошибка данных в таблице.")
-        await state.clear()
+        del slot_requests[message.from_user.id]
         return
 
     link = row[6]   # G
@@ -274,20 +297,7 @@ async def send_next_review(message: Message, state: FSMContext, sheet):
 
     msg_text += "\n\nПожалуйста, пришлите скриншот подтверждения."
     await message.answer(msg_text)
-    await state.set_state(TakeSlotState.waiting_for_screenshot)
-
-@router.message(TakeSlotState.waiting_for_screenshot, F.photo)
-async def receive_screenshot(message: Message, state: FSMContext):
-    data = await state.get_data()
-    current_index = data["current_index"]
-    await state.update_data(current_index=current_index + 1)
-    await state.set_state(TakeSlotState.sending_reviews)
-    sheet = get_sheet()
-    await send_next_review(message, state, sheet)
-
-@router.message(TakeSlotState.waiting_for_screenshot)
-async def non_photo_in_screenshot_state(message: Message):
-    await message.answer("Ожидается скриншот (фото). Пожалуйста, пришлите изображение.")
+    request["state"] = "waiting_screenshot"
 
 # ---------- Команды просмотра/закрытия ----------
 @router.message(Command("slots"))
