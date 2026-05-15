@@ -47,8 +47,7 @@ async def cmd_helpadm(message: Message):
 # ---------- /userblock ----------
 @router.message(Command("userblock"))
 async def user_block(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
     try:
         parts = message.text.split()
         target = parts[1]
@@ -70,17 +69,13 @@ async def user_block(message: Message):
         status_text = "заблокирован" if new_status else "разблокирован"
         await message.answer(f"✅ Пользователь {user_id} {status_text}.")
 
-# ---------- /useredit (расширенный) ----------
+# ---------- /useredit ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
     parts = message.text.split()
     if len(parts) < 4:
-        await message.answer(
-            "Использование: /useredit <user_id или username> <поле> <значение>\n"
-            "Поля: payout, earned, phone, bank, myotz 1/2/3/4/5/6/7 значение"
-        )
+        await message.answer("Использование: /useredit <user_id или username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1/2/3/4/5/6/7 значение")
         return
     target = parts[1]
     if target.isdigit():
@@ -97,18 +92,13 @@ async def user_edit(message: Message):
 
     if field == "myotz":
         if len(parts) < 5:
-            await message.answer("❌ Укажите номер платформы (1-7) и значение. Пример: /useredit new_chapterr24 myotz 1 5")
+            await message.answer("❌ Укажите номер платформы (1-7) и значение.")
             return
         platform_num = int(parts[3])
         new_value = int(parts[4])
         platform_map = {
-            1: "yandex_total",
-            2: "google_total",
-            3: "gis_total",
-            4: "avito_total",
-            5: "vk_total",
-            6: "otzovik_total",
-            7: "doctoru_total"
+            1: "yandex_total", 2: "google_total", 3: "gis_total",
+            4: "avito_total", 5: "vk_total", 6: "otzovik_total", 7: "doctoru_total"
         }
         if platform_num not in platform_map:
             await message.answer("❌ Номер платформы должен быть от 1 до 7.")
@@ -126,34 +116,27 @@ async def user_edit(message: Message):
     elif field == "bank":
         update_user_field(user_id, "bank", value)
     else:
-        await message.answer("Неизвестное поле. Допустимые: payout, earned, phone, bank, myotz")
+        await message.answer("Неизвестное поле.")
         return
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
 
 # ---------- /resetbalance ----------
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute(
-                "UPDATE users SET "
-                "payout = 0, "
-                "yandex_passed = 0, google_passed = 0, gis_passed = 0, "
-                "avito_passed = 0, vk_passed = 0, otzovik_passed = 0, doctoru_passed = 0"
-            )
+            cur.execute("UPDATE users SET payout = 0, yandex_passed = 0, google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0, otzovik_passed = 0, doctoru_passed = 0")
             conn.commit()
-        await message.answer("✅ Периодические счётчики и «к выплате» сброшены. Общие счётчики и заработано за всё время сохранены.")
+        await message.answer("✅ Периодические счётчики и «к выплате» сброшены.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- /info ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
     args = message.text.split()
     if len(args) < 2:
         await message.answer("❌ Использование: /info <username>")
@@ -205,12 +188,11 @@ async def cmd_info(message: Message):
 # ---------- /update_stats ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(message.from_user.id): return
     from bot.google_sheets import update_stats_from_sheet_once
-    await message.answer("⏳ Запускаю обновление статистики из Google Таблицы...")
+    await message.answer("⏳ Запускаю обновление статистики...")
     try:
         await update_stats_from_sheet_once()
-        await message.answer("✅ Статистика успешно обновлена! Проверьте профили.")
+        await message.answer("✅ Статистика успешно обновлена!")
     except Exception as e:
-        await message.answer(f"❌ Ошибка при обновлении: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
