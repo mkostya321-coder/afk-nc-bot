@@ -1,13 +1,13 @@
 import logging, os, asyncio
 from urllib.parse import quote
 from datetime import datetime, timedelta
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_GROUP_ID
-from bot.database import is_registered, is_blocked, get_user, update_user_field, add_user
+from bot.database import is_registered, is_blocked, get_user
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -59,8 +59,65 @@ async def yandex_slot(message: Message):
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
 
-# ... (остальные команды google, gis, avito, vk, otzovik, doctoru аналогичны, опущены для краткости)
-# их нужно оставить как в предыдущих версиях
+@router.message(Command("google"))
+async def google_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: GOOGLE\nЗадача: Выполнить отзыв/ы GOOGLE\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "GOOGLE", text, "50₽")
+
+@router.message(Command("gis"))
+async def gis_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: 2ГИС\nЗадача: Выполнить отзыв/ы 2ГИС\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "2ГИС", text, "50₽")
+
+@router.message(Command("avito"))
+async def avito_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Авито\nЗадача: Выполнить отзыв/ы Авито\nОплата: 700 руб/шт\n"
+        "Дедлайн: 2 суток с момента принятия слота\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Авито", text, "700₽")
+
+@router.message(Command("vk"))
+async def vk_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: ВК\nЗадача: Выполнить отзыв/ы ВК\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "ВК", text, "50₽")
+
+@router.message(Command("otzovik"))
+async def otzovik_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Отзовик\nЗадача: Выполнить отзыв/ы ОТЗОВИК\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Отзовик", text, "100₽")
+
+@router.message(Command("doctoru"))
+async def doctoru_slot(message: Message):
+    if not is_admin(message.from_user.id): return
+    text = (
+        "🔥 Слот: Doctoru\nЗадача: Выполнить отзыв/ы Doctoru\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Doctoru", text, "100₽")
 
 # ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
