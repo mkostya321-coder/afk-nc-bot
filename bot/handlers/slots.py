@@ -14,8 +14,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 router = Router()
 logger = logging.getLogger(__name__)
 active_slots = {}
-
-# Хранилище запросов на взятие слота (без FSM)
 slot_requests = {}
 
 def is_admin(user_id: int) -> bool:
@@ -172,7 +170,6 @@ async def take_slot_start(callback: CallbackQuery):
     count = int(count_str)
     time = time_safe.replace('-', ':')
 
-    # Сохраняем запрос в словарь
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
@@ -184,88 +181,88 @@ async def take_slot_start(callback: CallbackQuery):
         "current_index": 0
     }
 
-    # Отправляем вопрос в личку
     await callback.bot.send_message(
         chat_id=user_id,
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
     await callback.answer()
 
-# ---------- Обработчик сообщений для активных запросов ----------
+# ---------- Обработка текста (ввод количества) ----------
 @router.message(F.text)
-async def handle_slot_request(message: Message):
+async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
     if user_id not in slot_requests:
-        # Не наш запрос – пусть обрабатывают другие хендлеры или middleware
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "waiting_quantity":
         return
 
-    request = slot_requests[user_id]
-    state = request["state"]
+    try:
+        quantity = int(message.text.strip())
+    except:
+        await message.answer("Пожалуйста, введите число.")
+        return
 
-    if state == "waiting_quantity":
+    if quantity <= 0 or quantity > request["count"]:
+        await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
+        return
+
+    slot_msg_id = request["slot_msg_id"]
+    slot_info = active_slots.get(slot_msg_id)
+    if not slot_info:
+        await message.answer("❌ Этот слот уже неактивен.")
+        del slot_requests[user_id]
+        return
+
+    row_ids = slot_info["row_ids"]
+    if len(row_ids) < quantity:
+        await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
+        del slot_requests[user_id]
+        return
+
+    assigned_rows = row_ids[:quantity]
+    slot_info["row_ids"] = row_ids[quantity:]
+    slot_info["count"] -= quantity
+    if slot_info["count"] == 0:
+        del active_slots[slot_msg_id]
         try:
-            quantity = int(message.text.strip())
+            await message.bot.edit_message_text(
+                chat_id=CHANNEL_ID, message_id=slot_msg_id,
+                text="Все отзывы этого слота разобраны."
+            )
         except:
-            await message.answer("Пожалуйста, введите число.")
-            return
+            pass
 
-        if quantity <= 0 or quantity > request["count"]:
-            await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
-            return
+    sheet = get_sheet()
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+    for row_idx in assigned_rows:
+        try:
+            sheet.update_cell(row_idx, 5, 5)          # E = 5
+            sheet.update_cell(row_idx, 11, username)   # K
+            sheet.update_cell(row_idx, 10, "в работе") # J
+        except Exception as e:
+            logger.error(f"Ошибка обновления строки {row_idx}: {e}")
 
-        slot_msg_id = request["slot_msg_id"]
-        slot_info = active_slots.get(slot_msg_id)
-        if not slot_info:
-            await message.answer("❌ Этот слот уже неактивен.")
-            del slot_requests[user_id]
-            return
+    request["assigned_rows"] = assigned_rows
+    request["current_index"] = 0
+    request["state"] = "sending_reviews"
+    await send_next_review(message, request, sheet)
 
-        row_ids = slot_info["row_ids"]
-        if len(row_ids) < quantity:
-            await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
-            del slot_requests[user_id]
-            return
+# ---------- Обработка скриншотов (фото) ----------
+@router.message(F.photo)
+async def handle_screenshot(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "waiting_screenshot":
+        return
 
-        assigned_rows = row_ids[:quantity]
-        slot_info["row_ids"] = row_ids[quantity:]
-        slot_info["count"] -= quantity
-        if slot_info["count"] == 0:
-            del active_slots[slot_msg_id]
-            try:
-                await message.bot.edit_message_text(
-                    chat_id=CHANNEL_ID, message_id=slot_msg_id,
-                    text="Все отзывы этого слота разобраны."
-                )
-            except:
-                pass
-
-        sheet = get_sheet()
-        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        for row_idx in assigned_rows:
-            try:
-                sheet.update_cell(row_idx, 5, 5)          # E = 5
-                sheet.update_cell(row_idx, 11, username)   # K
-                sheet.update_cell(row_idx, 10, "в работе") # J
-            except Exception as e:
-                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
-
-        request["assigned_rows"] = assigned_rows
-        request["current_index"] = 0
-        request["state"] = "sending_reviews"
-
-        # Отправляем первый отзыв
-        await send_next_review(message, request, sheet)
-
-    elif state == "waiting_screenshot":
-        if not message.photo:
-            await message.answer("Ожидается скриншот (фото). Пожалуйста, пришлите изображение.")
-            return
-
-        # Приняли скриншот
-        request["current_index"] += 1
-        request["state"] = "sending_reviews"
-        sheet = get_sheet()
-        await send_next_review(message, request, sheet)
+    # Принимаем скриншот
+    request["current_index"] += 1
+    request["state"] = "sending_reviews"
+    sheet = get_sheet()
+    await send_next_review(message, request, sheet)
 
 async def send_next_review(message: Message, request: dict, sheet):
     assigned_rows = request["assigned_rows"]
