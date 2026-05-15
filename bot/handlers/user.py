@@ -1,4 +1,4 @@
-import sqlite3
+import sqlite3, asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -26,21 +26,96 @@ class RegForm(StatesGroup):
     phone_card = State()
     bank = State()
 
-# ---------- /start ----------
+class IntroState(StatesGroup):
+    first = State()
+    second = State()
+
+RULES_1 = (
+    "Информация о работе⚡️\n\n"
+    "🔖Вы получаете\n"
+    "Ссылки и текста куда нужно публиковать отзывы🗺\n\n"
+    "💯Делать исключительно те текста которые вам отправили ❗️❗️❗️\n\n"
+    "💎Лучше чтобы человек переписал текст, а не скопировал его это повышает на 20% проход отзыва\n\n"
+    "✨Ваша задача — просить своих знакомых или друзей опубликовать эти отзывы на разных платформах таких как Яндекс.Картах, Google Картах и др. строго по инструкции.\n\n"
+    "1 человек с одного устройства может сделать = 1 отзыв в Яндекс + 1 в Google и дальше по 1 отзыву на каждой платформе. Нужно привлекать разных людей.🆕\n\n"
+    "Контролируйте, чтобы текст соответствовал полу исполнителя (если указано «женский/мужской»).\n\n"
+    "Условия:\n\n"
+    "Оплата раз в неделю (среда/четверг):\n\n"
+    "💸Google — 5️⃣0️⃣ 💸за отзыв.\n"
+    "💸Яндекс — 1️⃣5️⃣0️⃣💸шт.\n"
+    "💸Авито —7️⃣0️⃣0️⃣💸шт.\n"
+    "💸Doctoru —1️⃣0️⃣0️⃣💸 шт.\n"
+    "💸 Otzovik — 1️⃣0️⃣0️⃣💸шт.\n"
+    "💸2ГИС — 5️⃣0️⃣ 💸за отзыв.\n\n"
+    "💲Еженедельная премия $30 — достанется сотруднику с самым высоким процентом опубликованных отзывов.\n\n"
+    "График свободный, требуется 2-3 часа в день за телефоном👋\n\n"
+    "🥰Можно совмещать с учёбой или основной работой."
+)
+
+RULES_2 = (
+    "🙂Инструкция по работе с отзывами⚠️\n\n"
+    "1. Кто может оставлять отзывы⁉️\n"
+    "Привлекай только друзей и знакомых.\n"
+    "Один человек может оставить только один отзыв в Яндекс Картах и один отзыв в Google Картах или 2ГИС.\n"
+    "Повторно просить того же человека нельзя.‼️‼️\n\n"
+    "2. Формат получения заданий\n"
+    "Отзывы скидываются в формате:\n"
+    "Ссылка\n"
+    "Текст\n"
+    "Пол (указан при необходимости)📌\n\n"
+    "4. Как учитывать пол💬\n"
+    "🔴Бот в первом сообщение указывает нужно ли учесть пол данного отзыва.\n\n"
+    "5. На каждый сделаный отзыв вы обязуетесь отправить скриншот боту который отправил вам отзывы.⚠️\n\n"
+    "6. ❗️Сотрудник, который берет 5 отзывов+- в определенный день, должен предоставить и отправить все подтверждающие скриншоты до 2️⃣3️⃣:5️⃣9️⃣ по московскому времени в день когда ему отправил отзывы бот. В случае несоблюдения этого срока, оплата за отзывы, полученные в этот день, будет снижена на 50%❗️\n\n"
+    "Если бот пишет что пол не важен. ‼️То обязательно следи за текстом: если в тексте есть слова в женском роде, например покупала или ходила, а ты отправляешь задание парню, он должен изменить их на мужской род — покупал, ходил.‼️И наоборот. Отзыв должен соответствовать полу того, кто его пишет.✔️"
+)
+
+async def show_intro(message: Message, state: FSMContext):
+    await state.set_state(IntroState.first)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Далее (можно через 30 сек)", callback_data="intro_next", disabled=True)
+    await message.answer(RULES_1, reply_markup=kb.as_markup())
+    asyncio.create_task(activate_button(message, state))
+
+async def activate_button(message: Message, state: FSMContext):
+    await asyncio.sleep(30)
+    current_state = await state.get_state()
+    if current_state == IntroState.first.__name__:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Далее", callback_data="intro_next")
+        await message.edit_reply_markup(reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "intro_next")
+async def process_intro_next(callback: CallbackQuery, state: FSMContext):
+    current = await state.get_state()
+    if current == IntroState.first.__name__:
+        await state.set_state(IntroState.second)
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Далее (можно через 30 сек)", callback_data="intro_next", disabled=True)
+        await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
+        asyncio.create_task(activate_button(callback.message, state))
+    elif current == IntroState.second.__name__:
+        await state.clear()
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Регистрация", callback_data="menu_reg")
+        await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
+    await callback.answer()
+
+# ---------- Старт ----------
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
-    await message.answer(
-        "👋 Привет!\n\nЯ бот для работы со слотами.\nВыберите нужный раздел на клавиатуре:",
-        reply_markup=main_menu_keyboard()
-    )
+    if is_registered(user_id):
+        await message.answer("👋 Привет!\n\nЯ бот для работы со слотами.\nВыберите нужный раздел на клавиатуре:", reply_markup=main_menu_keyboard())
+    else:
+        await show_intro(message, state)
 
 # ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
 async def menu_profile(message: Message):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        await message.answer("⛔ Вы заблокированы.")
         return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
@@ -57,14 +132,12 @@ async def menu_profile(message: Message):
     referrer = user.get("referrer", "0")
     ref_status = "нет"
     if referrer != "0":
-        # Используем ОБЩИЕ счётчики (total)
         yandex = user.get("yandex_total", 0) or 0
         google = user.get("google_total", 0) or 0
         gis = user.get("gis_total", 0) or 0
         if yandex >= 10 and (google + gis) >= 15:
             ref_status = "✅ выполнено"
         else:
-            # Проверка срока 28 дней
             if user.get("registered_at"):
                 try:
                     deadline = datetime.fromisoformat(user["registered_at"]) + timedelta(days=REFERRAL_DEADLINE_DAYS)
@@ -106,7 +179,7 @@ async def menu_profile(message: Message):
 @router.message(Command("myotz"))
 async def cmd_myotz(message: Message):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        await message.answer("⛔ Вы заблокированы.")
         return
     user = get_user(message.from_user.id)
     if not user or not user.get("name"):
@@ -145,7 +218,7 @@ async def menu_help(message: Message):
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        await message.answer("⛔ Вы заблокированы.")
         return
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
@@ -160,11 +233,7 @@ async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     tg_username = message.from_user.username
     if not tg_username:
-        await message.answer(
-            "❌ У вас не установлен username в Telegram.\n"
-            "Пожалуйста, перейдите в Настройки Telegram → Изменить профиль и задайте имя пользователя (username).\n"
-            "После этого вернитесь сюда и снова нажмите /reg или кнопку «📝 Регистрация»."
-        )
+        await message.answer("❌ У вас не установлен username в Telegram.\nПожалуйста, перейдите в Настройки Telegram → Изменить профиль и задайте имя пользователя (username).\nПосле этого вернитесь сюда и снова нажмите /reg или кнопку «📝 Регистрация».")
         await state.clear()
         return
     clean_username = tg_username.lstrip("@").lower()
@@ -191,7 +260,6 @@ async def process_city(message: Message, state: FSMContext):
 
 @router.message(RegForm.referrer)
 async def process_referrer(message: Message, state: FSMContext):
-    # Сохраняем БЕЗ @ и в нижнем регистре
     referrer = message.text.strip().lstrip("@").lower()
     if referrer != "0":
         ref_user = get_user_by_username(referrer)
@@ -236,13 +304,10 @@ async def process_bank(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Слоты")
 async def cmd_job(message: Message):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        await message.answer("⛔ Вы заблокированы.")
         return
     if not active_slots:
-        await message.answer(
-            "😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\n"
-            "С уважением команда New Chapter."
-        )
+        await message.answer("😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\nС уважением команда New Chapter.")
         return
     lines = ["Открытые слоты:"]
     for msg_id, data in active_slots.items():
@@ -254,7 +319,7 @@ async def cmd_job(message: Message):
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ К сожалению, вы заблокированы. Если хотите обжаловать решение, напишите в поддержку @New_Chapterr24.")
+        await message.answer("⛔ Вы заблокированы.")
         return
     user_id = message.from_user.id
     user = get_user(user_id)
@@ -269,7 +334,6 @@ async def show_my_referrals(message: Message, state: FSMContext):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    # Ищем рефералов, игнорируя @ в referrer
     cur.execute(
         "SELECT name, tg_username, registered_at, yandex_total, google_total, gis_total "
         "FROM users WHERE LOWER(REPLACE(referrer, '@', '')) = ?",
@@ -299,7 +363,6 @@ async def show_my_referrals(message: Message, state: FSMContext):
             remaining = 0
             deadline = now
 
-        # Используем ОБЩИЕ счётчики для статуса выполнения
         yandex = ref["yandex_total"] or 0
         google = ref["google_total"] or 0
         gis = ref["gis_total"] or 0
