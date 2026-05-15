@@ -182,9 +182,10 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
         slot_msg_id=callback.message.message_id
     )
     await state.set_state(TakeSlotState.waiting_for_quantity)
-    await callback.message.answer(
-        f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
-    )
+  await callback.bot.send_message(
+    chat_id=user_id,
+    text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
+)
     await callback.answer()
 
 @router.message(TakeSlotState.waiting_for_quantity)
