@@ -17,3 +17,6 @@ if not SHEET_ID:
 
 DB_PATH = "/data/bot.db"
 CREDENTIALS_PATH = "/data/google_key.json"
+
+# ID группы для пересылки скриншотов (замени на свой!)
+SCREENSHOT_GROUP_ID = "8598964084"  # ← вставь реальный ID группы
