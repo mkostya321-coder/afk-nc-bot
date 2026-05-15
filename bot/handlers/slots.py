@@ -168,7 +168,6 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
         return
 
     parts = callback.data.split("|")
-    # Ожидаем ровно 5 частей: take_slot, platform, count, date, time_safe
     if len(parts) != 5:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
@@ -182,10 +181,12 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
         slot_msg_id=callback.message.message_id
     )
     await state.set_state(TakeSlotState.waiting_for_quantity)
-  await callback.bot.send_message(
-    chat_id=user_id,
-    text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
-)
+
+    # Отправляем вопрос в личку пользователю (НЕ в канал)
+    await callback.bot.send_message(
+        chat_id=user_id,
+        text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
+    )
     await callback.answer()
 
 @router.message(TakeSlotState.waiting_for_quantity)
