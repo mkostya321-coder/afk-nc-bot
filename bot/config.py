@@ -16,7 +16,12 @@ if not SHEET_ID:
     raise ValueError("GOOGLE_SHEET_ID not found in environment")
 
 DB_PATH = "/data/bot.db"
-CREDENTIALS_PATH = "/data/google_key.json"
+
+# Путь к ключу: сначала пробуем /data, потом корень
+def get_credentials_path():
+    if os.path.exists("/data/google_key.json"):
+        return "/data/google_key.json"
+    return "google_key.json"
 
 # ID группы для пересылки скриншотов (замени на свой!)
-SCREENSHOT_GROUP_ID = "8598964084"  # ← вставь реальный ID группы
+SCREENSHOT_GROUP_ID = "8598964084"  # ← вставь реальный ID
