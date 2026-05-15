@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_GROUP_ID
+from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_GROUP_ID, get_credentials_path
 from bot.database import is_registered, is_blocked, get_user
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -21,11 +21,12 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 def get_sheet():
-    creds_path = "/data/google_key.json"
-    if not os.path.exists(creds_path):
-        creds_path = "google_key.json"
+    path = get_credentials_path()
+    if not os.path.exists(path):
+        logger.error(f"Файл ключа не найден: {path}")
+        return None
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name(path, scope)
     client = gspread.authorize(creds)
     return client.open_by_key(SHEET_ID).sheet1
 
