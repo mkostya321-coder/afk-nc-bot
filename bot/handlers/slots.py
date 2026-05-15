@@ -159,10 +159,6 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
 # ---------- Обработчик кнопки "Взять слот" ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery, state: FSMContext):
-    if not callback.data.startswith("take_slot|"):
-        await callback.answer("Устаревшая кнопка. Попробуйте новый слот.", show_alert=True)
-        return
-
     user_id = callback.from_user.id
     if not is_registered(user_id):
         await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
@@ -172,7 +168,8 @@ async def take_slot_start(callback: CallbackQuery, state: FSMContext):
         return
 
     parts = callback.data.split("|")
-    if len(parts) != 6:
+    # Ожидаем ровно 5 частей: take_slot, platform, count, date, time_safe
+    if len(parts) != 5:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
 
