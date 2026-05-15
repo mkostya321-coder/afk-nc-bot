@@ -2,7 +2,7 @@ import os, sqlite3, logging, asyncio
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from .config import SHEET_ID, DB_PATH, CREDENTIALS_PATH
+from .config import SHEET_ID, DB_PATH, get_credentials_path
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
@@ -31,15 +31,26 @@ def match_platform(raw_name: str) -> str | None:
                 return std
     return None
 
+def get_credentials():
+    path = get_credentials_path()
+    if not os.path.exists(path):
+        logger.error(f"Файл ключа не найден: {path}")
+        return None
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
+
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
         try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(
-                CREDENTIALS_PATH, [
-                    "https://spreadsheets.google.com/feeds",
-                    "https://www.googleapis.com/auth/drive"
-                ])
+            creds = get_credentials()
+            if not creds:
+                await asyncio.sleep(60)
+                continue
+
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SHEET_ID).sheet1
             records = sheet.get_all_values()
@@ -91,7 +102,6 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# Статистика (столбец I)
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
@@ -106,11 +116,9 @@ async def update_stats_from_sheet():
 
 async def update_stats_from_sheet_once():
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
-            CREDENTIALS_PATH, [
-                "https://spreadsheets.google.com/feeds",
-                "https://www.googleapis.com/auth/drive"
-            ])
+        creds = get_credentials()
+        if not creds:
+            return
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SHEET_ID).sheet1
         records = sheet.get_all_values()
