@@ -83,7 +83,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
                     for row_idx in row_ids:
                         try:
-                            sheet.update_cell(row_idx, 5, 1)   # E = 1
+                            sheet.update_cell(row_idx, 5, 1)
                         except Exception as e:
                             logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
@@ -105,7 +105,6 @@ async def update_stats_from_sheet():
         await update_stats_from_sheet_once()
 
 async def update_stats_from_sheet_once():
-    """Обновляет статистику по столбцу I (флаг статистики)"""
     try:
         creds = ServiceAccountCredentials.from_json_keyfile_name(
             CREDENTIALS_PATH, [
@@ -123,12 +122,12 @@ async def update_stats_from_sheet_once():
 
             processed = 0
             for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 10:   # минимум до столбца J
+                if len(row) < 10:
                     continue
-                platform_raw = row[3].strip()   # D
-                status = row[9].strip().lower() # J (статус)
-                flag_stat = row[8].strip()       # I (флаг статистики)
-                executor = row[10].strip()       # K (исполнитель)
+                platform_raw = row[3].strip()
+                status = row[9].strip().lower()
+                flag_stat = row[8].strip()
+                executor = row[10].strip()
 
                 if flag_stat != "0" or status != "опубликован":
                     continue
@@ -155,22 +154,19 @@ async def update_stats_from_sheet_once():
                         cur.execute("UPDATE users SET otzovik_passed = otzovik_passed + 1, otzovik_total = otzovik_total + 1 WHERE user_id = ?", (uid,))
                     elif platform == "доктору":
                         cur.execute("UPDATE users SET doctoru_passed = doctoru_passed + 1, doctoru_total = doctoru_total + 1 WHERE user_id = ?", (uid,))
-                    # Обновляем флаг статистики
                     try:
-                        sheet.update_cell(row_idx, 9, 1)   # I = 1
+                        sheet.update_cell(row_idx, 9, 1)
                     except:
                         pass
                 else:
                     try:
-                        sheet.update_cell(row_idx, 9, 2)   # I = 2 (пользователь не найден)
+                        sheet.update_cell(row_idx, 9, 2)
                     except:
                         pass
-
                 processed += 1
 
             conn.commit()
 
-            # Пересчёт выплат и рефералов (как раньше)
             cur.execute("SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed, otzovik_passed, doctoru_passed, total_earned FROM users")
             for user_row in cur.fetchall():
                 uid = user_row[0]
@@ -184,7 +180,6 @@ async def update_stats_from_sheet_once():
                 cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
-            # Реферальные бонусы по общим счётчикам
             cur.execute("SELECT user_id, referrer, yandex_total, google_total, gis_total FROM users WHERE referrer != '0'")
             for row in cur.fetchall():
                 user_id, referrer, yandex, google, gis = row
