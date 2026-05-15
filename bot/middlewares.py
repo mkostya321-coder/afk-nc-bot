@@ -10,20 +10,15 @@ class AutoMenuMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         if isinstance(event, Message):
-            # Пропускаем команды
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
-            # Пропускаем кнопки меню
             if event.text in ["📋 Профиль", "💼 Слоты", "❓ Помощь", "📝 Регистрация", "👥 Реферальная система", "👥 Мои рефералы"]:
                 return await handler(event, data)
-            # Если у пользователя активен запрос на взятие слота – пропускаем
             if event.from_user.id in slot_requests:
                 return await handler(event, data)
-            # Если есть активное FSM состояние (регистрация) – пропускаем
             state = data.get("state")
             if state and await state.get_state():
                 return await handler(event, data)
-            # Показываем меню
             add_user(event.from_user.id, event.from_user.username, event.from_user.full_name)
             await event.answer("👋 Главное меню", reply_markup=main_menu_keyboard())
             return
