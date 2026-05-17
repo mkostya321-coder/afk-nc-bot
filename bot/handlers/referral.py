@@ -23,12 +23,10 @@ async def referral_info(message: Message):
         "   • Приглашённый получает 200 рублей\n\n"
         "📅 Выплата производится в ближайшую среду или четверг (день зарплаты) после фиксации выполнения всех условий."
     )
-
     kb = InlineKeyboardBuilder()
     kb.button(text="🔙 Назад", callback_data="referral:back")
     kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
     kb.adjust(2)
-
     await message.answer(text, reply_markup=kb.as_markup())
 
 @router.callback_query(F.data == "referral:back")
@@ -45,13 +43,10 @@ async def referral_invite(callback: CallbackQuery):
     if not username:
         await callback.answer("❌ У вас не указан Telegram username. Заполните профиль.", show_alert=True)
         return
-
     invite_text = (
-        "Привет.\n"
-        "Приглашаю в бот @ncjobbot. Схема такая:\n"
+        "Привет.\nПриглашаю в бот @ncjobbot. Схема такая:\n"
         "Ты регистрируешься, указываешь мой юзернейм: `" + username + "`\n"
-        "Получаешь бонус 200 рублей и ещё 2 250 рублей за выполнение отзывов "
-        "(10 Яндекс + 15 Google или 2ГИС).\n"
+        "Получаешь бонус 200 рублей и ещё 2 250 рублей за выполнение отзывов (10 Яндекс + 15 Google или 2ГИС).\n"
         "Все что нужно делать просить знакомых оставлять отзывы. Ты сам просишь своих друзей писать отзывы. Даёшь им готовый текст и ссылку — они оставляют, а платят тебе.\n"
         "Всё просто. За каждого друга — свои деньги. Бот надёжный.\n\n"
         "Найди @ncjobbot в Telegram и вводи мой юзернейм при старте."
