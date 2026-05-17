@@ -22,5 +22,5 @@ def get_credentials_path():
         return "/data/google_key.json"
     return "google_key.json"
 
-# ID группы для пересылки скриншотов (замени на реальный)
+# ID группы для пересылки скриншотов (замени на свой!)
 SCREENSHOT_GROUP_ID = "4830723"  # ← вставь реальный ID
