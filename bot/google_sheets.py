@@ -36,10 +36,7 @@ def get_credentials():
     if not os.path.exists(path):
         logger.error(f"Файл ключа не найден: {path}")
         return None
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
 async def monitor_schedule(bot, active_slots: dict):
@@ -50,7 +47,6 @@ async def monitor_schedule(bot, active_slots: dict):
             if not creds:
                 await asyncio.sleep(60)
                 continue
-
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SHEET_ID).sheet1
             records = sheet.get_all_values()
