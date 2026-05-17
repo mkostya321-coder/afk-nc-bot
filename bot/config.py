@@ -17,11 +17,10 @@ if not SHEET_ID:
 
 DB_PATH = "/data/bot.db"
 
-# Путь к ключу: сначала пробуем /data, потом корень
 def get_credentials_path():
     if os.path.exists("/data/google_key.json"):
         return "/data/google_key.json"
     return "google_key.json"
 
-# ID группы для пересылки скриншотов (замени на свой!)
+# ID группы для пересылки скриншотов (замени на реальный)
 SCREENSHOT_GROUP_ID = "4830723"  # ← вставь реальный ID
