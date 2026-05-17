@@ -73,28 +73,33 @@ RULES_2 = (
 async def show_intro(message: Message, state: FSMContext):
     await state.set_state(IntroState.first)
     kb = InlineKeyboardBuilder()
-    kb.button(text="Далее (можно через 30 сек)", callback_data="intro_next", disabled=True)
+    kb.button(text="Далее (30)", callback_data="intro_next", disabled=True)  # начальный текст
     await message.answer(RULES_1, reply_markup=kb.as_markup())
     asyncio.create_task(activate_button(message, state))
 
 async def activate_button(message: Message, state: FSMContext):
-    await asyncio.sleep(30)
-    current_state = await state.get_state()
-    if current_state == IntroState.first.__name__:
+    for sec in range(30, -1, -1):
+        await asyncio.sleep(1)
+        current_state = await state.get_state()
+        if current_state != IntroState.first.state:
+            return  # если пользователь уже ушёл, не обновляем
         kb = InlineKeyboardBuilder()
-        kb.button(text="Далее", callback_data="intro_next")
+        if sec > 0:
+            kb.button(text=f"Далее ({sec})", callback_data="intro_next", disabled=True)
+        else:
+            kb.button(text="Далее", callback_data="intro_next")
         await message.edit_reply_markup(reply_markup=kb.as_markup())
 
 @router.callback_query(F.data == "intro_next")
 async def process_intro_next(callback: CallbackQuery, state: FSMContext):
-    current = await state.get_state()
-    if current == IntroState.first.__name__:
+    current_state = await state.get_state()
+    if current_state == IntroState.first.state:
         await state.set_state(IntroState.second)
         kb = InlineKeyboardBuilder()
-        kb.button(text="Далее (можно через 30 сек)", callback_data="intro_next", disabled=True)
+        kb.button(text="Далее (30)", callback_data="intro_next", disabled=True)
         await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
         asyncio.create_task(activate_button(callback.message, state))
-    elif current == IntroState.second.__name__:
+    elif current_state == IntroState.second.state:
         await state.clear()
         kb = InlineKeyboardBuilder()
         kb.button(text="Регистрация", callback_data="menu_reg")
