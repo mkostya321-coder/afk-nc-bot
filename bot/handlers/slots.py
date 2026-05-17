@@ -1,4 +1,4 @@
-import logging, os, asyncio
+import logging, os
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Router, F
@@ -15,7 +15,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 active_slots = {}
 slot_requests = {}
-cooldowns = {}   # {user_id: {platform: datetime}}
+cooldowns = {}
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -172,7 +172,6 @@ async def take_slot_start(callback: CallbackQuery):
     count = int(count_str)
     time = time_safe.replace('-', ':')
 
-    # Проверка кулдауна
     if user_id in cooldowns and platform in cooldowns[user_id]:
         if datetime.now() < cooldowns[user_id][platform]:
             await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
@@ -266,7 +265,6 @@ async def handle_screenshot(message: Message):
     if request["state"] != "waiting_screenshot":
         return
 
-    # Пересылаем скриншот в группу
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
@@ -290,7 +288,6 @@ async def send_next_review(message: Message, request: dict, sheet):
     current_index = request["current_index"]
 
     if current_index >= len(assigned_rows):
-        # Устанавливаем кулдаун на платформу
         platform = request["platform"]
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
@@ -312,7 +309,6 @@ async def send_next_review(message: Message, request: dict, sheet):
     stars = row[2].strip() if len(row) > 2 else ""   # C
     gender = row[12].strip().upper() if len(row) > 12 else ""
 
-    # 1-е сообщение – информация
     info_msg = (
         f"⭐ Количество звезд: {stars}\n"
         "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ – 1 ЧЕЛОВЕК 1 ОТЗЫВ\n"
@@ -324,15 +320,10 @@ async def send_next_review(message: Message, request: dict, sheet):
     else:
         info_msg += "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила').\n"
     info_msg += "💡 Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n\nПожалуйста, после выполнения пришлите скриншот отзыва."
+
     await message.answer(info_msg)
-
-    # 2-е сообщение – ссылка
     await message.answer(link)
-
-    # 3-е сообщение – чистый текст
     await message.answer(text)
-
-    # 4-е сообщение – ожидание скриншота
     await message.answer("Ожидаю скриншот и продолжаем работу.")
 
     request["state"] = "waiting_screenshot"
