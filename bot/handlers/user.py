@@ -1,4 +1,4 @@
-import sqlite3, asyncio
+import sqlite3
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -26,87 +26,7 @@ class RegForm(StatesGroup):
     phone_card = State()
     bank = State()
 
-class IntroState(StatesGroup):
-    first = State()
-    second = State()
-
-RULES_1 = (
-    "Информация о работе⚡️\n\n"
-    "🔖Вы получаете\n"
-    "Ссылки и текста куда нужно публиковать отзывы🗺\n\n"
-    "💯Делать исключительно те текста которые вам отправили ❗️❗️❗️\n\n"
-    "💎Лучше чтобы человек переписал текст, а не скопировал его это повышает на 20% проход отзыва\n\n"
-    "✨Ваша задача — просить своих знакомых или друзей опубликовать эти отзывы на разных платформах таких как Яндекс.Картах, Google Картах и др. строго по инструкции.\n\n"
-    "1 человек с одного устройства может сделать = 1 отзыв в Яндекс + 1 в Google и дальше по 1 отзыву на каждой платформе. Нужно привлекать разных людей.🆕\n\n"
-    "Контролируйте, чтобы текст соответствовал полу исполнителя (если указано «женский/мужской»).\n\n"
-    "Условия:\n\n"
-    "Оплата раз в неделю (среда/четверг):\n\n"
-    "💸Google — 5️⃣0️⃣ 💸за отзыв.\n"
-    "💸Яндекс — 1️⃣5️⃣0️⃣💸шт.\n"
-    "💸Авито —7️⃣0️⃣0️⃣💸шт.\n"
-    "💸Doctoru —1️⃣0️⃣0️⃣💸 шт.\n"
-    "💸 Otzovik — 1️⃣0️⃣0️⃣💸шт.\n"
-    "💸2ГИС — 5️⃣0️⃣ 💸за отзыв.\n\n"
-    "💲Еженедельная премия $30 — достанется сотруднику с самым высоким процентом опубликованных отзывов.\n\n"
-    "График свободный, требуется 2-3 часа в день за телефоном👋\n\n"
-    "🥰Можно совмещать с учёбой или основной работой."
-)
-
-RULES_2 = (
-    "🙂Инструкция по работе с отзывами⚠️\n\n"
-    "1. Кто может оставлять отзывы⁉️\n"
-    "Привлекай только друзей и знакомых.\n"
-    "Один человек может оставить только один отзыв в Яндекс Картах и один отзыв в Google Картах или 2ГИС.\n"
-    "Повторно просить того же человека нельзя.‼️‼️\n\n"
-    "2. Формат получения заданий\n"
-    "Отзывы скидываются в формате:\n"
-    "Ссылка\n"
-    "Текст\n"
-    "Пол (указан при необходимости)📌\n\n"
-    "4. Как учитывать пол💬\n"
-    "🔴Бот в первом сообщение указывает нужно ли учесть пол данного отзыва.\n\n"
-    "5. На каждый сделаный отзыв вы обязуетесь отправить скриншот боту который отправил вам отзывы.⚠️\n\n"
-    "6. ❗️Сотрудник, который берет 5 отзывов+- в определенный день, должен предоставить и отправить все подтверждающие скриншоты до 2️⃣3️⃣:5️⃣9️⃣ по московскому времени в день когда ему отправил отзывы бот. В случае несоблюдения этого срока, оплата за отзывы, полученные в этот день, будет снижена на 50%❗️\n\n"
-    "Если бот пишет что пол не важен. ‼️То обязательно следи за текстом: если в тексте есть слова в женском роде, например покупала или ходила, а ты отправляешь задание парню, он должен изменить их на мужской род — покупал, ходил.‼️И наоборот. Отзыв должен соответствовать полу того, кто его пишет.✔️"
-)
-
-async def show_intro(message: Message, state: FSMContext):
-    await state.set_state(IntroState.first)
-    kb = InlineKeyboardBuilder()
-    kb.button(text="Далее (30)", callback_data="intro_next", disabled=True)  # начальный текст
-    await message.answer(RULES_1, reply_markup=kb.as_markup())
-    asyncio.create_task(activate_button(message, state))
-
-async def activate_button(message: Message, state: FSMContext):
-    for sec in range(30, -1, -1):
-        await asyncio.sleep(1)
-        current_state = await state.get_state()
-        if current_state != IntroState.first.state:
-            return  # если пользователь уже ушёл, не обновляем
-        kb = InlineKeyboardBuilder()
-        if sec > 0:
-            kb.button(text=f"Далее ({sec})", callback_data="intro_next", disabled=True)
-        else:
-            kb.button(text="Далее", callback_data="intro_next")
-        await message.edit_reply_markup(reply_markup=kb.as_markup())
-
-@router.callback_query(F.data == "intro_next")
-async def process_intro_next(callback: CallbackQuery, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == IntroState.first.state:
-        await state.set_state(IntroState.second)
-        kb = InlineKeyboardBuilder()
-        kb.button(text="Далее (30)", callback_data="intro_next", disabled=True)
-        await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
-        asyncio.create_task(activate_button(callback.message, state))
-    elif current_state == IntroState.second.state:
-        await state.clear()
-        kb = InlineKeyboardBuilder()
-        kb.button(text="Регистрация", callback_data="menu_reg")
-        await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
-    await callback.answer()
-
-# ---------- Старт ----------
+# ---------- Старт (без интро) ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -114,7 +34,9 @@ async def cmd_start(message: Message, state: FSMContext):
     if is_registered(user_id):
         await message.answer("👋 Привет!\n\nЯ бот для работы со слотами.\nВыберите нужный раздел на клавиатуре:", reply_markup=main_menu_keyboard())
     else:
-        await show_intro(message, state)
+        # Сразу предлагаем регистрацию, без длинных правил
+        await state.set_state(RegForm.name)
+        await message.answer("Отлично, задам вам пару вопросов.\n1. Ваше имя?", reply_markup=ReplyKeyboardRemove())
 
 # ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
