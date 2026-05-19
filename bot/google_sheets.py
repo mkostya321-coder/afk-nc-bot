@@ -2,7 +2,7 @@ import os, sqlite3, logging, asyncio
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from .config import SHEET_ID, DB_PATH, get_credentials_path
+from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,6 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ------------------------ МОНИТОРИНГ СЛОТОВ ------------------------
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -74,11 +73,18 @@ async def monitor_schedule(bot, active_slots: dict):
                     except Exception as e:
                         logger.error(f"Не удалось сбросить флаг для строки {row_idx}: {e}")
                 del active_slots[msg_id]
+
                 from .handlers.slots import publish_scheduled_slot
                 await publish_scheduled_slot(
                     bot, active_slots, slot["platform"], slot["initial_count"],
                     slot["date"], slot["time"], slot["row_ids"]
                 )
+                # ВАЖНО: СРАЗУ ОБНОВЛЯЕМ E=1 ДЛЯ ЭТИХ СТРОК
+                for row_idx in slot["row_ids"]:
+                    try:
+                        sheet.update_cell(row_idx, 5, 1)
+                    except Exception as e:
+                        logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
                 logger.info(f"Переопубликован слот {slot['platform']} (истекло 2 часа)")
 
             # 2. Публикация новых слотов по времени
@@ -131,7 +137,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ ------------------------
+# ОБНОВЛЕНИЕ СТАТИСТИКИ (без изменений)
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
