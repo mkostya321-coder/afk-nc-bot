@@ -37,18 +37,9 @@ async def scheduler():
         await asyncio.sleep((next_time - now).total_seconds())
         now_after = datetime.now(moscow_tz)
         if now_after.hour == 8:
-            await bot.send_message(
-                CHANNEL_ID,
-                "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. Всем хорошего дня! "
-                "Ожидайте сегодняшние слоты. С уважением, команда NC 🤝"
-            )
+            await bot.send_message(CHANNEL_ID, "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. Всем хорошего дня! Ожидайте сегодняшние слоты. С уважением, команда NC 🤝")
         elif now_after.hour == 22 and now_after.minute == 30:
-            await bot.send_message(
-                CHANNEL_ID,
-                "🌙 Сегодняшний рабочий день подошёл к концу. Всем спасибо за работу! "
-                "Кто ещё не отправил скриншоты — успевайте до 23:59 МСК. "
-                "Всем доброй ночи! С уважением, команда NC 😴🌟"
-            )
+            await bot.send_message(CHANNEL_ID, "🌙 Сегодняшний рабочий день подошёл к концу. Всем спасибо за работу! Кто ещё не отправил скриншоты — успевайте до 23:59 МСК. Всем доброй ночи! С уважением, команда NC 😴🌟")
 
 async def main():
     init_db()
