@@ -6,7 +6,7 @@ from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")          # <-- явно объявлено
+moscow_tz = pytz.timezone("Europe/Moscow")          # Явное объявление переменной
 
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50,
@@ -58,19 +58,17 @@ async def monitor_schedule(bot, active_slots: dict):
             for msg_id, slot in list(active_slots.items()):
                 publish_time = slot.get("publish_time")
                 if publish_time and (now - publish_time).total_seconds() >= 7200:
-                    # Ищем строки с E=1 (не взятые) и E не равно 2
                     available_rows = []
                     for row_idx in slot["row_ids"]:
                         try:
                             val = sheet.cell(row_idx, 5).value
-                            if val == "1":   # не взято и не тронуто менеджером
+                            if val == "1":
                                 available_rows.append(row_idx)
                         except:
                             continue
                     if available_rows:
                         expired_slots.append((msg_id, slot, available_rows))
                     else:
-                        # Все разобраны или помечены 2 – удаляем слот
                         try:
                             await bot.edit_message_text(
                                 chat_id=CHANNEL_ID, message_id=msg_id,
@@ -81,7 +79,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         del active_slots[msg_id]
 
             for msg_id, slot, available_rows in expired_slots:
-                # Закрываем старый пост
                 try:
                     await bot.edit_message_text(
                         chat_id=CHANNEL_ID, message_id=msg_id,
@@ -89,7 +86,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                 except:
                     pass
-                # Сбрасываем E=1 -> 0
                 for row_idx in available_rows:
                     try:
                         sheet.update_cell(row_idx, 5, 0)
@@ -97,14 +93,12 @@ async def monitor_schedule(bot, active_slots: dict):
                         logger.error(f"Не удалось сбросить E для строки {row_idx}: {e}")
                 del active_slots[msg_id]
 
-                # Перепубликовываем слот из оставшихся строк
                 if available_rows:
                     from .handlers.slots import publish_scheduled_slot
                     await publish_scheduled_slot(
                         bot, active_slots, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows
                     )
-                    # Сразу ставим E=1 для этих строк
                     for row_idx in available_rows:
                         try:
                             sheet.update_cell(row_idx, 5, 1)
@@ -121,10 +115,9 @@ async def monitor_schedule(bot, active_slots: dict):
                 time_str = row[1].strip()
                 if not date_str or not time_str:
                     continue
-                flag = row[4].strip()   # столбец E
-                if flag != "0":
+                flag = row[4].strip()
+                if flag not in ["0", ""]:
                     continue
-                # Проверяем, не стоит ли E=2 (менеджер исключил)
                 if flag == "2":
                     continue
                 try:
@@ -155,7 +148,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         date, time, row_ids
                     )
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
-                    # Ставим E=1
                     for row_idx in row_ids:
                         try:
                             sheet.update_cell(row_idx, 5, 1)
