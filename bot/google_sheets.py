@@ -6,7 +6,7 @@ from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")          # ← явное объявление
+moscow_tz = pytz.timezone("Europe/Moscow")          # <-- явно объявлено
 
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50,
@@ -53,44 +53,65 @@ async def monitor_schedule(bot, active_slots: dict):
             records = sheet.get_all_values()
             now = datetime.now(moscow_tz)
 
-            # 1. Проверка истёкших слотов (2 часа без взятия)
+            # 1. Проверка истёкших слотов (1 час без взятия)
             expired_slots = []
             for msg_id, slot in list(active_slots.items()):
                 publish_time = slot.get("publish_time")
-                if publish_time and (now - publish_time).total_seconds() >= 7200:
-                    if slot["count"] == slot.get("initial_count", 0):
-                        expired_slots.append((msg_id, slot))
-            for msg_id, slot in expired_slots:
+                if publish_time and (now - publish_time).total_seconds() >= 3600:   # 1 час
+                    # Проверяем, сколько строк ещё не выданы (E=1)
+                    available_rows = []
+                    for row_idx in slot["row_ids"]:
+                        try:
+                            # Читаем текущее значение E из таблицы, чтобы не полагаться на кэш
+                            cell_val = sheet.cell(row_idx, 5).value
+                            if cell_val == "1":
+                                available_rows.append(row_idx)
+                        except:
+                            continue
+                    if available_rows:
+                        expired_slots.append((msg_id, slot, available_rows))
+                    else:
+                        # Все строки уже выданы (E=5) – просто удаляем слот из активных
+                        try:
+                            await bot.edit_message_text(
+                                chat_id=CHANNEL_ID, message_id=msg_id,
+                                text="Все отзывы разобраны."
+                            )
+                        except:
+                            pass
+                        del active_slots[msg_id]
+
+            for msg_id, slot, available_rows in expired_slots:
                 # Закрываем старый пост
                 try:
                     await bot.edit_message_text(
-                        chat_id=CHANNEL_ID,
-                        message_id=msg_id,
-                        text="Срок размещения истёк. Слот будет переопубликован."
+                        chat_id=CHANNEL_ID, message_id=msg_id,
+                        text="Срок размещения истёк. Неразобранные отзывы будут переопубликованы."
                     )
                 except:
                     pass
-                # Сбрасываем флаги E на 0 и удаляем старый слот
-                for row_idx in slot["row_ids"]:
+                # Сбрасываем флаги E=1 обратно в 0 для невыданных строк
+                for row_idx in available_rows:
                     try:
                         sheet.update_cell(row_idx, 5, 0)   # E = 0
                     except Exception as e:
                         logger.error(f"Не удалось сбросить флаг для строки {row_idx}: {e}")
                 del active_slots[msg_id]
 
-                # Переопубликовываем слот
-                from .handlers.slots import publish_scheduled_slot
-                await publish_scheduled_slot(
-                    bot, active_slots, slot["platform"], slot["initial_count"],
-                    slot["date"], slot["time"], slot["row_ids"]
-                )
-                # ВАЖНО: СРАЗУ ОБНОВЛЯЕМ E=1, ЧТОБЫ НЕ БЫЛО ПОВТОРНОЙ ПУБЛИКАЦИИ
-                for row_idx in slot["row_ids"]:
-                    try:
-                        sheet.update_cell(row_idx, 5, 1)   # E = 1
-                    except Exception as e:
-                        logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
-                logger.info(f"Переопубликован слот {slot['platform']} (истекло 2 часа)")
+                # Публикуем новый слот только из оставшихся строк
+                if available_rows:
+                    from .handlers.slots import publish_scheduled_slot
+                    await publish_scheduled_slot(
+                        bot, active_slots, slot["platform"], len(available_rows),
+                        slot["date"], slot["time"], available_rows
+                    )
+                    # Сразу ставим E=1 для этих строк, чтобы не было повторной публикации
+                    for row_idx in available_rows:
+                        try:
+                            sheet.update_cell(row_idx, 5, 1)
+                        except Exception as e:
+                            logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
+                    logger.info(f"Переопубликован слот {slot['platform']} ({len(available_rows)} шт.)")
 
             # 2. Публикация новых слотов по времени
             to_publish = []
@@ -101,7 +122,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 time_str = row[1].strip()
                 if not date_str or not time_str:
                     continue
-                flag = row[4].strip()      # столбец E
+                flag = row[4].strip()
                 if flag != "0":
                     continue
                 try:
@@ -110,7 +131,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 except:
                     continue
                 if now >= slot_time:
-                    platform_raw = row[3].strip()   # столбец D (платформа)
+                    platform_raw = row[3].strip()
                     platform = match_platform(platform_raw)
                     if platform:
                         to_publish.append((platform, row_idx, row))
@@ -132,7 +153,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         date, time, row_ids
                     )
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
-                    # СРАЗУ ОБНОВЛЯЕМ E=1 ДЛЯ ЭТИХ СТРОК
                     for row_idx in row_ids:
                         try:
                             sheet.update_cell(row_idx, 5, 1)   # E = 1
@@ -143,7 +163,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ ------------------------
+# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ (БЕЗ ИЗМЕНЕНИЙ) ------------------------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
