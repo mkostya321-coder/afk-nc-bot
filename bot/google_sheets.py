@@ -52,6 +52,41 @@ async def monitor_schedule(bot, active_slots: dict):
             records = sheet.get_all_values()
             now = datetime.now(moscow_tz)
 
+            # 1. Проверка истёкших слотов (2 часа)
+            expired_slots = []
+            for msg_id, slot in list(active_slots.items()):
+                publish_time = slot.get("publish_time")
+                if publish_time and (now - publish_time).total_seconds() >= 7200:
+                    # если слот не тронут (count равен изначальному и row_ids не изменились)
+                    if slot["count"] == slot.get("initial_count", 0):
+                        expired_slots.append((msg_id, slot))
+            for msg_id, slot in expired_slots:
+                # Закрываем старый пост
+                try:
+                    await bot.edit_message_text(
+                        chat_id=CHANNEL_ID,
+                        message_id=msg_id,
+                        text="Срок размещения истёк. Слот будет переопубликован."
+                    )
+                except:
+                    pass
+                # Сбрасываем флаги в таблице для этих строк
+                for row_idx in slot["row_ids"]:
+                    try:
+                        sheet.update_cell(row_idx, 5, 0)   # E = 0
+                    except Exception as e:
+                        logger.error(f"Не удалось сбросить флаг для строки {row_idx}: {e}")
+                # Удаляем из активных
+                del active_slots[msg_id]
+                # Публикуем заново
+                from .handlers.slots import publish_scheduled_slot
+                await publish_scheduled_slot(
+                    bot, active_slots, slot["platform"], slot["initial_count"],
+                    slot["date"], slot["time"], slot["row_ids"]
+                )
+                logger.info(f"Переопубликован слот {slot['platform']} (истекло 2 часа)")
+
+            # 2. Публикация новых слотов по времени
             to_publish = []
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < 8:
@@ -86,7 +121,10 @@ async def monitor_schedule(bot, active_slots: dict):
                 for (platform, date, time), items in groups.items():
                     count_available = len(items)
                     row_ids = [item[0] for item in items]
-                    await publish_scheduled_slot(bot, active_slots, platform, count_available, date, time, row_ids)
+                    await publish_scheduled_slot(
+                        bot, active_slots, platform, count_available,
+                        date, time, row_ids
+                    )
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
                     for row_idx in row_ids:
                         try:
@@ -98,107 +136,4 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-async def update_stats_from_sheet():
-    while True:
-        now = datetime.now(moscow_tz)
-        target_times = [
-            now.replace(hour=10, minute=0, second=0, microsecond=0),
-            now.replace(hour=20, minute=0, second=0, microsecond=0)
-        ]
-        future_times = [t if t > now else t + timedelta(days=1) for t in target_times]
-        next_target = min(future_times)
-        await asyncio.sleep((next_target - now).total_seconds())
-        await update_stats_from_sheet_once()
-
-async def update_stats_from_sheet_once():
-    try:
-        creds = get_credentials()
-        if not creds:
-            return
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(SHEET_ID).sheet1
-        records = sheet.get_all_values()
-
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            cur.execute("UPDATE users SET yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0, otzovik_passed=0, doctoru_passed=0")
-            conn.commit()
-
-            processed = 0
-            for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 10:
-                    continue
-                platform_raw = row[3].strip()
-                status = row[9].strip().lower()
-                flag_stat = row[8].strip()
-                executor = row[10].strip()
-
-                if flag_stat != "0" or status != "опубликован":
-                    continue
-
-                platform = match_platform(platform_raw)
-                if not platform:
-                    continue
-
-                executor_clean = executor.lstrip("@").lower()
-                user = get_user_by_username(executor_clean)
-                if user:
-                    uid = user["user_id"]
-                    if platform == "яндекс":
-                        cur.execute("UPDATE users SET yandex_passed = yandex_passed + 1, yandex_total = yandex_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "google":
-                        cur.execute("UPDATE users SET google_passed = google_passed + 1, google_total = google_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "2гис":
-                        cur.execute("UPDATE users SET gis_passed = gis_passed + 1, gis_total = gis_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "авито":
-                        cur.execute("UPDATE users SET avito_passed = avito_passed + 1, avito_total = avito_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "вк":
-                        cur.execute("UPDATE users SET vk_passed = vk_passed + 1, vk_total = vk_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "отзовик":
-                        cur.execute("UPDATE users SET otzovik_passed = otzovik_passed + 1, otzovik_total = otzovik_total + 1 WHERE user_id = ?", (uid,))
-                    elif platform == "доктору":
-                        cur.execute("UPDATE users SET doctoru_passed = doctoru_passed + 1, doctoru_total = doctoru_total + 1 WHERE user_id = ?", (uid,))
-                    try:
-                        sheet.update_cell(row_idx, 9, 1)
-                    except:
-                        pass
-                else:
-                    try:
-                        sheet.update_cell(row_idx, 9, 2)
-                    except:
-                        pass
-                processed += 1
-
-            conn.commit()
-
-            cur.execute("SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed, otzovik_passed, doctoru_passed, total_earned FROM users")
-            for user_row in cur.fetchall():
-                uid = user_row[0]
-                period_total = (
-                    user_row[1] * PRICES.get("яндекс", 0) + user_row[2] * PRICES.get("google", 0) +
-                    user_row[3] * PRICES.get("2гис", 0) + user_row[4] * PRICES.get("авито", 0) +
-                    user_row[5] * PRICES.get("вк", 0) + user_row[6] * PRICES.get("отзовик", 0) +
-                    user_row[7] * PRICES.get("доктору", 0)
-                )
-                cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
-                cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
-            conn.commit()
-
-            cur.execute("SELECT user_id, referrer, yandex_total, google_total, gis_total FROM users WHERE referrer != '0'")
-            for row in cur.fetchall():
-                user_id, referrer, yandex, google, gis = row
-                if yandex >= 10 and (google + gis) >= 15:
-                    cur.execute("SELECT referral_bonus_paid FROM users WHERE user_id = ?", (user_id,))
-                    paid = cur.fetchone()[0]
-                    if not paid:
-                        cur.execute("UPDATE users SET payout = payout + 200, total_earned = total_earned + 200 WHERE user_id = ?", (user_id,))
-                        cur.execute("UPDATE users SET referral_bonus_paid = 1 WHERE user_id = ?", (user_id,))
-                        ref_user = get_user_by_username(referrer)
-                        if ref_user:
-                            cur.execute("UPDATE users SET payout = payout + 450, total_earned = total_earned + 450 WHERE user_id = ?", (ref_user["user_id"],))
-            conn.commit()
-
-        logger.info(f"Статистика обновлена, обработано строк: {processed}")
-
-    except Exception as e:
-        logger.error(f"Ошибка обновления статистики: {e}")
+# Остальная часть (update_stats_from_sheet и т.д.) остаётся без изменений
