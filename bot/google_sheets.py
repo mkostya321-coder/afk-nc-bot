@@ -6,7 +6,7 @@ from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")          # Явное объявление переменной
+moscow_tz = pytz.timezone("Europe/Moscow")          # ← эта строка решает проблему
 
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50,
