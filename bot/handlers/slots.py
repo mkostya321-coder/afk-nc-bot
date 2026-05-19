@@ -148,8 +148,13 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
     active_slots_dict[sent_msg.message_id] = {
-        "platform": platform, "count": count, "row_ids": row_ids,
-        "date": date, "time": time
+        "platform": platform,
+        "count": count,
+        "initial_count": count,   # запоминаем исходное количество
+        "row_ids": row_ids,
+        "date": date,
+        "time": time,
+        "publish_time": datetime.now(moscow_tz)   # время публикации
     }
 
 # ---------- Обработчик кнопки "Взять слот" ----------
