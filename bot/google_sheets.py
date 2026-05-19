@@ -6,7 +6,7 @@ from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")
+moscow_tz = pytz.timezone("Europe/Moscow")          # ← явное объявление
 
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50,
@@ -39,6 +39,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
+# ------------------------ МОНИТОРИНГ СЛОТОВ ------------------------
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -60,13 +61,16 @@ async def monitor_schedule(bot, active_slots: dict):
                     if slot["count"] == slot.get("initial_count", 0):
                         expired_slots.append((msg_id, slot))
             for msg_id, slot in expired_slots:
+                # Закрываем старый пост
                 try:
                     await bot.edit_message_text(
-                        chat_id=CHANNEL_ID, message_id=msg_id,
+                        chat_id=CHANNEL_ID,
+                        message_id=msg_id,
                         text="Срок размещения истёк. Слот будет переопубликован."
                     )
                 except:
                     pass
+                # Сбрасываем флаги E на 0 и удаляем старый слот
                 for row_idx in slot["row_ids"]:
                     try:
                         sheet.update_cell(row_idx, 5, 0)   # E = 0
@@ -74,15 +78,16 @@ async def monitor_schedule(bot, active_slots: dict):
                         logger.error(f"Не удалось сбросить флаг для строки {row_idx}: {e}")
                 del active_slots[msg_id]
 
+                # Переопубликовываем слот
                 from .handlers.slots import publish_scheduled_slot
                 await publish_scheduled_slot(
                     bot, active_slots, slot["platform"], slot["initial_count"],
                     slot["date"], slot["time"], slot["row_ids"]
                 )
-                # ВАЖНО: СРАЗУ ОБНОВЛЯЕМ E=1 ДЛЯ ЭТИХ СТРОК
+                # ВАЖНО: СРАЗУ ОБНОВЛЯЕМ E=1, ЧТОБЫ НЕ БЫЛО ПОВТОРНОЙ ПУБЛИКАЦИИ
                 for row_idx in slot["row_ids"]:
                     try:
-                        sheet.update_cell(row_idx, 5, 1)
+                        sheet.update_cell(row_idx, 5, 1)   # E = 1
                     except Exception as e:
                         logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
                 logger.info(f"Переопубликован слот {slot['platform']} (истекло 2 часа)")
@@ -96,7 +101,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 time_str = row[1].strip()
                 if not date_str or not time_str:
                     continue
-                flag = row[4].strip()
+                flag = row[4].strip()      # столбец E
                 if flag != "0":
                     continue
                 try:
@@ -105,7 +110,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 except:
                     continue
                 if now >= slot_time:
-                    platform_raw = row[3].strip()
+                    platform_raw = row[3].strip()   # столбец D (платформа)
                     platform = match_platform(platform_raw)
                     if platform:
                         to_publish.append((platform, row_idx, row))
@@ -127,9 +132,10 @@ async def monitor_schedule(bot, active_slots: dict):
                         date, time, row_ids
                     )
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
+                    # СРАЗУ ОБНОВЛЯЕМ E=1 ДЛЯ ЭТИХ СТРОК
                     for row_idx in row_ids:
                         try:
-                            sheet.update_cell(row_idx, 5, 1)
+                            sheet.update_cell(row_idx, 5, 1)   # E = 1
                         except Exception as e:
                             logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
 
@@ -137,7 +143,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ОБНОВЛЕНИЕ СТАТИСТИКИ (без изменений)
+# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ ------------------------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
