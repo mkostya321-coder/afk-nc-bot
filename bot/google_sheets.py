@@ -6,12 +6,7 @@ from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
 from .database import get_user_by_username
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")          # ← ЭТА СТРОКА ВАЖНА
-
-PRICES = {
-    "яндекс": 150, "google": 50, "2гис": 50,
-    "авито": 700, "вк": 50, "отзовик": 100, "доктору": 100,
-}
+moscow_tz = pytz.timezone("Europe/Moscow")          # <-- явно объявлено
 
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50,
@@ -58,29 +53,28 @@ async def monitor_schedule(bot, active_slots: dict):
             records = sheet.get_all_values()
             now = datetime.now(moscow_tz)
 
-            # 1. Проверка истёкших слотов (1 час без взятия)
+            # 1. Проверка истёкших слотов (2 часа)
             expired_slots = []
             for msg_id, slot in list(active_slots.items()):
                 publish_time = slot.get("publish_time")
-                if publish_time and (now - publish_time).total_seconds() >= 3600:   # 1 час
-                    # Проверяем, сколько строк ещё не выданы (E=1)
+                if publish_time and (now - publish_time).total_seconds() >= 7200:
+                    # Ищем строки с E=1 (не взятые) и E не равно 2
                     available_rows = []
                     for row_idx in slot["row_ids"]:
                         try:
-                            # Читаем текущее значение E из таблицы, чтобы не полагаться на кэш
-                            cell_val = sheet.cell(row_idx, 5).value
-                            if cell_val == "1":
+                            val = sheet.cell(row_idx, 5).value
+                            if val == "1":   # не взято и не тронуто менеджером
                                 available_rows.append(row_idx)
                         except:
                             continue
                     if available_rows:
                         expired_slots.append((msg_id, slot, available_rows))
                     else:
-                        # Все строки уже выданы (E=5) – просто удаляем слот из активных
+                        # Все разобраны или помечены 2 – удаляем слот
                         try:
                             await bot.edit_message_text(
                                 chat_id=CHANNEL_ID, message_id=msg_id,
-                                text="Все отзывы разобраны."
+                                text="Срок размещения истёк. Все отзывы разобраны."
                             )
                         except:
                             pass
@@ -95,27 +89,27 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                 except:
                     pass
-                # Сбрасываем флаги E=1 обратно в 0 для невыданных строк
+                # Сбрасываем E=1 -> 0
                 for row_idx in available_rows:
                     try:
-                        sheet.update_cell(row_idx, 5, 0)   # E = 0
+                        sheet.update_cell(row_idx, 5, 0)
                     except Exception as e:
-                        logger.error(f"Не удалось сбросить флаг для строки {row_idx}: {e}")
+                        logger.error(f"Не удалось сбросить E для строки {row_idx}: {e}")
                 del active_slots[msg_id]
 
-                # Публикуем новый слот только из оставшихся строк
+                # Перепубликовываем слот из оставшихся строк
                 if available_rows:
                     from .handlers.slots import publish_scheduled_slot
                     await publish_scheduled_slot(
                         bot, active_slots, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows
                     )
-                    # Сразу ставим E=1 для этих строк, чтобы не было повторной публикации
+                    # Сразу ставим E=1 для этих строк
                     for row_idx in available_rows:
                         try:
                             sheet.update_cell(row_idx, 5, 1)
                         except Exception as e:
-                            logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
+                            logger.error(f"Не удалось обновить E для строки {row_idx}: {e}")
                     logger.info(f"Переопубликован слот {slot['platform']} ({len(available_rows)} шт.)")
 
             # 2. Публикация новых слотов по времени
@@ -127,8 +121,11 @@ async def monitor_schedule(bot, active_slots: dict):
                 time_str = row[1].strip()
                 if not date_str or not time_str:
                     continue
-                flag = row[4].strip()
+                flag = row[4].strip()   # столбец E
                 if flag != "0":
+                    continue
+                # Проверяем, не стоит ли E=2 (менеджер исключил)
+                if flag == "2":
                     continue
                 try:
                     slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
@@ -158,17 +155,18 @@ async def monitor_schedule(bot, active_slots: dict):
                         date, time, row_ids
                     )
                     logger.info(f"Опубликован слот {platform} ({count_available} шт.)")
+                    # Ставим E=1
                     for row_idx in row_ids:
                         try:
-                            sheet.update_cell(row_idx, 5, 1)   # E = 1
+                            sheet.update_cell(row_idx, 5, 1)
                         except Exception as e:
-                            logger.error(f"Не удалось обновить флаг для строки {row_idx}: {e}")
+                            logger.error(f"Не удалось обновить E для строки {row_idx}: {e}")
 
         except Exception as e:
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ (БЕЗ ИЗМЕНЕНИЙ) ------------------------
+# ------------------------ ОБНОВЛЕНИЕ СТАТИСТИКИ ------------------------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
