@@ -141,13 +141,10 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
 
     time_safe = time.replace(':', '-')
     row_ids_str = ",".join(map(str, row_ids))
-    start_param = f"s_take|{platform}|{count}|{date}|{time_safe}|{row_ids_str}"
-    encoded_start = quote(start_param, safe='')
-    bot_username = (await bot.me()).username
-    url = f"https://t.me/{bot_username}?start={encoded_start}"
+    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}|{row_ids_str}"
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", url=url)
+    builder.button(text="✋ Взять слот", callback_data=callback_data)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
     builder.adjust(1)
     sent_msg = await bot.send_message(
@@ -163,6 +160,50 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "publish_time": datetime.now(moscow_tz),
         "attempt": attempt
     }
+
+# ---------- Обработчик callback-кнопки "Взять слот" ----------
+@router.callback_query(F.data.startswith("take_slot|"))
+async def take_slot_start(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_registered(user_id):
+        await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
+        return
+    if is_blocked(user_id):
+        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+        return
+
+    parts = callback.data.split("|")
+    if len(parts) < 6:
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return
+
+    _, platform, count_str, date, time_safe, row_ids_str = parts
+    count = int(count_str)
+    time = time_safe.replace('-', ':')
+    row_ids = [int(x) for x in row_ids_str.split(",")]
+
+    if user_id in cooldowns and platform in cooldowns[user_id]:
+        if datetime.now() < cooldowns[user_id][platform]:
+            await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
+            return
+
+    slot_requests[user_id] = {
+        "platform": platform,
+        "count": count,
+        "date": date,
+        "time": time,
+        "slot_msg_id": callback.message.message_id,
+        "state": "waiting_quantity",
+        "assigned_rows": [],
+        "current_index": 0,
+        "row_ids": row_ids
+    }
+
+    await callback.bot.send_message(
+        chat_id=user_id,
+        text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
+    )
+    await callback.answer()
 
 # ---------- Обработчик ввода количества ----------
 @router.message(F.text)
@@ -341,18 +382,4 @@ async def close_all_slots(message: Message):
         except:
             pass
         del active_slots[slot_id]
-    await message.answer("✅ Все слоты закрыты.")
-
-@router.message(Command("closeallslots"))
-async def close_all_slots_cmd(message: Message):
-    if not is_admin(message.from_user.id): return
-    for msg_id in list(active_slots.keys()):
-        try:
-            await message.bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=msg_id,
-                text="Рабочий день завершён. Все слоты закрыты."
-            )
-        except:
-            pass
-        del active_slots[msg_id]
     await message.answer("✅ Все слоты закрыты.")
