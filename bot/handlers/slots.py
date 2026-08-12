@@ -12,7 +12,6 @@ from bot.database import (
     is_registered, update_user_field, is_blocked
 )
 from bot.keyboards.reply import main_menu_keyboard
-from bot.handlers.slots import active_slots, slot_requests, cooldowns
 
 router = Router()
 
