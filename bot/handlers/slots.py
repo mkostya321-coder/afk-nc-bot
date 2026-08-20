@@ -140,8 +140,8 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     )
 
     time_safe = time.replace(':', '-')
-    row_ids_str = ",".join(map(str, row_ids))
-    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}|{row_ids_str}"
+    # callback_data короткий, без row_ids
+    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
 
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
@@ -150,6 +150,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     sent_msg = await bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
+    # Сохраняем row_ids в active_slots
     active_slots_dict[sent_msg.message_id] = {
         "platform": platform,
         "count": count,
@@ -173,30 +174,37 @@ async def take_slot_start(callback: CallbackQuery):
         return
 
     parts = callback.data.split("|")
-    if len(parts) < 6:
+    if len(parts) < 5:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
 
-    _, platform, count_str, date, time_safe, row_ids_str = parts
+    _, platform, count_str, date, time_safe = parts
     count = int(count_str)
     time = time_safe.replace('-', ':')
-    row_ids = [int(x) for x in row_ids_str.split(",")]
+
+    # Получаем слот из active_slots по message_id
+    slot_msg_id = callback.message.message_id
+    slot_info = active_slots.get(slot_msg_id)
+    if not slot_info:
+        await callback.answer("❌ Этот слот уже неактивен.", show_alert=True)
+        return
 
     if user_id in cooldowns and platform in cooldowns[user_id]:
         if datetime.now() < cooldowns[user_id][platform]:
             await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
             return
 
+    # Сохраняем запрос без row_ids (они в slot_info)
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
         "date": date,
         "time": time,
-        "slot_msg_id": callback.message.message_id,
+        "slot_msg_id": slot_msg_id,
         "state": "waiting_quantity",
         "assigned_rows": [],
         "current_index": 0,
-        "row_ids": row_ids
+        "row_ids": slot_info["row_ids"]   # берём из active_slots
     }
 
     await callback.bot.send_message(
