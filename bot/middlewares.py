@@ -3,9 +3,14 @@ from aiogram.types import Message, CallbackQuery
 from bot.keyboards.reply import main_menu_keyboard
 from bot.database import add_user
 from bot.handlers.slots import slot_requests
+from bot.config import REPORT_CHAT_ID
 
 class AutoMenuMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
+        # Игнорируем беседу отчета
+        if isinstance(event, Message) and event.chat.id == REPORT_CHAT_ID:
+            return
+
         if isinstance(event, CallbackQuery):
             return await handler(event, data)
 
