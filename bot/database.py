@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 from typing import Optional
-from .config import DB_PATH
+from .config import DB_PATH, OWNER_ID
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -23,7 +23,6 @@ def init_db():
                 total_earned INTEGER DEFAULT 0,
                 referrer TEXT,
                 referral_bonus_paid INTEGER DEFAULT 0,
-
                 yandex_passed INTEGER DEFAULT 0,
                 google_passed INTEGER DEFAULT 0,
                 gis_passed INTEGER DEFAULT 0,
@@ -31,16 +30,41 @@ def init_db():
                 vk_passed INTEGER DEFAULT 0,
                 otzovik_passed INTEGER DEFAULT 0,
                 doctoru_passed INTEGER DEFAULT 0,
-
+                dokdok_passed INTEGER DEFAULT 0,
+                prodoctors_passed INTEGER DEFAULT 0,
+                doctu_passed INTEGER DEFAULT 0,
+                top32_passed INTEGER DEFAULT 0,
                 yandex_total INTEGER DEFAULT 0,
                 google_total INTEGER DEFAULT 0,
                 gis_total INTEGER DEFAULT 0,
                 avito_total INTEGER DEFAULT 0,
                 vk_total INTEGER DEFAULT 0,
                 otzovik_total INTEGER DEFAULT 0,
-                doctoru_total INTEGER DEFAULT 0
+                doctoru_total INTEGER DEFAULT 0,
+                dokdok_total INTEGER DEFAULT 0,
+                prodoctors_total INTEGER DEFAULT 0,
+                doctu_total INTEGER DEFAULT 0,
+                top32_total INTEGER DEFAULT 0
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                role TEXT NOT NULL DEFAULT 'moderator'
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                warned_by INTEGER NOT NULL
+            )
+        """)
+        # Автоматически добавляем владельца, если OWNER_ID задан
+        if OWNER_ID:
+            cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
         conn.commit()
 
 def add_user(user_id: int, username: str, first_name: str):
@@ -71,10 +95,7 @@ def get_user_by_username(username: str) -> Optional[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute(
-            "SELECT * FROM users WHERE LOWER(tg_username) IN (?, ?)",
-            (clean, f"@{clean}")
-        )
+        cur.execute("SELECT * FROM users WHERE LOWER(tg_username) = ? OR LOWER(username) = ?", (clean, clean))
         row = cur.fetchone()
         return dict(row) if row else None
 
@@ -86,10 +107,52 @@ def is_blocked(user_id: int) -> bool:
     user = get_user(user_id)
     return user.get("blocked", 0) == 1 if user else False
 
-def toggle_block(user_id: int):
+def toggle_block(user_id: int) -> Optional[int]:
     user = get_user(user_id)
     if not user:
         return None
     new_status = 0 if user["blocked"] else 1
     update_user_field(user_id, "blocked", new_status)
     return new_status
+
+# ---------- Роли администраторов ----------
+def get_admin_role(user_id: int) -> Optional[str]:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT role FROM admins WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+def set_admin_role(user_id: int, role: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO admins (user_id, role) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET role = ?", (user_id, role, role))
+        conn.commit()
+
+def is_owner(user_id: int) -> bool:
+    return get_admin_role(user_id) == 'owner'
+
+def is_ga(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga')
+
+def is_moderator(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga', 'moderator')
+
+def is_comoderator(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga', 'moderator', 'comoderator')
+
+# ---------- Предупреждения ----------
+def add_warning(user_id: int, reason: str, warned_by: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO warnings (user_id, reason, warned_by) VALUES (?, ?, ?)", (user_id, reason, warned_by))
+        conn.commit()
+
+def get_warning_count(user_id: int) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
+        return cur.fetchone()[0]
