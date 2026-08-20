@@ -2,7 +2,7 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.config import OWNER_ID, LOG_CHANNEL_ID
+from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
@@ -13,7 +13,6 @@ import sqlite3
 router = Router()
 
 def log_action(message: Message, action: str):
-    """Отправляет лог в LOG_CHANNEL_ID"""
     try:
         text = f"👤 @{message.from_user.username or message.from_user.id} ({message.from_user.id})\n" \
                f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n" \
@@ -31,7 +30,6 @@ async def cmd_helpadm(message: Message):
         await message.answer("⛔ У вас нет доступа.")
         return
 
-    # Базовые команды для всех ролей
     text = "🛠 Команды администратора:\n\n"
     if is_owner(user_id):
         text += "👑 /setrole <user_id> <owner|ga|moderator|comoderator> — назначить роль\n"
@@ -43,7 +41,7 @@ async def cmd_helpadm(message: Message):
             "🔒 /close <ID> — закрыть слот\n"
             "🔒 /closeall — закрыть все слоты\n"
             "👤 /userblock <user_id/username> — блокировка\n"
-            "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-10\n"
+            "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-11\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить выплаты\n"
@@ -78,7 +76,7 @@ async def set_role(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn (доступно модератору и выше) ----------
+# ---------- /warn (модератор и выше) ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -103,7 +101,6 @@ async def warn_user(message: Message):
         if warn_count >= 3:
             toggle_block(user["user_id"])
             await message.answer(f"✅ Пользователь @{user.get('username') or user['user_id']} получил третье предупреждение и заблокирован.")
-            # Отправить пользователю сообщение о бане
             try:
                 await message.bot.send_message(user["user_id"], f"⛔ Вы получили третье предупреждение и заблокированы.\nПричина: {reason}")
             except:
@@ -118,7 +115,7 @@ async def warn_user(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /slots, /close, /closeall (модератор и выше) ----------
+# ---------- /slots, /close, /closeall ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_moderator(message.from_user.id):
@@ -171,7 +168,7 @@ async def close_all_slots(message: Message):
     await message.answer("✅ Все слоты закрыты.")
     log_action(message, "Закрыты все слоты")
 
-# ---------- /userblock (модератор и выше) ----------
+# ---------- /userblock ----------
 @router.message(Command("userblock"))
 async def user_block(message: Message):
     if not is_moderator(message.from_user.id):
@@ -198,7 +195,7 @@ async def user_block(message: Message):
         await message.answer(f"✅ Пользователь {user_id} {status_text}.")
         log_action(message, f"Пользователь {user_id} {status_text}")
 
-# ---------- /info (модератор и выше) ----------
+# ---------- /info ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
     if not is_moderator(message.from_user.id):
@@ -252,14 +249,14 @@ async def cmd_info(message: Message):
     )
     await message.answer(text)
 
-# ---------- /useredit (только ГА и владелец) ----------
+# ---------- /useredit (ГА и владелец) ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_ga(message.from_user.id):
         return
     parts = message.text.split()
     if len(parts) < 4:
-        await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-10")
+        await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-11")
         return
     target = parts[1]
     if target.isdigit():
@@ -283,7 +280,7 @@ async def user_edit(message: Message):
         update_user_field(user_id, "bank", value)
     elif field == "myotz":
         if len(parts) < 5:
-            await message.answer("❌ Укажите номер платформы (1-10) и значение.")
+            await message.answer("❌ Укажите номер платформы (1-11) и значение.")
             return
         platform_num = int(parts[3])
         new_value = int(parts[4])
@@ -301,7 +298,7 @@ async def user_edit(message: Message):
             11: "top32_total"
         }
         if platform_num not in platform_map:
-            await message.answer("❌ Номер платформы от 1 до 10.")
+            await message.answer("❌ Номер платформы от 1 до 11.")
             return
         update_user_field(user_id, platform_map[platform_num], new_value)
         await message.answer(f"✅ Общий счётчик платформы {platform_num} обновлён.")
@@ -312,7 +309,7 @@ async def user_edit(message: Message):
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
-# ---------- /update_stats (только ГА и владелец) ----------
+# ---------- /update_stats (ГА и владелец) ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
@@ -325,15 +322,20 @@ async def cmd_update_stats(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /resetbalance (только ГА и владелец) ----------
+# ---------- /resetbalance (ГА и владелец) ----------
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
     if not is_ga(message.from_user.id):
         return
     try:
-        with sqlite3.connect("data/bot.db") as conn:
+        with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE users SET payout = 0, yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0, otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0, doctu_passed=0, top32_passed=0")
+            cur.execute("""
+                UPDATE users SET payout = 0,
+                yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
+                otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
+                doctu_passed=0, top32_passed=0
+            """)
             conn.commit()
         await message.answer("✅ Периодические счётчики и «к выплате» сброшены.")
     except Exception as e:
