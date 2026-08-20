@@ -25,4 +25,4 @@ def get_credentials_path():
     return "google_key.json"
 
 # Канал для пересылки скриншотов
-SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-1003986674133")  # ← замени на свой ID канала
+SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-100...")  # ← замени на свой ID канала
