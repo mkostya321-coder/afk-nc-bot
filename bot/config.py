@@ -7,6 +7,9 @@ if not BOT_TOKEN:
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(",") if x.strip()]
 
+# Владелец (обязательная переменная)
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+
 # Канал для публикации слотов
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@newChapterJob")
 
@@ -25,4 +28,11 @@ def get_credentials_path():
     return "google_key.json"
 
 # Канал для пересылки скриншотов
-SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-100...")  # ← замени на свой ID
+SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-100...")
+
+# Канал для логирования действий администраторов
+LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-100...")
+
+# Канал/беседа для отчета по выплатам
+REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID", "-100...")
+REPORT_THREAD_ID = int(os.getenv("REPORT_THREAD_ID", "0"))  # 0 если не тема
