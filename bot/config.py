@@ -7,7 +7,7 @@ if not BOT_TOKEN:
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(",") if x.strip()]
 
-# Канал, куда бот публикует слоты
+# Канал для публикации слотов
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@newChapterJob")
 
 MANAGER_USERNAME = "New_Chapterr24"
@@ -25,4 +25,4 @@ def get_credentials_path():
     return "google_key.json"
 
 # Канал для пересылки скриншотов
-SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-100...")  # ← замени на свой ID канала
+SCREENSHOT_CHANNEL_ID = os.getenv("SCREENSHOT_CHANNEL_ID", "-100...")  # ← замени на свой ID
