@@ -259,7 +259,7 @@ async def handle_quantity_input(message: Message):
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     for row_idx in assigned_rows:
         try:
-            sheet.update_cell(row_idx, 5, 5)          # E = 5
+            # Убираем изменение E, оставляем J и K
             sheet.update_cell(row_idx, 11, username)   # K
             sheet.update_cell(row_idx, 10, "в работе") # J
         except Exception as e:
@@ -303,6 +303,13 @@ async def send_next_review(message: Message, request: dict, sheet):
     current_index = request["current_index"]
 
     if current_index >= len(assigned_rows):
+        # Все отзывы отправлены, ставим "на модерации"
+        for row_idx in assigned_rows:
+            try:
+                sheet.update_cell(row_idx, 10, "на модерации")  # J
+            except Exception as e:
+                logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
+
         platform = request["platform"]
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
