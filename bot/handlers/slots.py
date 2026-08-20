@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_GROUP_ID, get_credentials_path
+from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path
 from bot.database import is_registered, is_blocked, get_user
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -140,7 +140,6 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     )
 
     time_safe = time.replace(':', '-')
-    # callback_data короткий, без row_ids
     callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
 
     builder = InlineKeyboardBuilder()
@@ -150,7 +149,6 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     sent_msg = await bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
-    # Сохраняем row_ids в active_slots
     active_slots_dict[sent_msg.message_id] = {
         "platform": platform,
         "count": count,
@@ -182,7 +180,6 @@ async def take_slot_start(callback: CallbackQuery):
     count = int(count_str)
     time = time_safe.replace('-', ':')
 
-    # Получаем слот из active_slots по message_id
     slot_msg_id = callback.message.message_id
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
@@ -194,7 +191,6 @@ async def take_slot_start(callback: CallbackQuery):
             await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
             return
 
-    # Сохраняем запрос без row_ids (они в slot_info)
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
@@ -204,7 +200,7 @@ async def take_slot_start(callback: CallbackQuery):
         "state": "waiting_quantity",
         "assigned_rows": [],
         "current_index": 0,
-        "row_ids": slot_info["row_ids"]   # берём из active_slots
+        "row_ids": slot_info["row_ids"]
     }
 
     await callback.bot.send_message(
@@ -290,12 +286,12 @@ async def handle_screenshot(message: Message):
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         caption = f"{user_mention} – {timestamp}"
         await message.bot.send_photo(
-            chat_id=SCREENSHOT_GROUP_ID,
+            chat_id=SCREENSHOT_CHANNEL_ID,
             photo=message.photo[-1].file_id,
             caption=caption
         )
     except Exception as e:
-        logger.error(f"Не удалось переслать скриншот в группу: {e}")
+        logger.error(f"Не удалось переслать скриншот в канал: {e}")
 
     request["current_index"] += 1
     request["state"] = "sending_reviews"
