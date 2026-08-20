@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path
-from bot.database import is_registered, is_blocked, get_user
+from bot.database import is_registered, is_blocked, get_user, is_ga
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pytz
@@ -54,7 +54,7 @@ async def publish_slot(message: Message, slot_name: str, post_text: str, price: 
 
 @router.message(Command("yandex"))
 async def yandex_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: Яндекс карты\nЗадача: Выполнить отзыв/ы Яндекс карты\n"
         "Оплата: 150 руб/шт\nДедлайн: Сегодня до 23:59 (МСК)\n"
@@ -64,7 +64,7 @@ async def yandex_slot(message: Message):
 
 @router.message(Command("google"))
 async def google_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: GOOGLE\nЗадача: Выполнить отзыв/ы GOOGLE\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
@@ -74,7 +74,7 @@ async def google_slot(message: Message):
 
 @router.message(Command("gis"))
 async def gis_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: 2ГИС\nЗадача: Выполнить отзыв/ы 2ГИС\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
@@ -84,7 +84,7 @@ async def gis_slot(message: Message):
 
 @router.message(Command("avito"))
 async def avito_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: Авито\nЗадача: Выполнить отзыв/ы Авито\nОплата: 700 руб/шт\n"
         "Дедлайн: 2 суток с момента принятия слота\nТребуется человек: До закрытия слота.\n"
@@ -94,7 +94,7 @@ async def avito_slot(message: Message):
 
 @router.message(Command("vk"))
 async def vk_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: ВК\nЗадача: Выполнить отзыв/ы ВК\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
@@ -104,7 +104,7 @@ async def vk_slot(message: Message):
 
 @router.message(Command("otzovik"))
 async def otzovik_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: Отзовик\nЗадача: Выполнить отзыв/ы ОТЗОВИК\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
@@ -114,7 +114,7 @@ async def otzovik_slot(message: Message):
 
 @router.message(Command("doctoru"))
 async def doctoru_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: Doctoru\nЗадача: Выполнить отзыв/ы Doctoru\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
@@ -122,12 +122,54 @@ async def doctoru_slot(message: Message):
     )
     await publish_slot(message, "Doctoru", text, "100₽")
 
+# Новые команды
+@router.message(Command("dokdok"))
+async def dokdok_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: ДокДок\nЗадача: Выполнить отзыв/ы ДокДок\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "ДокДок", text, "100₽")
+
+@router.message(Command("prodoctors"))
+async def prodoctors_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: Про Докторов\nЗадача: Выполнить отзыв/ы Про Докторов\nОплата: 180 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "Про Докторов", text, "180₽")
+
+@router.message(Command("doctu"))
+async def doctu_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: ДокТу\nЗадача: Выполнить отзыв/ы ДокТу\nОплата: 110 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "ДокТу", text, "110₽")
+
+@router.message(Command("32top"))
+async def top32_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: 32ТОП\nЗадача: Выполнить отзыв/ы 32ТОП\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Нажмите кнопку ниже, чтобы забрать слот."
+    )
+    await publish_slot(message, "32ТОП", text, "100₽")
+
 # ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1):
     platform_names = {
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
-        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru"
+        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
+        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
     }
     pretty_name = platform_names.get(platform, platform)
     post_text = (
@@ -138,10 +180,8 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
         f"Нажмите кнопку ниже, чтобы забрать слот."
     )
-
     time_safe = time.replace(':', '-')
     callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
@@ -160,7 +200,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Обработчик callback-кнопки "Взять слот" ----------
+# ---------- Обработчик кнопки взять слот ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -170,27 +210,22 @@ async def take_slot_start(callback: CallbackQuery):
     if is_blocked(user_id):
         await callback.answer("⛔ Вы заблокированы.", show_alert=True)
         return
-
     parts = callback.data.split("|")
     if len(parts) < 5:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
-
     _, platform, count_str, date, time_safe = parts
     count = int(count_str)
     time = time_safe.replace('-', ':')
-
     slot_msg_id = callback.message.message_id
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
         await callback.answer("❌ Этот слот уже неактивен.", show_alert=True)
         return
-
     if user_id in cooldowns and platform in cooldowns[user_id]:
         if datetime.now() < cooldowns[user_id][platform]:
             await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
             return
-
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
@@ -202,7 +237,6 @@ async def take_slot_start(callback: CallbackQuery):
         "current_index": 0,
         "row_ids": slot_info["row_ids"]
     }
-
     await callback.bot.send_message(
         chat_id=user_id,
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
@@ -218,30 +252,25 @@ async def handle_quantity_input(message: Message):
     request = slot_requests[user_id]
     if request["state"] != "waiting_quantity":
         return
-
     try:
         quantity = int(message.text.strip())
     except:
         await message.answer("Пожалуйста, введите число.")
         return
-
     if quantity <= 0 or quantity > request["count"]:
         await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
-
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
         await message.answer("❌ Этот слот уже неактивен.")
         del slot_requests[user_id]
         return
-
     row_ids = slot_info["row_ids"]
     if len(row_ids) < quantity:
         await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
         del slot_requests[user_id]
         return
-
     assigned_rows = row_ids[:quantity]
     slot_info["row_ids"] = row_ids[quantity:]
     slot_info["count"] -= quantity
@@ -254,17 +283,14 @@ async def handle_quantity_input(message: Message):
             )
         except:
             pass
-
     sheet = get_sheet()
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     for row_idx in assigned_rows:
         try:
-            # Убираем изменение E, оставляем J и K
             sheet.update_cell(row_idx, 11, username)   # K
             sheet.update_cell(row_idx, 10, "в работе") # J
         except Exception as e:
             logger.error(f"Ошибка обновления строки {row_idx}: {e}")
-
     request["assigned_rows"] = assigned_rows
     request["current_index"] = 0
     request["state"] = "sending_reviews"
@@ -279,7 +305,6 @@ async def handle_screenshot(message: Message):
     request = slot_requests[user_id]
     if request["state"] != "waiting_screenshot":
         return
-
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
@@ -292,7 +317,6 @@ async def handle_screenshot(message: Message):
         )
     except Exception as e:
         logger.error(f"Не удалось переслать скриншот в канал: {e}")
-
     request["current_index"] += 1
     request["state"] = "sending_reviews"
     sheet = get_sheet()
@@ -301,36 +325,29 @@ async def handle_screenshot(message: Message):
 async def send_next_review(message: Message, request: dict, sheet):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
-
     if current_index >= len(assigned_rows):
-        # Все отзывы отправлены, ставим "на модерации"
         for row_idx in assigned_rows:
             try:
                 sheet.update_cell(row_idx, 10, "на модерации")  # J
             except Exception as e:
                 logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
-
         platform = request["platform"]
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
         cooldowns[message.from_user.id][platform] = datetime.now() + timedelta(hours=24)
-
         await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
         del slot_requests[message.from_user.id]
         return
-
     row_idx = assigned_rows[current_index]
     row = sheet.row_values(row_idx)
     if len(row) < 14:
         await message.answer("❌ Ошибка данных в таблице.")
         del slot_requests[message.from_user.id]
         return
-
-    link = row[6]   # G
-    text = row[13]  # N
-    stars = row[2].strip() if len(row) > 2 else ""   # C
+    link = row[6]
+    text = row[13]
+    stars = row[2].strip() if len(row) > 2 else ""
     gender = row[12].strip().upper() if len(row) > 12 else ""
-
     info_msg = (
         f"⭐ Количество звезд: {stars}\n"
         "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ – 1 ЧЕЛОВЕК 1 ОТЗЫВ\n"
@@ -342,18 +359,16 @@ async def send_next_review(message: Message, request: dict, sheet):
     else:
         info_msg += "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила').\n"
     info_msg += "💡 Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n\nПожалуйста, после выполнения пришлите скриншот отзыва."
-
     await message.answer(info_msg)
     await message.answer(link)
     await message.answer(text)
     await message.answer("Ожидаю скриншот и продолжаем работу.")
-
     request["state"] = "waiting_screenshot"
 
 # ---------- Команды просмотра/закрытия ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     if not active_slots:
         await message.answer("Нет активных слотов.")
         return
@@ -364,7 +379,7 @@ async def list_slots(message: Message):
 
 @router.message(Command("close"))
 async def close_slot(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     try:
         _, slot_id = message.text.split()
         slot_id = int(slot_id)
@@ -383,7 +398,7 @@ async def close_slot(message: Message):
 
 @router.message(Command("closeall"))
 async def close_all_slots(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not is_ga(message.from_user.id): return
     for slot_id in list(active_slots.keys()):
         try:
             await message.bot.edit_message_text(
