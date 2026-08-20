@@ -62,7 +62,6 @@ def init_db():
                 warned_by INTEGER NOT NULL
             )
         """)
-        # Автоматически добавляем владельца, если OWNER_ID задан
         if OWNER_ID:
             cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
         conn.commit()
@@ -156,3 +155,10 @@ def get_warning_count(user_id: int) -> int:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
         return cur.fetchone()[0]
+
+def get_all_users_with_payout():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE payout >= 150")
+        return [dict(row) for row in cur.fetchall()]
