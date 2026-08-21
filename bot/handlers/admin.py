@@ -44,7 +44,7 @@ async def cmd_helpadm(message: Message):
             "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-11\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "🔄 /update_stats — обновить статистику\n"
-            "⚠️ /resetbalance — сбросить выплаты\n"
+            "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150 (после выплат)\n"
         )
     if is_moderator(user_id):
         text += (
@@ -322,7 +322,7 @@ async def cmd_update_stats(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /resetbalance (ГА и владелец) ----------
+# ============= НОВАЯ ЛОГИКА /resetbalance =============
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
     if not is_ga(message.from_user.id):
@@ -330,13 +330,24 @@ async def reset_balance(message: Message):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute("""
+            # Сначала получаем всех, у кого payout >= 150
+            cur.execute("SELECT user_id FROM users WHERE payout >= 150")
+            rows = cur.fetchall()
+            user_ids = [row[0] for row in rows]
+            if not user_ids:
+                await message.answer("Нет пользователей с балансом >= 150₽ для сброса.")
+                return
+            # Обнуляем payout и периодические счётчики только у них
+            placeholders = ','.join(['?'] * len(user_ids))
+            cur.execute(f"""
                 UPDATE users SET payout = 0,
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
                 doctu_passed=0, top32_passed=0
-            """)
+                WHERE user_id IN ({placeholders})
+            """, user_ids)
             conn.commit()
-        await message.answer("✅ Периодические счётчики и «к выплате» сброшены.")
+        await message.answer(f"✅ Балансы сброшены у {len(user_ids)} пользователей (у кого было >=150₽).")
+        log_action(message, f"Сброшены балансы у {len(user_ids)} пользователей (>=150₽)")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
