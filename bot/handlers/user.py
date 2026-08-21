@@ -1,4 +1,4 @@
-import sqlite3, asyncio
+import sqlite3, asyncio, logging
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -14,6 +14,7 @@ from bot.database import (
 from bot.keyboards.reply import main_menu_keyboard
 from bot.handlers.slots import active_slots
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 REFERRAL_DEADLINE_DAYS = 28
@@ -83,16 +84,14 @@ async def process_intro_next(callback: CallbackQuery, state: FSMContext):
     elif current_state == IntroState.second.state:
         await state.clear()
         kb = InlineKeyboardBuilder()
-        kb.button(text="Регистрация", callback_data="menu_reg")  # <-- теперь callback
+        kb.button(text="Регистрация", callback_data="menu_reg")
         await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
     await callback.answer()
 
-# ============= НОВЫЙ ОБРАБОТЧИК КНОПКИ "Регистрация" =============
 @router.callback_query(F.data == "menu_reg")
 async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.delete()  # удаляем сообщение с кнопкой
-    # Вызываем функцию регистрации, передавая message из callback
+    await callback.message.delete()
     await start_registration(callback.message, state)
 
 # ---------- Старт ----------
@@ -214,6 +213,75 @@ async def menu_help(message: Message):
         f"По всем вопросам: @{MANAGER_USERNAME}"
     )
     await message.answer(text, reply_markup=main_menu_keyboard())
+
+# ---------- РЕФЕРАЛЬНАЯ СИСТЕМА (добавлено сюда для надёжности) ----------
+@router.message(F.text == "👥 Реферальная система")
+async def referral_info(message: Message):
+    logger.info(f"🔔 Пользователь {message.from_user.id} (@{message.from_user.username}) нажал на 'Реферальная система' (обработчик из user.py)")
+    try:
+        text = (
+            "📢 Реферальная система\n\n"
+            "👥 Как участвовать?\n"
+            "1️⃣ Приглашение. Зарегистрированный пользователь приглашает друга.\n"
+            "2️⃣ Регистрация. При создании аккаунта друг в обязательном порядке указывает в вопросе №5 username того, кто его пригласил.\n"
+            "3️⃣ Выполнение условий. Чтобы активировать выплату, приглашённый должен оставить одобренные отзывы в таком объёме:\n"
+            "   • 10 отзывов на Яндекс.Картах\n"
+            "   • 15 отзывов на Google Картах или на 2ГИС (можно комбинировать, например 7 Google + 8 2ГИС, но не менее 15 в сумме)\n\n"
+            "⏳ На выполнение даётся 28 дней с момента регистрации. Если за это время условия не выполнены, реферал считается ❌ не выполненным, и вознаграждение уже не получить.\n\n"
+            "✅ Отзывы должны пройти модерацию. Приглашённый может написать больше, но награда начисляется в момент, когда минимальные требования выполнены.\n\n"
+            "💰 Вознаграждение:\n"
+            "   • Пригласивший получает 450 рублей\n"
+            "   • Приглашённый получает 200 рублей\n\n"
+            "📅 Выплата производится в ближайшую среду или четверг (день зарплаты) после фиксации выполнения всех условий."
+        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 Назад", callback_data="referral:back")
+        kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
+        kb.adjust(2)
+
+        await message.answer(text, reply_markup=kb.as_markup())
+        logger.info(f"✅ Сообщение о реферальной системе отправлено пользователю {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке реферальной информации: {e}")
+        await message.answer("Произошла ошибка. Попробуйте позже.")
+
+# ---------- Колбэки для рефералки ----------
+@router.callback_query(F.data == "referral:back")
+async def referral_back(callback: CallbackQuery):
+    logger.info(f"🔄 Пользователь {callback.from_user.id} вернулся в главное меню из рефералки")
+    try:
+        await callback.message.delete()
+        await callback.message.answer("👋 Главное меню", reply_markup=main_menu_keyboard())
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"❌ Ошибка в referral_back: {e}")
+        await callback.answer("Ошибка, попробуйте снова", show_alert=True)
+
+@router.callback_query(F.data == "referral:invite")
+async def referral_invite(callback: CallbackQuery):
+    logger.info(f"📨 Пользователь {callback.from_user.id} запросил приглашение")
+    try:
+        user_id = callback.from_user.id
+        user = get_user(user_id)
+        username = user.get("tg_username") if user else None
+        if not username:
+            await callback.answer("❌ У вас не указан Telegram username. Заполните профиль.", show_alert=True)
+            return
+
+        invite_text = (
+            "Привет.\nПриглашаю в бот @ncjobbot. Схема такая:\n"
+            "Ты регистрируешься, указываешь мой юзернейм: `" + username + "`\n"
+            "Получаешь бонус 200 рублей и ещё 2 250 рублей за выполнение отзывов (10 Яндекс + 15 Google или 2ГИС).\n"
+            "Все что нужно делать просить знакомых оставлять отзывы. Ты сам просишь своих друзей писать отзывы. Даёшь им готовый текст и ссылку — они оставляют, а платят тебе.\n"
+            "Всё просто. За каждого друга — свои деньги. Бот надёжный.\n\n"
+            "Найди @ncjobbot в Telegram и вводи мой юзернейм при старте."
+        )
+        await callback.message.answer(invite_text)
+        await callback.answer("Текст приглашения отправлен в чат.", show_alert=True)
+        logger.info(f"✅ Приглашение отправлено пользователю {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в referral_invite: {e}")
+        await callback.answer("Ошибка, попробуйте снова", show_alert=True)
 
 # ---------- Регистрация ----------
 @router.message(Command("reg"))
