@@ -214,10 +214,10 @@ async def menu_help(message: Message):
     )
     await message.answer(text, reply_markup=main_menu_keyboard())
 
-# ---------- РЕФЕРАЛЬНАЯ СИСТЕМА (добавлено сюда для надёжности) ----------
+# ---------- РЕФЕРАЛЬНАЯ СИСТЕМА (обработчик в user.py) ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
-    logger.info(f"🔔 Пользователь {message.from_user.id} (@{message.from_user.username}) нажал на 'Реферальная система' (обработчик из user.py)")
+    logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id} (@{message.from_user.username}) нажал на кнопку")
     try:
         text = (
             "📢 Реферальная система\n\n"
@@ -240,26 +240,26 @@ async def referral_info(message: Message):
         kb.adjust(2)
 
         await message.answer(text, reply_markup=kb.as_markup())
-        logger.info(f"✅ Сообщение о реферальной системе отправлено пользователю {message.from_user.id}")
+        logger.info(f"✅ РЕФЕРАЛКА: сообщение отправлено {message.from_user.id}")
     except Exception as e:
-        logger.error(f"❌ Ошибка при отправке реферальной информации: {e}")
+        logger.error(f"❌ РЕФЕРАЛКА ошибка: {e}")
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
 # ---------- Колбэки для рефералки ----------
 @router.callback_query(F.data == "referral:back")
 async def referral_back(callback: CallbackQuery):
-    logger.info(f"🔄 Пользователь {callback.from_user.id} вернулся в главное меню из рефералки")
+    logger.info(f"🔄 РЕФЕРАЛКА: назад {callback.from_user.id}")
     try:
         await callback.message.delete()
         await callback.message.answer("👋 Главное меню", reply_markup=main_menu_keyboard())
         await callback.answer()
     except Exception as e:
-        logger.error(f"❌ Ошибка в referral_back: {e}")
-        await callback.answer("Ошибка, попробуйте снова", show_alert=True)
+        logger.error(f"❌ Ошибка referral_back: {e}")
+        await callback.answer("Ошибка", show_alert=True)
 
 @router.callback_query(F.data == "referral:invite")
 async def referral_invite(callback: CallbackQuery):
-    logger.info(f"📨 Пользователь {callback.from_user.id} запросил приглашение")
+    logger.info(f"📨 РЕФЕРАЛКА: пригласить {callback.from_user.id}")
     try:
         user_id = callback.from_user.id
         user = get_user(user_id)
@@ -278,10 +278,10 @@ async def referral_invite(callback: CallbackQuery):
         )
         await callback.message.answer(invite_text)
         await callback.answer("Текст приглашения отправлен в чат.", show_alert=True)
-        logger.info(f"✅ Приглашение отправлено пользователю {user_id}")
+        logger.info(f"✅ РЕФЕРАЛКА: приглашение отправлено {user_id}")
     except Exception as e:
-        logger.error(f"❌ Ошибка в referral_invite: {e}")
-        await callback.answer("Ошибка, попробуйте снова", show_alert=True)
+        logger.error(f"❌ Ошибка referral_invite: {e}")
+        await callback.answer("Ошибка", show_alert=True)
 
 # ---------- Регистрация ----------
 @router.message(Command("reg"))
@@ -492,3 +492,11 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     text = build_page_text(ref_data, page, 10)
     await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
     await callback.answer()
+
+# ============= ОТЛАДОЧНЫЙ ХЕНДЛЕР (логирует всё, что приходит) =============
+@router.message()
+async def catch_all(message: Message):
+    if message.text:
+        logger.info(f"📩 [CATCH] Получено сообщение: '{message.text}' от {message.from_user.id}")
+    else:
+        logger.info(f"📩 [CATCH] Получено сообщение без текста от {message.from_user.id}")
