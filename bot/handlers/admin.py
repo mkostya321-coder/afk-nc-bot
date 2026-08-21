@@ -2,11 +2,11 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
+from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH, REPORT_CHAT_ID, REPORT_THREAD_ID
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
-    add_warning, get_warning_count
+    add_warning, get_warning_count, get_all_users_with_payout
 )
 import sqlite3
 
@@ -33,6 +33,7 @@ async def cmd_helpadm(message: Message):
     text = "🛠 Команды администратора:\n\n"
     if is_owner(user_id):
         text += "👑 /setrole <user_id> <owner|ga|moderator|comoderator> — назначить роль\n"
+        text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
     if is_ga(user_id):
         text += (
             "📢 Публикация слотов:\n"
@@ -322,7 +323,7 @@ async def cmd_update_stats(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ============= НОВАЯ ЛОГИКА /resetbalance =============
+# ---------- /resetbalance (ГА и владелец) ----------
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
     if not is_ga(message.from_user.id):
@@ -351,3 +352,43 @@ async def reset_balance(message: Message):
         log_action(message, f"Сброшены балансы у {len(user_ids)} пользователей (>=150₽)")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
+# ---------- НОВАЯ КОМАНДА /payout_report (только владелец) ----------
+@router.message(Command("payout_report"))
+async def cmd_payout_report(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+
+    try:
+        users = get_all_users_with_payout()  # функция из database.py
+        if not users:
+            await message.answer("📭 Нет пользователей с балансом >= 150₽.")
+            return
+
+        text_lines = ["<b>📋 Список на выплату (по запросу)</b>\n"]
+        for u in users:
+            username = u.get('tg_username') or u.get('username') or str(u['user_id'])
+            phone = u.get('phone_card') or '—'
+            bank = u.get('bank') or '—'
+            line = f"👤 @{username} (ID: {u['user_id']})\n💰 Сумма: {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
+            text_lines.append(line)
+
+        full_text = "\n".join(text_lines)
+        max_len = 4000
+
+        # Отправляем в беседу отчёта
+        for i in range(0, len(full_text), max_len):
+            chunk = full_text[i:i+max_len]
+            await message.bot.send_message(
+                chat_id=REPORT_CHAT_ID,
+                text=chunk,
+                message_thread_id=REPORT_THREAD_ID or None,
+                parse_mode="HTML"
+            )
+
+        await message.answer("✅ Отчёт по выплатам отправлен в беседу.")
+        log_action(message, "Запрошен отчёт по выплатам (команда /payout_report)")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
+        log_action(message, f"Ошибка в /payout_report: {e}")
