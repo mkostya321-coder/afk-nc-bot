@@ -5,7 +5,9 @@ meta:
     version: "3.11"
 build:
   requirementsPath: requirements.txt
-  useCache: true
+  useCache: false
+  script: |
+    pip install --no-cache-dir -r requirements.txt
 run:
   scriptName: null
   command: python run.py
