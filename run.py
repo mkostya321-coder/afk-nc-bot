@@ -45,7 +45,6 @@ async def weekly_payout_report(bot):
     moscow_tz = pytz.timezone("Europe/Moscow")
     while True:
         now = datetime.now(moscow_tz)
-        # Четверг = 3
         days_ahead = (3 - now.weekday() + 7) % 7
         if days_ahead == 0 and now.hour >= 10 and now.minute >= 30:
             days_ahead = 7
@@ -95,7 +94,7 @@ async def main():
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(slots.router)
-    dp.include_router(referral.router)
+    # dp.include_router(referral.router)   # <-- ЗАКОММЕНТИРОВАНО, чтобы не мешал
 
     asyncio.create_task(scheduler())
     asyncio.create_task(monitor_schedule(bot, slots.active_slots))
