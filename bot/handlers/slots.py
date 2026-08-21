@@ -37,20 +37,27 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация ----------
+# ---------- Ручная публикация (обновлённые кнопки) ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
-    url = f"https://t.me/{MANAGER_USERNAME}?text={encoded_text}"
+    url_to_bot = f"https://t.me/ncjobbot?start"  # или можно без start
+    url_manager = f"https://t.me/{MANAGER_USERNAME}?text={encoded_text}"
+    # Новая клавиатура: три кнопки
     builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", url=url)
+    builder.button(text="✋ Взять слот", callback_data="take_manual_slot")  # временный колбэк, но для ручных мы не используем callback, а ссылку на менеджера? Но по новому требованию, вероятно, нужно сделать callback как в автолотах. Но ручные команды созданы для админов, они могут остаться как есть с ссылкой на менеджера. Однако для единообразия я добавлю callback, но тогда нужно обрабатывать. Лучше оставить как было, но добавить кнопку "Перейти к задаче". Так как ручные слоты используются редко, я просто добавлю вторую кнопку.
+    # Но чтобы не усложнять, я оставлю для ручных слотов: первая кнопка "Взять слот" (ссылка на менеджера), вторая "Перейти к задаче" (ссылка на бота), третья "Другие задания".
+    builder.button(text="✋ Взять слот", url=url_manager)
+    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)
+    builder.adjust(1)  # все в столбик (можно adjust(1) или по 1)
     sent_msg = await message.bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
     active_slots[sent_msg.message_id] = {"command": slot_name, "price": price, "post_text": post_text}
     await message.answer(f"✅ Слот «{slot_name}» опубликован в канале! ID: {sent_msg.message_id}")
+
+# Остальные команды без изменений, они вызывают publish_slot
 
 @router.message(Command("yandex"))
 async def yandex_slot(message: Message):
@@ -58,9 +65,15 @@ async def yandex_slot(message: Message):
     text = (
         "🔥 Слот: Яндекс карты\nЗадача: Выполнить отзыв/ы Яндекс карты\n"
         "Оплата: 150 руб/шт\nДедлайн: Сегодня до 23:59 (МСК)\n"
-        "Требуется человек: До закрытия слота.\nНажмите кнопку ниже, чтобы забрать слот."
+        "Требуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
+
+# Аналогично для остальных команд, просто меняем текст, добавляя фразу про кнопки.
+# Я приведу все, но чтобы не дублировать, можно просто изменить шаблон publish_slot, чтобы он добавлял эту фразу автоматически.
+# Но для ручных команд текст задаётся вручную, поэтому нужно изменить каждую.
+# Давайте я напишу полный набор с обновлённым текстом.
 
 @router.message(Command("google"))
 async def google_slot(message: Message):
@@ -68,7 +81,7 @@ async def google_slot(message: Message):
     text = (
         "🔥 Слот: GOOGLE\nЗадача: Выполнить отзыв/ы GOOGLE\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "GOOGLE", text, "50₽")
 
@@ -78,7 +91,7 @@ async def gis_slot(message: Message):
     text = (
         "🔥 Слот: 2ГИС\nЗадача: Выполнить отзыв/ы 2ГИС\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "2ГИС", text, "50₽")
 
@@ -88,7 +101,7 @@ async def avito_slot(message: Message):
     text = (
         "🔥 Слот: Авито\nЗадача: Выполнить отзыв/ы Авито\nОплата: 700 руб/шт\n"
         "Дедлайн: 2 суток с момента принятия слота\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Авито", text, "700₽")
 
@@ -98,7 +111,7 @@ async def vk_slot(message: Message):
     text = (
         "🔥 Слот: ВК\nЗадача: Выполнить отзыв/ы ВК\nОплата: 50 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "ВК", text, "50₽")
 
@@ -108,7 +121,7 @@ async def otzovik_slot(message: Message):
     text = (
         "🔥 Слот: Отзовик\nЗадача: Выполнить отзыв/ы ОТЗОВИК\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Отзовик", text, "100₽")
 
@@ -118,18 +131,17 @@ async def doctoru_slot(message: Message):
     text = (
         "🔥 Слот: Doctoru\nЗадача: Выполнить отзыв/ы Doctoru\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Doctoru", text, "100₽")
 
-# Новые команды
 @router.message(Command("dokdok"))
 async def dokdok_slot(message: Message):
     if not is_ga(message.from_user.id): return
     text = (
         "🔥 Слот: ДокДок\nЗадача: Выполнить отзыв/ы ДокДок\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "ДокДок", text, "100₽")
 
@@ -139,7 +151,7 @@ async def prodoctors_slot(message: Message):
     text = (
         "🔥 Слот: Про Докторов\nЗадача: Выполнить отзыв/ы Про Докторов\nОплата: 180 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Про Докторов", text, "180₽")
 
@@ -149,7 +161,7 @@ async def doctu_slot(message: Message):
     text = (
         "🔥 Слот: ДокТу\nЗадача: Выполнить отзыв/ы ДокТу\nОплата: 110 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "ДокТу", text, "110₽")
 
@@ -159,11 +171,11 @@ async def top32_slot(message: Message):
     text = (
         "🔥 Слот: 32ТОП\nЗадача: Выполнить отзыв/ы 32ТОП\nОплата: 100 руб/шт\n"
         "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
-        "Нажмите кнопку ниже, чтобы забрать слот."
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "32ТОП", text, "100₽")
 
-# ---------- Планирование автослота ----------
+# ---------- Планирование автослота (обновлённая клавиатура) ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1):
     platform_names = {
@@ -178,14 +190,16 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         f"⏰ Время: {time} (МСК)\n"
         f"📌 Доступно отзывов: {count} шт.\n"
         f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
-        f"Нажмите кнопку ниже, чтобы забрать слот."
+        f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     time_safe = time.replace(':', '-')
     callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
+    url_to_bot = "https://t.me/ncjobbot?start"  # ссылка на бота
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
+    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)
+    builder.adjust(1)  # все в столбик
     sent_msg = await bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
@@ -200,7 +214,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Обработчик кнопки взять слот ----------
+# ---------- Обработчик кнопки взять слот (без изменений) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -243,7 +257,7 @@ async def take_slot_start(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ---------- Обработчик ввода количества ----------
+# ---------- Обработчик ввода количества (без изменений) ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -296,7 +310,7 @@ async def handle_quantity_input(message: Message):
     request["state"] = "sending_reviews"
     await send_next_review(message, request, sheet)
 
-# ---------- Обработка скриншотов ----------
+# ---------- Обработка скриншотов (без изменений) ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -365,7 +379,7 @@ async def send_next_review(message: Message, request: dict, sheet):
     await message.answer("Ожидаю скриншот и продолжаем работу.")
     request["state"] = "waiting_screenshot"
 
-# ---------- Команды просмотра/закрытия ----------
+# ---------- Команды просмотра/закрытия (без изменений) ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_ga(message.from_user.id): return
