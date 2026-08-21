@@ -4,6 +4,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in environment")
 
+# Список администраторов (устаревший, можно удалить, но оставим)
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(",") if x.strip()]
 
@@ -36,3 +37,9 @@ LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-100...")
 # Канал/беседа для отчета по выплатам
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID", "-100...")
 REPORT_THREAD_ID = int(os.getenv("REPORT_THREAD_ID", "0"))  # 0 если не тема
+
+# ================== НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ИНСТРУКЦИИ ==================
+# ID фото в Telegram (если задан, используется в первую очередь)
+INSTRUCTION_PHOTO_ID = os.getenv("INSTRUCTION_PHOTO_ID")  # например, AgACAgIAAxkBAA...
+# Путь к файлу с инструкцией (если INSTRUCTION_PHOTO_ID не задан)
+INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", "instruction.jpg")
