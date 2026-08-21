@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path
+from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
 from bot.database import is_registered, is_blocked, get_user, is_ga
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -37,27 +37,22 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация (обновлённые кнопки) ----------
+# ---------- Ручная публикация (все команды) ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
-    url_to_bot = f"https://t.me/ncjobbot?start"  # или можно без start
+    url_to_bot = "https://t.me/ncjobbot?start"
     url_manager = f"https://t.me/{MANAGER_USERNAME}?text={encoded_text}"
-    # Новая клавиатура: три кнопки
     builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", callback_data="take_manual_slot")  # временный колбэк, но для ручных мы не используем callback, а ссылку на менеджера? Но по новому требованию, вероятно, нужно сделать callback как в автолотах. Но ручные команды созданы для админов, они могут остаться как есть с ссылкой на менеджера. Однако для единообразия я добавлю callback, но тогда нужно обрабатывать. Лучше оставить как было, но добавить кнопку "Перейти к задаче". Так как ручные слоты используются редко, я просто добавлю вторую кнопку.
-    # Но чтобы не усложнять, я оставлю для ручных слотов: первая кнопка "Взять слот" (ссылка на менеджера), вторая "Перейти к задаче" (ссылка на бота), третья "Другие задания".
     builder.button(text="✋ Взять слот", url=url_manager)
     builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)  # все в столбик (можно adjust(1) или по 1)
+    builder.adjust(1)
     sent_msg = await message.bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
     active_slots[sent_msg.message_id] = {"command": slot_name, "price": price, "post_text": post_text}
     await message.answer(f"✅ Слот «{slot_name}» опубликован в канале! ID: {sent_msg.message_id}")
-
-# Остальные команды без изменений, они вызывают publish_slot
 
 @router.message(Command("yandex"))
 async def yandex_slot(message: Message):
@@ -69,11 +64,6 @@ async def yandex_slot(message: Message):
         "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
-
-# Аналогично для остальных команд, просто меняем текст, добавляя фразу про кнопки.
-# Я приведу все, но чтобы не дублировать, можно просто изменить шаблон publish_slot, чтобы он добавлял эту фразу автоматически.
-# Но для ручных команд текст задаётся вручную, поэтому нужно изменить каждую.
-# Давайте я напишу полный набор с обновлённым текстом.
 
 @router.message(Command("google"))
 async def google_slot(message: Message):
@@ -175,7 +165,7 @@ async def top32_slot(message: Message):
     )
     await publish_slot(message, "32ТОП", text, "100₽")
 
-# ---------- Планирование автослота (обновлённая клавиатура) ----------
+# ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1):
     platform_names = {
@@ -194,12 +184,12 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     )
     time_safe = time.replace(':', '-')
     callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-    url_to_bot = "https://t.me/ncjobbot?start"  # ссылка на бота
+    url_to_bot = "https://t.me/ncjobbot?start"
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
     builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)  # все в столбик
+    builder.adjust(1)
     sent_msg = await bot.send_message(
         chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
     )
@@ -214,7 +204,49 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Обработчик кнопки взять слот (без изменений) ----------
+# ---------- Функция отправки инструкции ----------
+async def send_instruction(user_id: int, bot):
+    try:
+        caption = (
+            "📸 Инструкция по отправке скриншотов:\n\n"
+            "1. Сделайте скриншот экрана с опубликованным отзывом.\n"
+            "2. Убедитесь, что видна платформа и текст.\n"
+            "3. Отправьте скриншот в этот чат.\n"
+            "4. После проверки мы начислим оплату."
+        )
+        if INSTRUCTION_PHOTO_ID:
+            await bot.send_photo(
+                chat_id=user_id,
+                photo=INSTRUCTION_PHOTO_ID,
+                caption=caption
+            )
+        else:
+            # Пытаемся отправить из файла
+            if os.path.exists(INSTRUCTION_PHOTO_PATH):
+                with open(INSTRUCTION_PHOTO_PATH, 'rb') as photo:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo,
+                        caption=caption
+                    )
+            else:
+                # Если нет ни ID, ни файла, отправляем только текст
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=caption
+                )
+    except Exception as e:
+        logger.error(f"Ошибка отправки инструкции: {e}")
+        # В случае ошибки отправляем хотя бы текст
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text="📸 Инструкция по скриншотам: сделайте скриншот отзыва и отправьте в чат."
+            )
+        except:
+            pass
+
+# ---------- Обработчик кнопки взять слот ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -257,7 +289,7 @@ async def take_slot_start(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ---------- Обработчик ввода количества (без изменений) ----------
+# ---------- Обработчик ввода количества ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -308,9 +340,57 @@ async def handle_quantity_input(message: Message):
     request["assigned_rows"] = assigned_rows
     request["current_index"] = 0
     request["state"] = "sending_reviews"
+
+    # Переходим к выдаче первого отзыва (инструкция будет отправлена внутри send_next_review)
     await send_next_review(message, request, sheet)
 
-# ---------- Обработка скриншотов (без изменений) ----------
+# ---------- Команда отказа /cancel ----------
+@router.message(Command("cancel"))
+@router.message(Command("отказ"))
+async def cancel_task(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        await message.answer("❌ У вас нет активного задания.")
+        return
+    request = slot_requests[user_id]
+    if request["state"] == "waiting_quantity":
+        await message.answer("❌ Вы ещё не взяли отзывы. Сначала выберите количество.")
+        return
+
+    assigned_rows = request["assigned_rows"]
+    current_index = request["current_index"]
+    slot_msg_id = request["slot_msg_id"]
+    slot_info = active_slots.get(slot_msg_id)
+
+    remaining_rows = assigned_rows[current_index:]
+
+    if remaining_rows:
+        sheet = get_sheet()
+        if sheet:
+            for row_idx in remaining_rows:
+                try:
+                    sheet.update_cell(row_idx, 10, "")  # J очищаем
+                    sheet.update_cell(row_idx, 11, "")  # K очищаем
+                except Exception as e:
+                    logger.error(f"Ошибка очистки строки {row_idx} при отказе: {e}")
+            if slot_info:
+                slot_info["row_ids"].extend(remaining_rows)
+                slot_info["count"] += len(remaining_rows)
+                logger.info(f"Возвращено {len(remaining_rows)} отзывов в слот {slot_msg_id}")
+            else:
+                logger.info(f"Слот {slot_msg_id} уже неактивен, отзывы будут переопубликованы позже")
+        else:
+            await message.answer("❌ Ошибка доступа к таблице. Попробуйте позже.")
+            return
+
+    del slot_requests[user_id]
+    await message.answer(
+        "✅ Отказ принят.\n"
+        "Выполненные отзывы отправлены на модерацию.\n"
+        "Остальные возвращены в слот и будут переопубликованы."
+    )
+
+# ---------- Обработка скриншотов ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -336,6 +416,7 @@ async def handle_screenshot(message: Message):
     sheet = get_sheet()
     await send_next_review(message, request, sheet)
 
+# ---------- Отправка следующего отзыва ----------
 async def send_next_review(message: Message, request: dict, sheet):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
@@ -352,6 +433,10 @@ async def send_next_review(message: Message, request: dict, sheet):
         await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
         del slot_requests[message.from_user.id]
         return
+
+    # ---- ОТПРАВЛЯЕМ ИНСТРУКЦИЮ ПЕРЕД КАЖДЫМ ОТЗЫВОМ ----
+    await send_instruction(message.from_user.id, message.bot)
+
     row_idx = assigned_rows[current_index]
     row = sheet.row_values(row_idx)
     if len(row) < 14:
@@ -372,14 +457,14 @@ async def send_next_review(message: Message, request: dict, sheet):
         info_msg += "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах.\n"
     else:
         info_msg += "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила').\n"
-    info_msg += "💡 Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n\nПожалуйста, после выполнения пришлите скриншот отзыва."
+    info_msg += "💡 Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n\nПожалуйста, после выполнения пришлите скриншот отзыва.\n\nЕсли хотите отказаться от оставшихся заданий, отправьте команду /cancel."
     await message.answer(info_msg)
     await message.answer(link)
     await message.answer(text)
     await message.answer("Ожидаю скриншот и продолжаем работу.")
     request["state"] = "waiting_screenshot"
 
-# ---------- Команды просмотра/закрытия (без изменений) ----------
+# ---------- Команды просмотра/закрытия ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_ga(message.from_user.id): return
