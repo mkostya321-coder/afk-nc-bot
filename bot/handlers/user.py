@@ -31,7 +31,7 @@ class IntroState(StatesGroup):
     first = State()
     second = State()
 
-# ============= ОБНОВЛЁННЫЕ ПРАВИЛА =============
+# ============= ПРАВИЛА =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -369,22 +369,6 @@ async def process_bank(message: Message, state: FSMContext):
         reply_markup=main_menu_keyboard()
     )
 
-# ---------- /job (слоты) ----------
-@router.message(Command("job"))
-@router.message(F.text == "💼 Слоты")
-async def cmd_job(message: Message):
-    if is_blocked(message.from_user.id):
-        await message.answer("⛔ Вы заблокированы.")
-        return
-    if not active_slots:
-        await message.answer("😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\nС уважением команда New Chapter.")
-        return
-    lines = ["Открытые слоты:"]
-    for msg_id, data in active_slots.items():
-        lines.append(f"🔸 {data.get('command', data.get('platform', '?'))} {data.get('price', data.get('count', '?'))} (ID: {msg_id})")
-    lines.append(f"\nДля получения слота напишите менеджеру @{MANAGER_USERNAME}")
-    await message.answer("\n".join(lines))
-
 # ---------- 👥 Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
@@ -492,11 +476,3 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     text = build_page_text(ref_data, page, 10)
     await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
     await callback.answer()
-
-# ============= ОТЛАДОЧНЫЙ ХЕНДЛЕР (логирует всё, что приходит) =============
-@router.message()
-async def catch_all(message: Message):
-    if message.text:
-        logger.info(f"📩 [CATCH] Получено сообщение: '{message.text}' от {message.from_user.id}")
-    else:
-        logger.info(f"📩 [CATCH] Получено сообщение без текста от {message.from_user.id}")
