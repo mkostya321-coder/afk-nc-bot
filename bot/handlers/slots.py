@@ -37,7 +37,7 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация (все команды) ----------
+# ---------- Ручная публикация ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
@@ -221,7 +221,6 @@ async def send_instruction(user_id: int, bot):
                 caption=caption
             )
         else:
-            # Пытаемся отправить из файла
             if os.path.exists(INSTRUCTION_PHOTO_PATH):
                 with open(INSTRUCTION_PHOTO_PATH, 'rb') as photo:
                     await bot.send_photo(
@@ -230,23 +229,15 @@ async def send_instruction(user_id: int, bot):
                         caption=caption
                     )
             else:
-                # Если нет ни ID, ни файла, отправляем только текст
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=caption
-                )
+                await bot.send_message(chat_id=user_id, text=caption)
     except Exception as e:
         logger.error(f"Ошибка отправки инструкции: {e}")
-        # В случае ошибки отправляем хотя бы текст
         try:
-            await bot.send_message(
-                chat_id=user_id,
-                text="📸 Инструкция по скриншотам: сделайте скриншот отзыва и отправьте в чат."
-            )
+            await bot.send_message(chat_id=user_id, text="📸 Инструкция: сделайте скриншот отзыва и отправьте.")
         except:
             pass
 
-# ---------- Обработчик кнопки взять слот ----------
+# ---------- Обработчик кнопки взять слот (из канала) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -281,7 +272,8 @@ async def take_slot_start(callback: CallbackQuery):
         "state": "waiting_quantity",
         "assigned_rows": [],
         "current_index": 0,
-        "row_ids": slot_info["row_ids"]
+        "row_ids": slot_info["row_ids"],
+        "from_menu": False
     }
     await callback.bot.send_message(
         chat_id=user_id,
@@ -289,7 +281,51 @@ async def take_slot_start(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ---------- Обработчик ввода количества ----------
+# ---------- Обработчик выбора платформы из меню "Слоты" ----------
+@router.callback_query(F.data.startswith("choose_platform|"))
+async def choose_platform(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_registered(user_id):
+        await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
+        return
+    if is_blocked(user_id):
+        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+        return
+
+    platform = callback.data.split("|")[1]
+    all_rows = []
+    for msg_id, slot in active_slots.items():
+        if slot.get("platform") == platform and slot.get("row_ids"):
+            all_rows.extend(slot["row_ids"])
+
+    if not all_rows:
+        await callback.answer("❌ Нет доступных отзывов для этой платформы.", show_alert=True)
+        return
+
+    if user_id in cooldowns and platform in cooldowns[user_id]:
+        if datetime.now() < cooldowns[user_id][platform]:
+            await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
+            return
+
+    slot_requests[user_id] = {
+        "platform": platform,
+        "count": len(all_rows),
+        "date": None,
+        "time": None,
+        "slot_msg_id": "menu",
+        "state": "waiting_quantity",
+        "assigned_rows": [],
+        "current_index": 0,
+        "row_ids": all_rows,
+        "from_menu": True
+    }
+    await callback.bot.send_message(
+        chat_id=user_id,
+        text=f"📊 Доступно отзывов на платформе {platform}: {len(all_rows)} шт.\nСколько вы готовы выполнить? (напишите число)"
+    )
+    await callback.answer()
+
+# ---------- Обработчик ввода количества (общий) ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -306,45 +342,74 @@ async def handle_quantity_input(message: Message):
     if quantity <= 0 or quantity > request["count"]:
         await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
-    slot_msg_id = request["slot_msg_id"]
-    slot_info = active_slots.get(slot_msg_id)
-    if not slot_info:
-        await message.answer("❌ Этот слот уже неактивен.")
-        del slot_requests[user_id]
-        return
-    row_ids = slot_info["row_ids"]
-    if len(row_ids) < quantity:
-        await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
-        del slot_requests[user_id]
-        return
-    assigned_rows = row_ids[:quantity]
-    slot_info["row_ids"] = row_ids[quantity:]
-    slot_info["count"] -= quantity
-    if slot_info["count"] == 0:
-        del active_slots[slot_msg_id]
-        try:
-            await message.bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=slot_msg_id,
-                text="Все отзывы этого слота разобраны."
-            )
-        except:
-            pass
-    sheet = get_sheet()
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    for row_idx in assigned_rows:
-        try:
-            sheet.update_cell(row_idx, 11, username)   # K
-            sheet.update_cell(row_idx, 10, "в работе") # J
-        except Exception as e:
-            logger.error(f"Ошибка обновления строки {row_idx}: {e}")
-    request["assigned_rows"] = assigned_rows
-    request["current_index"] = 0
-    request["state"] = "sending_reviews"
 
-    # Переходим к выдаче первого отзыва (инструкция будет отправлена внутри send_next_review)
-    await send_next_review(message, request, sheet)
+    if request["from_menu"]:
+        assigned_rows = request["row_ids"][:quantity]
+        remaining_rows = request["row_ids"][quantity:]
+        for msg_id, slot in list(active_slots.items()):
+            if slot.get("platform") == request["platform"]:
+                new_row_ids = [r for r in slot["row_ids"] if r not in assigned_rows]
+                slot["row_ids"] = new_row_ids
+                slot["count"] = len(new_row_ids)
+                if slot["count"] == 0:
+                    del active_slots[msg_id]
+                    try:
+                        await message.bot.edit_message_text(
+                            chat_id=CHANNEL_ID, message_id=msg_id,
+                            text="Все отзывы этого слота разобраны."
+                        )
+                    except:
+                        pass
+        sheet = get_sheet()
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        for row_idx in assigned_rows:
+            try:
+                sheet.update_cell(row_idx, 11, username)
+                sheet.update_cell(row_idx, 10, "в работе")
+            except Exception as e:
+                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+        request["assigned_rows"] = assigned_rows
+        request["current_index"] = 0
+        request["state"] = "sending_reviews"
+        await send_next_review(message, request, sheet)
+    else:
+        slot_msg_id = request["slot_msg_id"]
+        slot_info = active_slots.get(slot_msg_id)
+        if not slot_info:
+            await message.answer("❌ Этот слот уже неактивен.")
+            del slot_requests[user_id]
+            return
+        row_ids = slot_info["row_ids"]
+        if len(row_ids) < quantity:
+            await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
+            del slot_requests[user_id]
+            return
+        assigned_rows = row_ids[:quantity]
+        slot_info["row_ids"] = row_ids[quantity:]
+        slot_info["count"] -= quantity
+        if slot_info["count"] == 0:
+            del active_slots[slot_msg_id]
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=CHANNEL_ID, message_id=slot_msg_id,
+                    text="Все отзывы этого слота разобраны."
+                )
+            except:
+                pass
+        sheet = get_sheet()
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        for row_idx in assigned_rows:
+            try:
+                sheet.update_cell(row_idx, 11, username)
+                sheet.update_cell(row_idx, 10, "в работе")
+            except Exception as e:
+                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+        request["assigned_rows"] = assigned_rows
+        request["current_index"] = 0
+        request["state"] = "sending_reviews"
+        await send_next_review(message, request, sheet)
 
-# ---------- Команда отказа /cancel ----------
+# ---------- Команда отказа ----------
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -360,7 +425,7 @@ async def cancel_task(message: Message):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
     slot_msg_id = request["slot_msg_id"]
-    slot_info = active_slots.get(slot_msg_id)
+    slot_info = active_slots.get(slot_msg_id) if slot_msg_id != "menu" else None
 
     remaining_rows = assigned_rows[current_index:]
 
@@ -369,8 +434,8 @@ async def cancel_task(message: Message):
         if sheet:
             for row_idx in remaining_rows:
                 try:
-                    sheet.update_cell(row_idx, 10, "")  # J очищаем
-                    sheet.update_cell(row_idx, 11, "")  # K очищаем
+                    sheet.update_cell(row_idx, 10, "")
+                    sheet.update_cell(row_idx, 11, "")
                 except Exception as e:
                     logger.error(f"Ошибка очистки строки {row_idx} при отказе: {e}")
             if slot_info:
@@ -378,7 +443,7 @@ async def cancel_task(message: Message):
                 slot_info["count"] += len(remaining_rows)
                 logger.info(f"Возвращено {len(remaining_rows)} отзывов в слот {slot_msg_id}")
             else:
-                logger.info(f"Слот {slot_msg_id} уже неактивен, отзывы будут переопубликованы позже")
+                logger.info(f"Слот {slot_msg_id} неактивен, отзывы останутся свободными")
         else:
             await message.answer("❌ Ошибка доступа к таблице. Попробуйте позже.")
             return
@@ -423,7 +488,7 @@ async def send_next_review(message: Message, request: dict, sheet):
     if current_index >= len(assigned_rows):
         for row_idx in assigned_rows:
             try:
-                sheet.update_cell(row_idx, 10, "на модерации")  # J
+                sheet.update_cell(row_idx, 10, "на модерации")
             except Exception as e:
                 logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
         platform = request["platform"]
@@ -434,7 +499,6 @@ async def send_next_review(message: Message, request: dict, sheet):
         del slot_requests[message.from_user.id]
         return
 
-    # ---- ОТПРАВЛЯЕМ ИНСТРУКЦИЮ ПЕРЕД КАЖДЫМ ОТЗЫВОМ ----
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
@@ -464,7 +528,7 @@ async def send_next_review(message: Message, request: dict, sheet):
     await message.answer("Ожидаю скриншот и продолжаем работу.")
     request["state"] = "waiting_screenshot"
 
-# ---------- Команды просмотра/закрытия ----------
+# ---------- Админские команды ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
     if not is_ga(message.from_user.id): return
@@ -508,3 +572,40 @@ async def close_all_slots(message: Message):
             pass
         del active_slots[slot_id]
     await message.answer("✅ Все слоты закрыты.")
+
+# ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
+@router.message(Command("job"))
+@router.message(F.text == "💼 Слоты")
+async def cmd_job(message: Message):
+    if is_blocked(message.from_user.id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    if not active_slots:
+        await message.answer("😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\nС уважением команда New Chapter.")
+        return
+
+    platforms = set()
+    for slot in active_slots.values():
+        p = slot.get("platform")
+        if p:
+            platforms.add(p)
+
+    if not platforms:
+        await message.answer("Нет доступных платформ.")
+        return
+
+    builder = InlineKeyboardBuilder()
+    platform_names = {
+        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
+        "авито": "Авито", "вк": "ВК", "отзовик": "Отзовик",
+        "доктору": "Doctoru", "докдок": "ДокДок",
+        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
+    }
+    for p in platforms:
+        display_name = platform_names.get(p, p.capitalize())
+        builder.button(text=display_name, callback_data=f"choose_platform|{p}")
+    builder.adjust(2)
+    await message.answer(
+        "Выберите платформу, с которой хотите взять отзывы:",
+        reply_markup=builder.as_markup()
+    )
