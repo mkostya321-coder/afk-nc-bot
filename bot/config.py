@@ -27,9 +27,7 @@ LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-100...")
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID", "-100...")
 REPORT_THREAD_ID = int(os.getenv("REPORT_THREAD_ID", "0"))
 
-# Инструкция
 INSTRUCTION_PHOTO_ID = os.getenv("INSTRUCTION_PHOTO_ID")
 INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", "instruction.jpg")
 
-# Канал, на который нужно подписаться для использования бота
 REQUIRED_CHANNEL_ID = os.getenv("REQUIRED_CHANNEL_ID", "@newchapterjob")
