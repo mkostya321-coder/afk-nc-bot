@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
-from .database import get_user_by_username
+from .database import get_user_by_username, get_user
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
@@ -36,30 +36,18 @@ PLATFORM_ALIASES = {
     "32топ": ["32топ", "32top", "32 топ"],
 }
 
-# Сопоставление названий листов с внутренними именами платформ
 SHEET_NAME_TO_PLATFORM = {
-    "яндекс": "яндекс",
-    "yandex": "яндекс",
+    "яндекс": "яндекс", "yandex": "яндекс",
     "google": "google",
     "2гис": "2гис",
-    "2гис": "2гис",  # дубль для надёжности
-    "авито": "авито",
-    "avito": "авито",
-    "вк": "вк",
-    "vk": "вк",
-    "отзовик": "отзовик",
-    "otzovik": "отзовик",
-    "доктору": "доктору",
-    "doctoru": "доктору",
+    "авито": "авито", "avito": "авито",
+    "вк": "вк", "vk": "вк",
+    "отзовик": "отзовик", "otzovik": "отзовик",
+    "доктору": "доктору", "doctoru": "доктору",
     "докдок": "докдок",
-    "продокторов": "про докторов",
-    "про докторов": "про докторов",
-    "prodoctors": "про докторов",
-    "докту": "докту",
-    "doctu": "докту",
-    "32топ": "32топ",
-    "32top": "32топ",
-    "32 топ": "32топ",
+    "продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
+    "докту": "докту", "doctu": "докту",
+    "32топ": "32топ", "32top": "32топ", "32 топ": "32топ",
 }
 
 def match_platform(raw_name: str) -> str | None:
@@ -71,7 +59,6 @@ def match_platform(raw_name: str) -> str | None:
     return None
 
 def platform_from_sheet_name(sheet_name: str) -> str | None:
-    """Определяет стандартное имя платформы по названию листа"""
     key = sheet_name.strip().lower()
     return SHEET_NAME_TO_PLATFORM.get(key)
 
@@ -94,22 +81,20 @@ async def monitor_schedule(bot, active_slots: dict):
                 continue
             client = gspread.authorize(creds)
             spreadsheet = client.open_by_key(SHEET_ID)
-            worksheets = spreadsheet.worksheets()  # получаем все листы
+            worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
 
-            # Проходим по каждому листу
             for sheet in worksheets:
                 sheet_name = sheet.title
                 platform = platform_from_sheet_name(sheet_name)
                 if not platform:
-                    # Если название листа не соответствует ни одной платформе, пропускаем
                     continue
 
                 records = sheet.get_all_values()
                 if not records or len(records) < 2:
                     continue
 
-                # --- 1. Первичная публикация ---
+                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
@@ -118,16 +103,14 @@ async def monitor_schedule(bot, active_slots: dict):
                     time_str = row[1].strip()
                     if not date_str or not time_str:
                         continue
-                    # Проверяем, не публиковалась ли уже
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
-                    if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999"):
+                    if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
                         continue
-                    # Проверяем, что не в работе
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
-                    if j_val == "в работе":
+                    if j_val in ("в работе", "на модерации", "на модерации с опз"):
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
@@ -149,10 +132,9 @@ async def monitor_schedule(bot, active_slots: dict):
                     for (date, time), items in groups.items():
                         count_available = len(items)
                         row_ids = [item[0] for item in items]
-                        # Публикуем первый раз, ставим Q=1
                         for row_idx in row_ids:
                             try:
-                                sheet.update_cell(row_idx, 17, 1)  # Q (колонка 17)
+                                sheet.update_cell(row_idx, 17, 1)  # Q
                             except Exception as e:
                                 logger.error(f"Не удалось обновить Q для строки {row_idx} на листе {sheet_name}: {e}")
                         await publish_scheduled_slot(
@@ -161,7 +143,7 @@ async def monitor_schedule(bot, active_slots: dict):
                         )
                         logger.info(f"Опубликован слот {platform} ({count_available} шт.) – попытка 1 (лист {sheet_name})")
 
-                # --- 2. Перепубликация через 2 часа ---
+                # --- Перепубликация через 2 часа ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -172,7 +154,7 @@ async def monitor_schedule(bot, active_slots: dict):
                         for row_idx in slot["row_ids"]:
                             try:
                                 j_val = sheet.cell(row_idx, 10).value.lower() if sheet.cell(row_idx, 10).value else ""
-                                if j_val != "в работе":
+                                if j_val not in ("в работе", "на модерации", "на модерации с опз"):
                                     available_rows.append(row_idx)
                             except:
                                 continue
@@ -196,7 +178,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     elif new_attempt == 3:
                         col_idx = 14  # O
                     elif new_attempt == 4:
-                        col_idx = 8   # I
+                        col_idx = 9   # I (исправлено с 8 на 9)
                     else:
                         col_idx = None
 
@@ -213,19 +195,82 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"Переопубликован слот {slot['platform']} ({len(available_rows)} шт.) – попытка {new_attempt} (лист {sheet_name})")
 
-                # --- 3. Закрытие в 23:30 ---
+                # --- Закрытие в 23:30 (НОВАЯ ЛОГИКА) ---
                 if now.hour == 23 and now.minute >= 30:
+                    # Собираем всех пользователей с активными сессиями
+                    from bot.handlers.slots import slot_requests
+                    users_with_sessions = list(slot_requests.keys())
+
+                    # Проходим по всем слотам и строкам
                     for msg_id, slot in list(active_slots.items()):
-                        for row_idx in slot["row_ids"]:
+                        # Получаем список строк
+                        rows_to_process = []
+                        for row_idx in slot.get("row_ids", []):
                             try:
-                                j_val = sheet.cell(row_idx, 10).value.lower() if sheet.cell(row_idx, 10).value else ""
-                                if j_val != "в работе":
-                                    sheet.update_cell(row_idx, 9, 999)  # I
-                                    sheet.format(f"I{row_idx}", {
-                                        "backgroundColor": {"red": 1, "green": 0, "blue": 0}
-                                    })
-                            except Exception as e:
-                                logger.error(f"Не удалось пометить строку {row_idx} на листе {sheet_name}: {e}")
+                                j_val = sheet.cell(row_idx, 10).value or ""
+                                k_val = sheet.cell(row_idx, 11).value or ""
+                                rows_to_process.append((row_idx, j_val, k_val))
+                            except:
+                                continue
+
+                        # Группируем по пользователю (K)
+                        user_rows = {}
+                        for row_idx, j_val, k_val in rows_to_process:
+                            if k_val:
+                                user_rows.setdefault(k_val, []).append((row_idx, j_val))
+
+                        # Обрабатываем каждого пользователя
+                        for k_val, row_list in user_rows.items():
+                            # Проверяем, есть ли у пользователя активная сессия
+                            user_id = None
+                            # Извлекаем user_id из K (формат @username или просто имя)
+                            # В K хранится @username или имя, нужно найти пользователя по username
+                            username = k_val.lstrip('@')
+                            user = get_user_by_username(username)
+                            if user:
+                                user_id = user['user_id']
+                            else:
+                                # если не нашли, пропускаем
+                                continue
+
+                            if user_id in users_with_sessions:
+                                # Пользователь не завершил слот
+                                # Для всех строк с J == "на модерации" меняем на "на модерации с ОПЗ"
+                                # Для всех строк с J == "в работе" снимаем
+                                for row_idx, j_val in row_list:
+                                    if j_val.lower() == "на модерации":
+                                        try:
+                                            sheet.update_cell(row_idx, 10, "на модерации с ОПЗ")
+                                            # I = 333 (на модерации) - уже стоит, если было, но оставим
+                                        except Exception as e:
+                                            logger.error(f"Ошибка обновления статуса ОПЗ для строки {row_idx}: {e}")
+                                    elif j_val.lower() == "в работе":
+                                        try:
+                                            sheet.update_cell(row_idx, 10, "не принят в работу")
+                                            sheet.update_cell(row_idx, 11, "")  # очищаем исполнителя
+                                            sheet.update_cell(row_idx, 9, 888)   # I = 888
+                                            sheet.format(f"I{row_idx}", {
+                                                "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}  # синий
+                                            })
+                                        except Exception as e:
+                                            logger.error(f"Ошибка снятия строки {row_idx}: {e})
+
+                                # Уведомляем пользователя
+                                try:
+                                    await bot.send_message(
+                                        user_id,
+                                        "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК. "
+                                        "Невыполненные отзывы сняты с вас. "
+                                        "Оплата за выполненные отзывы в этом слоте будет снижена на 50%."
+                                    )
+                                except:
+                                    pass
+                                # Удаляем сессию пользователя
+                                if user_id in slot_requests:
+                                    del slot_requests[user_id]
+
+                    # Закрываем все слоты (удаляем из active_slots)
+                    for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
                                 chat_id=CHANNEL_ID, message_id=msg_id,
@@ -240,7 +285,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ (без изменений) ============
+# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ (с поддержкой ОПЗ и новых статусов) ============
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
@@ -260,34 +305,15 @@ async def update_stats_from_sheet_once():
             return
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
-        # Для обновления статистики нужно сканировать все листы, но мы оставим как было,
-        # так как логика подсчёта не изменилась, можно оставить первый лист или объединить.
-        # Однако для упрощения оставим первый лист (он может быть общим, но если у вас отдельные,
-        # возможно, нужно пройти по всем. Я оставлю как было в оригинале, но можно адаптировать.
-        # Так как вы сказали, что листы отдельные, то статистика тоже должна собираться со всех листов.
-        # Для этого мы модифицируем эту функцию, чтобы она проходила по всем листам и собирала данные.
-        # Но это отдельная задача. Пока оставим как есть, но с учётом, что листы отдельные,
-        # нужно будет пройти по всем листам. Внесём изменения.
-        # Я перепишу эту функцию для сбора со всех листов.
-        
-        # Ниже приведена старая логика, но мы её заменим на новую, проходящую по всем листам.
-        # Для краткости я пока оставлю старую, но вы можете попросить доработать.
-        # Однако в целях экономии времени, я предложу полный файл с обновлённой статистикой.
-        # Но для начала я просто добавлю комментарий, что надо доработать.
-        # Ввиду сложности, я предлагаю оставить текущую функцию как есть, так как она работает с sheet1,
-        # но если у вас все листы, то нужно собрать все строки со всех листов.
-        # Давайте я перепишу `update_stats_from_sheet_once` для сбора со всех листов.
-        
-        # Для этого я объединю данные со всех листов в один список.
+
+        # Собираем все строки со всех листов
         all_rows = []
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
             if len(records) > 1:
-                # добавляем строки, но пропускаем заголовок
                 for row in records[1:]:
                     all_rows.append(row)
-        # Теперь обрабатываем all_rows как раньше.
-        
+
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             # Обнуляем периодические счётчики
@@ -308,7 +334,8 @@ async def update_stats_from_sheet_once():
                 flag_stat = row[8].strip()
                 executor = row[10].strip()
 
-                if flag_stat != "0" or status != "опубликован":
+                # Пропускаем уже обработанные (I не 0 и не пусто)
+                if flag_stat not in ("", "0"):
                     continue
 
                 platform = match_platform(platform_raw)
@@ -317,34 +344,102 @@ async def update_stats_from_sheet_once():
 
                 executor_clean = executor.lstrip("@").lower()
                 user = get_user_by_username(executor_clean)
-                if user:
-                    uid = user["user_id"]
-                    field_map = {
-                        "яндекс": "yandex",
-                        "google": "google",
-                        "2гис": "gis",
-                        "авито": "avito",
-                        "вк": "vk",
-                        "отзовик": "otzovik",
-                        "доктору": "doctoru",
-                        "докдок": "dokdok",
-                        "про докторов": "prodoctors",
-                        "докту": "doctu",
-                        "32топ": "top32",
-                    }
-                    field_prefix = field_map.get(platform)
-                    if field_prefix:
-                        passed_field = f"{field_prefix}_passed"
-                        total_field = f"{field_prefix}_total"
-                        cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
-                    # Обновляем I=1 (но мы не знаем на каком листе была строка, поэтому пропускаем обновление ячейки)
-                else:
+
+                # Обработка статусов
+                if status == "опубликован":
+                    # Полная оплата
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        if field_prefix:
+                            passed_field = f"{field_prefix}_passed"
+                            total_field = f"{field_prefix}_total"
+                            cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                        # Начисляем полную сумму
+                        cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
+                        # Ставим I=1
+                        # отметим, что обработано позже
+                    else:
+                        # пользователь не найден, ставим I=2
+                        pass
+
+                elif status == "опубликован опз":
+                    # Оплата с 20% штрафом
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        price_opz = int(price * 0.8)  # 20% меньше
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        if field_prefix:
+                            passed_field = f"{field_prefix}_passed"
+                            total_field = f"{field_prefix}_total"
+                            cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                        cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
+                    else:
+                        pass
+
+                elif status == "удален":
+                    # Вычитаем полную цену
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
+                        cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
+                        # Уменьшаем общий счетчик
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        if field_prefix:
+                            total_field = f"{field_prefix}_total"
+                            cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
+                    # Ставим I=3
+                elif status == "опубликован не по тх":
+                    # Игнорируем
                     pass
+
                 processed += 1
 
             conn.commit()
 
-            # Пересчёт выплат и total_earned
+            # Пересчёт выплат (пересчитываем на основе passed)
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
@@ -367,10 +462,10 @@ async def update_stats_from_sheet_once():
                     user_row[11] * PRICES.get("32топ", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
-                cur.execute("UPDATE users SET total_earned = total_earned + ? WHERE user_id = ?", (period_total, uid))
+                # total_earned уже обновлён, не пересчитываем
             conn.commit()
 
-            # Реферальные бонусы
+            # Реферальные бонусы (без изменений)
             cur.execute("""
                 SELECT user_id, referrer, yandex_total, google_total, gis_total
                 FROM users WHERE referrer != '0'
@@ -387,6 +482,38 @@ async def update_stats_from_sheet_once():
                         if ref_user:
                             cur.execute("UPDATE users SET payout = payout + 450, total_earned = total_earned + 450 WHERE user_id = ?", (ref_user["user_id"],))
             conn.commit()
+
+            # Обновляем флаги I в Google Sheets для обработанных строк
+            for sheet in spreadsheet.worksheets():
+                records = sheet.get_all_values()
+                for row_idx, row in enumerate(records[1:], start=2):
+                    if len(row) < 10:
+                        continue
+                    flag_stat = row[8].strip()
+                    if flag_stat not in ("", "0"):
+                        continue
+                    status = row[9].strip().lower()
+                    if status == "опубликован":
+                        try:
+                            sheet.update_cell(row_idx, 9, 1)  # I=1
+                        except:
+                            pass
+                    elif status == "опубликован опз":
+                        try:
+                            sheet.update_cell(row_idx, 9, 1)  # I=1, но мы могли бы использовать другой код, но оставим 1
+                        except:
+                            pass
+                    elif status == "удален":
+                        try:
+                            sheet.update_cell(row_idx, 9, 3)  # I=3
+                        except:
+                            pass
+                    elif status == "опубликован не по тх":
+                        try:
+                            sheet.update_cell(row_idx, 9, 4)  # I=4
+                        except:
+                            pass
+                    # Для статусов "на модерации" и "на модерации с ОПЗ" мы не меняем I, они остаются 0 или 333
 
         logger.info(f"Статистика обновлена, обработано строк: {processed}")
 
