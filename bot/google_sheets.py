@@ -70,7 +70,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ============ ПУБЛИКАЦИЯ СЛОТОВ ============
+# ============ ПУБЛИКАЦИЯ СЛОТОВ (без изменений) ============
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -234,7 +234,7 @@ async def monitor_schedule(bot, active_slots: dict):
                                         try:
                                             sheet.update_cell(row_idx, 10, "не принят в работу")
                                             sheet.update_cell(row_idx, 11, "")
-                                            sheet.update_cell(row_idx, 9, 888)
+                                            sheet.update_cell(row_idx, 9, 888)  # I = 888
                                             sheet.format(f"I{row_idx}", {
                                                 "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                             })
@@ -268,7 +268,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"Ошибка в планировщике слотов: {e}")
         await asyncio.sleep(60)
 
-# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ ============
+# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ (с использованием столбца E) ============
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
@@ -289,6 +289,7 @@ async def update_stats_from_sheet_once():
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
 
+        # Собираем все строки со всех листов
         all_rows = []
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
@@ -298,6 +299,7 @@ async def update_stats_from_sheet_once():
 
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
+            # Обнуляем периодические счётчики
             cur.execute("""
                 UPDATE users SET
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
@@ -307,110 +309,126 @@ async def update_stats_from_sheet_once():
             conn.commit()
 
             processed = 0
-            for row in all_rows:
-                if len(row) < 10:
-                    continue
-                platform_raw = row[3].strip()
-                status = row[9].strip().lower()
-                flag_stat = row[8].strip()
-                executor = row[10].strip()
+            # Сначала обрабатываем все строки, но не обновляем ячейки, только накапливаем изменения
+            # Чтобы обновить E, нам нужно знать номер строки и лист. Для простоты будем обновлять сразу.
+            # Но мы не знаем, с какого листа строка, поэтому для обновления E мы должны пройти по листам позже.
+            # Вместо этого мы можем собрать словарь {row_idx: new_value} для каждого листа.
+            # Но проще: после обработки всех строк мы пройдём по всем листам и обновим E для строк с флагом 0 и статусом в нужных.
+            # Сделаем так: соберём список кортежей (лист, row_idx, статус) и потом обновим.
 
-                if flag_stat not in ("", "0"):
-                    continue
+            updates = []  # список (sheet, row_idx, new_e_value)
 
-                platform = match_platform(platform_raw)
-                if not platform:
-                    continue
+            # Пройдём по каждому листу отдельно, чтобы знать sheet
+            for sheet in spreadsheet.worksheets():
+                records = sheet.get_all_values()
+                for row_idx, row in enumerate(records[1:], start=2):
+                    if len(row) < 10:
+                        continue
+                    platform_raw = row[3].strip()
+                    status = row[9].strip().lower()
+                    flag_stat = row[8].strip()  # I
+                    executor = row[10].strip()
 
-                executor_clean = executor.lstrip("@").lower()
-                user = get_user_by_username(executor_clean)
+                    if flag_stat not in ("", "0"):
+                        continue  # уже обработано
 
-                if status == "опубликован":
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                        }
-                        field_prefix = field_map.get(platform)
-                        if field_prefix:
-                            passed_field = f"{field_prefix}_passed"
-                            total_field = f"{field_prefix}_total"
-                            cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
-                        cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
-                    else:
-                        pass
+                    platform = match_platform(platform_raw)
+                    if not platform:
+                        continue
 
-                elif status == "опубликован опз":
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        price_opz = int(price * 0.8)
-                        field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                        }
-                        field_prefix = field_map.get(platform)
-                        if field_prefix:
-                            passed_field = f"{field_prefix}_passed"
-                            total_field = f"{field_prefix}_total"
-                            cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
-                        cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
-                    else:
-                        pass
+                    executor_clean = executor.lstrip("@").lower()
+                    user = get_user_by_username(executor_clean)
 
-                elif status == "удален":
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
-                        cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
-                        field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                        }
-                        field_prefix = field_map.get(platform)
-                        if field_prefix:
-                            total_field = f"{field_prefix}_total"
-                            cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
-                    else:
-                        pass
+                    if status == "опубликован":
+                        if user:
+                            uid = user["user_id"]
+                            price = PRICES.get(platform, 0)
+                            field_map = {
+                                "яндекс": "yandex",
+                                "google": "google",
+                                "2гис": "gis",
+                                "авито": "avito",
+                                "вк": "vk",
+                                "отзовик": "otzovik",
+                                "доктору": "doctoru",
+                                "докдок": "dokdok",
+                                "про докторов": "prodoctors",
+                                "докту": "doctu",
+                                "32топ": "top32",
+                            }
+                            field_prefix = field_map.get(platform)
+                            if field_prefix:
+                                passed_field = f"{field_prefix}_passed"
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
+                            updates.append((sheet, row_idx, 1))  # E = 1
+                        else:
+                            updates.append((sheet, row_idx, 2))  # пользователь не найден
 
-                elif status == "опубликован не по тх":
-                    pass
+                    elif status == "опубликован опз":
+                        if user:
+                            uid = user["user_id"]
+                            price = PRICES.get(platform, 0)
+                            price_opz = int(price * 0.8)  # 20% штраф
+                            field_map = {
+                                "яндекс": "yandex",
+                                "google": "google",
+                                "2гис": "gis",
+                                "авито": "avito",
+                                "вк": "vk",
+                                "отзовик": "otzovik",
+                                "доктору": "doctoru",
+                                "докдок": "dokdok",
+                                "про докторов": "prodoctors",
+                                "докту": "doctu",
+                                "32топ": "top32",
+                            }
+                            field_prefix = field_map.get(platform)
+                            if field_prefix:
+                                passed_field = f"{field_prefix}_passed"
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
+                            updates.append((sheet, row_idx, 1))  # E = 1 (опубликован)
+                        else:
+                            updates.append((sheet, row_idx, 2))
 
-                processed += 1
+                    elif status == "удален":
+                        if user:
+                            uid = user["user_id"]
+                            price = PRICES.get(platform, 0)
+                            cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
+                            cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
+                            field_map = {
+                                "яндекс": "yandex",
+                                "google": "google",
+                                "2гис": "gis",
+                                "авито": "avito",
+                                "вк": "vk",
+                                "отзовик": "otzovik",
+                                "доктору": "doctoru",
+                                "докдок": "dokdok",
+                                "про докторов": "prodoctors",
+                                "докту": "doctu",
+                                "32топ": "top32",
+                            }
+                            field_prefix = field_map.get(platform)
+                            if field_prefix:
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
+                            updates.append((sheet, row_idx, 3))  # E = 3
+                        else:
+                            updates.append((sheet, row_idx, 2))
+
+                    elif status == "опубликован не по тх":
+                        updates.append((sheet, row_idx, 4))  # E = 4
+
+                    processed += 1
 
             conn.commit()
 
+            # Пересчёт выплат (пересчитываем на основе passed)
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
@@ -435,6 +453,7 @@ async def update_stats_from_sheet_once():
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
+            # Реферальные бонусы (без изменений)
             cur.execute("""
                 SELECT user_id, referrer, yandex_total, google_total, gis_total
                 FROM users WHERE referrer != '0'
@@ -452,35 +471,12 @@ async def update_stats_from_sheet_once():
                             cur.execute("UPDATE users SET payout = payout + 450, total_earned = total_earned + 450 WHERE user_id = ?", (ref_user["user_id"],))
             conn.commit()
 
-            for sheet in spreadsheet.worksheets():
-                records = sheet.get_all_values()
-                for row_idx, row in enumerate(records[1:], start=2):
-                    if len(row) < 10:
-                        continue
-                    flag_stat = row[8].strip()
-                    if flag_stat not in ("", "0"):
-                        continue
-                    status = row[9].strip().lower()
-                    if status == "опубликован":
-                        try:
-                            sheet.update_cell(row_idx, 9, 1)
-                        except:
-                            pass
-                    elif status == "опубликован опз":
-                        try:
-                            sheet.update_cell(row_idx, 9, 1)
-                        except:
-                            pass
-                    elif status == "удален":
-                        try:
-                            sheet.update_cell(row_idx, 9, 3)
-                        except:
-                            pass
-                    elif status == "опубликован не по тх":
-                        try:
-                            sheet.update_cell(row_idx, 9, 4)
-                        except:
-                            pass
+            # Обновляем столбец E для всех накопленных изменений
+            for sheet, row_idx, e_value in updates:
+                try:
+                    sheet.update_cell(row_idx, 5, e_value)  # столбец E
+                except Exception as e:
+                    logger.error(f"Не удалось обновить E для строки {row_idx}: {e}")
 
         logger.info(f"Статистика обновлена, обработано строк: {processed}")
 
