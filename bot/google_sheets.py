@@ -85,12 +85,16 @@ async def monitor_schedule(bot, active_slots: dict):
             worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
             logger.info(f"🔍 Проверка таблицы в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
+            
+            # Логируем названия всех листов
+            sheet_names = [ws.title for ws in worksheets]
+            logger.info(f"📋 Названия листов: {sheet_names}")
 
             for sheet in worksheets:
                 sheet_name = sheet.title
                 platform = platform_from_sheet_name(sheet_name)
                 if not platform:
-                    logger.debug(f"⏭️ Пропускаем лист '{sheet_name}' (неизвестная платформа)")
+                    logger.info(f"⏭️ Пропускаем лист '{sheet_name}' (неизвестная платформа)")
                     continue
                 logger.info(f"📋 Обработка листа '{sheet_name}' (платформа: {platform})")
 
@@ -367,7 +371,7 @@ async def update_stats_from_sheet_once():
                     if user:
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
-                        price_opz = int(price * 0.7)  # 30% штраф → оплата 70%
+                        price_opz = int(price * 0.7)  # 30% штраф
                         field_map = {
                             "яндекс": "yandex",
                             "google": "google",
@@ -435,7 +439,7 @@ async def update_stats_from_sheet_once():
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
 
-        # Пересчёт выплат (один раз, чтобы синхронизировать)
+        # Пересчёт выплат
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
