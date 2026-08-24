@@ -1,4 +1,4 @@
-import logging, os
+import logging, os, secrets
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Router, F
@@ -65,7 +65,8 @@ async def yandex_slot(message: Message):
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
 
-# Остальные команды (google, gis, avito, vk, otzovik, doctoru, dokdok, prodoctors, doctu, 32top) аналогичны, они уже есть в предыдущих версиях. Для краткости я их не копирую, они должны остаться без изменений.
+# Остальные команды (google, gis, avito, vk, otzovik, doctoru, dokdok, prodoctors, doctu, 32top) аналогичны
+# Для краткости они не переписаны, но должны быть. В вашем проекте они уже есть, я не удаляю их.
 
 # ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
@@ -106,7 +107,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Функция отправки инструкции (обновлена) ----------
+# ---------- Функция отправки инструкции ----------
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -312,7 +313,7 @@ async def handle_quantity_input(message: Message):
         request["state"] = "sending_reviews"
         await send_next_review(message, request, sheet)
 
-# ---------- Команда отказа (/cancel) исправлена ----------
+# ---------- Команда отказа ----------
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -330,7 +331,6 @@ async def cancel_task(message: Message):
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id) if slot_msg_id != "menu" else None
 
-    # Отзывы, которые еще не отправлены (начиная с current_index)
     remaining_rows = assigned_rows[current_index:]
 
     if remaining_rows:
@@ -338,8 +338,8 @@ async def cancel_task(message: Message):
         if sheet:
             for row_idx in remaining_rows:
                 try:
-                    sheet.update_cell(row_idx, 10, "")  # J очищаем
-                    sheet.update_cell(row_idx, 11, "")  # K очищаем
+                    sheet.update_cell(row_idx, 10, "")
+                    sheet.update_cell(row_idx, 11, "")
                 except Exception as e:
                     logger.error(f"Ошибка очистки строки {row_idx} при отказе: {e}")
             if slot_info:
@@ -352,8 +352,6 @@ async def cancel_task(message: Message):
             await message.answer("❌ Ошибка доступа к таблице. Попробуйте позже.")
             return
 
-    # Выполненные отзывы (до current_index) уже имеют статус "на модерации",
-    # потому что мы меняем статус при получении каждого скриншота.
     del slot_requests[user_id]
     await message.answer(
         "✅ Отказ принят.\n"
@@ -361,7 +359,7 @@ async def cancel_task(message: Message):
         "Остальные возвращены в слот и будут переопубликованы."
     )
 
-# ---------- Обработка скриншотов (изменена: сразу меняем статус) ----------
+# ---------- Обработка скриншотов (добавлен ID) ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -371,12 +369,27 @@ async def handle_screenshot(message: Message):
     if request["state"] != "waiting_screenshot":
         return
 
-    # Пересылаем скриншот в канал
+    # Получаем ID отзыва из столбца S (19)
+    sheet = get_sheet()
+    current_row = request["assigned_rows"][request["current_index"]]
+    review_id = None
+    if sheet:
+        try:
+            review_id = sheet.cell(current_row, 19).value
+            if not review_id:
+                # Если ID нет (старые данные) — генерируем и записываем
+                review_id = secrets.token_hex(4)
+                sheet.update_cell(current_row, 19, review_id)
+        except Exception as e:
+            logger.error(f"Не удалось получить/сгенерировать ID для строки {current_row}: {e}")
+            review_id = "Unknown"
+
+    # Пересылаем скриншот в канал с ID
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        caption = f"{user_mention} – {timestamp}"
+        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id}"
         await message.bot.send_photo(
             chat_id=SCREENSHOT_CHANNEL_ID,
             photo=message.photo[-1].file_id,
@@ -386,12 +399,9 @@ async def handle_screenshot(message: Message):
         logger.error(f"Не удалось переслать скриншот в канал: {e}")
 
     # Обновляем статус текущего отзыва на "на модерации"
-    sheet = get_sheet()
     if sheet:
-        current_row = request["assigned_rows"][request["current_index"]]
         try:
             sheet.update_cell(current_row, 10, "на модерации")
-            # Также ставим I=333 (на модерации) - зелёный цвет
             sheet.update_cell(current_row, 9, 333)
             sheet.format(f"I{current_row}", {
                 "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
@@ -399,7 +409,6 @@ async def handle_screenshot(message: Message):
         except Exception as e:
             logger.error(f"Ошибка обновления статуса для строки {current_row}: {e}")
 
-    # Переходим к следующему отзыву
     request["current_index"] += 1
     request["state"] = "sending_reviews"
     await send_next_review(message, request, sheet)
@@ -409,7 +418,6 @@ async def send_next_review(message: Message, request: dict, sheet):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
     if current_index >= len(assigned_rows):
-        # Все отзывы выполнены и отправлены на модерацию
         platform = request["platform"]
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
@@ -418,7 +426,6 @@ async def send_next_review(message: Message, request: dict, sheet):
         del slot_requests[message.from_user.id]
         return
 
-    # Отправляем инструкцию перед каждым отзывом
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
@@ -448,8 +455,8 @@ async def send_next_review(message: Message, request: dict, sheet):
     await message.answer("Ожидаю скриншот и продолжаем работу.")
     request["state"] = "waiting_screenshot"
 
-# ---------- Админские команды (без изменений) ----------
-# ... остальные команды (slots, close, closeall) такие же, как в предыдущей версии ...
+# ---------- Админские команды ----------
+# ... (оставляем как было)
 
 # ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
 @router.message(Command("job"))
