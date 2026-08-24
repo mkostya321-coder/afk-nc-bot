@@ -1,4 +1,4 @@
-import os, sqlite3, logging, asyncio
+import os, sqlite3, logging, asyncio, secrets
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -85,8 +85,6 @@ async def monitor_schedule(bot, active_slots: dict):
             worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
             logger.info(f"🔍 Проверка таблицы в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
-            
-            # Логируем названия всех листов
             sheet_names = [ws.title for ws in worksheets]
             logger.info(f"📋 Названия листов: {sheet_names}")
 
@@ -147,9 +145,12 @@ async def monitor_schedule(bot, active_slots: dict):
                         logger.info(f"🚀 Публикуем слот {platform} на {date} {time}, {count_available} шт.")
                         for row_idx in row_ids:
                             try:
+                                # Генерируем уникальный ID для отзыва (8 символов)
+                                review_id = secrets.token_hex(4)
                                 sheet.update_cell(row_idx, 17, 1)  # Q
+                                sheet.update_cell(row_idx, 19, review_id)  # S = ID
                             except Exception as e:
-                                logger.error(f"Не удалось обновить Q для строки {row_idx}: {e}")
+                                logger.error(f"Не удалось обновить Q/ID для строки {row_idx}: {e}")
                         await publish_scheduled_slot(
                             bot, active_slots, platform, count_available,
                             date, time, row_ids, attempt=1
