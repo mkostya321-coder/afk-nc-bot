@@ -70,7 +70,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ============ ПУБЛИКАЦИЯ СЛОТОВ (с логами) ============
+# ============ ПУБЛИКАЦИЯ СЛОТОВ ============
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -259,7 +259,7 @@ async def monitor_schedule(bot, active_slots: dict):
                                         user_id,
                                         "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК. "
                                         "Невыполненные отзывы сняты с вас. "
-                                        "Оплата за выполненные отзывы в этом слоте будет снижена на 50%."
+                                        "Оплата за выполненные отзывы в этом слоте будет снижена на 30%."
                                     )
                                 except:
                                     pass
@@ -281,9 +281,188 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(60)
 
-# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ (без изменений) ============
-# ... остальной код (update_stats_from_sheet и update_stats_from_sheet_once) такой же, как в предыдущей версии.
-# Я не привожу его здесь, чтобы не раздувать ответ, но он должен быть вставлен.
-# Чтобы не было ошибки, нужно скопировать полный код из предыдущего сообщения, где была функция update_stats_from_sheet_once с использованием столбца E.
+# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ ============
+async def update_stats_from_sheet():
+    while True:
+        now = datetime.now(moscow_tz)
+        target_times = [
+            now.replace(hour=10, minute=0, second=0, microsecond=0),
+            now.replace(hour=20, minute=0, second=0, microsecond=0)
+        ]
+        future_times = [t if t > now else t + timedelta(days=1) for t in target_times]
+        next_target = min(future_times)
+        wait_seconds = (next_target - now).total_seconds()
+        logger.info(f"⏳ Следующее обновление статистики в {next_target.strftime('%H:%M')}, ждём {wait_seconds/60:.1f} мин.")
+        await asyncio.sleep(wait_seconds)
+        await update_stats_from_sheet_once()
 
-# Но я дам полный файл в следующем сообщении, если нужно.
+async def update_stats_from_sheet_once():
+    try:
+        logger.info("🔄 Запуск обновления статистики")
+        creds = get_credentials()
+        if not creds:
+            logger.error("❌ Нет credentials для обновления статистики")
+            return
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+
+        updates = []  # список (sheet, row_idx, new_e_value)
+
+        for sheet in spreadsheet.worksheets():
+            records = sheet.get_all_values()
+            if len(records) < 2:
+                continue
+            sheet_name = sheet.title
+            logger.debug(f"📊 Обработка листа '{sheet_name}' для статистики")
+
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < 10:
+                    continue
+                platform_raw = row[3].strip()
+                status = row[9].strip().lower()
+                flag_stat = row[8].strip()  # I
+                executor = row[10].strip()
+
+                if flag_stat not in ("", "0"):
+                    continue  # уже обработано
+
+                platform = match_platform(platform_raw)
+                if not platform:
+                    continue
+
+                executor_clean = executor.lstrip("@").lower()
+                user = get_user_by_username(executor_clean)
+
+                if status == "опубликован":
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        if field_prefix:
+                            passed_field = f"{field_prefix}_passed"
+                            total_field = f"{field_prefix}_total"
+                            with sqlite3.connect(DB_PATH) as conn:
+                                cur = conn.cursor()
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                                cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
+                                conn.commit()
+                        updates.append((sheet, row_idx, 1))
+                    else:
+                        updates.append((sheet, row_idx, 2))
+
+                elif status == "опубликован опз":
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        price_opz = int(price * 0.7)  # 30% штраф → оплата 70%
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        if field_prefix:
+                            passed_field = f"{field_prefix}_passed"
+                            total_field = f"{field_prefix}_total"
+                            with sqlite3.connect(DB_PATH) as conn:
+                                cur = conn.cursor()
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                                cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
+                                conn.commit()
+                        updates.append((sheet, row_idx, 1))
+                    else:
+                        updates.append((sheet, row_idx, 2))
+
+                elif status == "удален":
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        with sqlite3.connect(DB_PATH) as conn:
+                            cur = conn.cursor()
+                            cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
+                            cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
+                            field_map = {
+                                "яндекс": "yandex",
+                                "google": "google",
+                                "2гис": "gis",
+                                "авито": "avito",
+                                "вк": "vk",
+                                "отзовик": "otzovik",
+                                "доктору": "doctoru",
+                                "докдок": "dokdok",
+                                "про докторов": "prodoctors",
+                                "докту": "doctu",
+                                "32топ": "top32",
+                            }
+                            field_prefix = field_map.get(platform)
+                            if field_prefix:
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
+                            conn.commit()
+                        updates.append((sheet, row_idx, 3))
+                    else:
+                        updates.append((sheet, row_idx, 2))
+
+                elif status == "опубликован не по тх":
+                    updates.append((sheet, row_idx, 4))
+
+        # Применяем обновления E
+        for sheet, row_idx, e_value in updates:
+            try:
+                sheet.update_cell(row_idx, 5, e_value)  # столбец E
+                logger.debug(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+            except Exception as e:
+                logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
+
+        # Пересчёт выплат (один раз, чтобы синхронизировать)
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
+                       otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
+                       doctu_passed, top32_passed
+                FROM users
+            """)
+            for user_row in cur.fetchall():
+                uid = user_row[0]
+                period_total = (
+                    user_row[1] * PRICES.get("яндекс", 0) +
+                    user_row[2] * PRICES.get("google", 0) +
+                    user_row[3] * PRICES.get("2гис", 0) +
+                    user_row[4] * PRICES.get("авито", 0) +
+                    user_row[5] * PRICES.get("вк", 0) +
+                    user_row[6] * PRICES.get("отзовик", 0) +
+                    user_row[7] * PRICES.get("доктору", 0) +
+                    user_row[8] * PRICES.get("докдок", 0) +
+                    user_row[9] * PRICES.get("про докторов", 0) +
+                    user_row[10] * PRICES.get("докту", 0) +
+                    user_row[11] * PRICES.get("32топ", 0)
+                )
+                cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
+            conn.commit()
+
+        logger.info(f"✅ Статистика обновлена, обработано строк: {len(updates)}")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
