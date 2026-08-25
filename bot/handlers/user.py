@@ -42,14 +42,12 @@ class TikTokReport(StatesGroup):
     video_link = State()
     screenshot_views = State()
 
-# Новые состояния для сотрудничества (после кнопки)
 class CollaborationForm(StatesGroup):
     platforms = State()
     counts = State()
     description = State()
-    texts = State()  # заказывают у нас или сами
+    texts = State()
 
-# ============= ПРАВИЛА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -236,7 +234,7 @@ async def menu_help(message: Message):
     is_reg = user and user.get("name") is not None
     await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
 
-# ---------- РЕФЕРАЛЬНАЯ СИСТЕМА ----------
+# ---------- Реферальная система ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
     logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id} (@{message.from_user.username}) нажал на кнопку")
@@ -304,7 +302,7 @@ async def referral_invite(callback: CallbackQuery):
         logger.error(f"❌ Ошибка referral_invite: {e}")
         await callback.answer("Ошибка", show_alert=True)
 
-# ---------- РЕГИСТРАЦИЯ ----------
+# ---------- Регистрация ----------
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
@@ -390,7 +388,7 @@ async def process_bank(message: Message, state: FSMContext):
         reply_markup=main_menu_keyboard(is_registered=True)
     )
 
-# ---------- 👥 Мои рефералы ----------
+# ---------- Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
@@ -497,7 +495,7 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
     await callback.answer()
 
-# ============ НОВЫЙ РАЗДЕЛ: ДРУГИЕ ЗАДАНИЯ ============
+# ============ ДРУГИЕ ЗАДАНИЯ ============
 
 @router.message(F.text == "🎯 Другие задания")
 async def other_tasks(message: Message):
@@ -507,7 +505,6 @@ async def other_tasks(message: Message):
     kb.adjust(1)
     await message.answer("Выберите задание:", reply_markup=kb.as_markup())
 
-# ---------- Tik Tok: показ видео и правил ----------
 @router.callback_query(F.data == "task_tiktok")
 async def tiktok_task(callback: CallbackQuery):
     await callback.answer()
@@ -549,7 +546,6 @@ async def tiktok_task(callback: CallbackQuery):
         logger.error(f"Ошибка отправки видео Tik Tok: {e}")
         await callback.message.answer(rules, parse_mode="HTML")
 
-# ---------- Отчет Tik Tok (опросник) ----------
 @router.callback_query(F.data == "report_tiktok")
 async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -628,7 +624,7 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
                 photo=data['screenshot_views'],
                 message_thread_id=TIKTOK_REPORT_THREAD_ID or None
             )
-        logger.info(f"✅ Отчет Tik Tok отправлен в беседу {TIKTOK_REPORT_CHAT_ID}, тема {TIKTOK_REPORT_THREAD_ID}")
+        logger.info(f"✅ Отчет Tik Tok отправлен в беседу {TIKTOK_REPORT_CHAT_ID}")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
 
@@ -638,13 +634,12 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
 async def process_tiktok_screenshot_views_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
 
-# ---------- Кнопка "Сотрудничество с NC" (с описанием и кнопкой) ----------
+# ---------- СОТРУДНИЧЕСТВО ----------
 @router.message(F.text == "🤝 Сотрудничество с NC")
 async def collaboration_start(message: Message):
     if is_blocked(message.from_user.id):
         await message.answer("⛔ Вы заблокированы.")
         return
-    # Показываем описание и кнопку "Перейти к заполнению формы"
     text = (
         "🤝 <b>Сотрудничество с NC</b>\n\n"
         "Вы хотите передать свои отзывы под работу нашей команде.\n"
