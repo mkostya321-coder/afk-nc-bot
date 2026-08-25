@@ -36,7 +36,6 @@ PLATFORM_ALIASES = {
     "32топ": ["32топ", "32top", "32 топ"],
 }
 
-# Расширенный словарь для названий листов (все варианты)
 SHEET_NAME_TO_PLATFORM = {
     "яндекс": "яндекс", "yandex": "яндекс",
     "google": "google",
@@ -47,7 +46,6 @@ SHEET_NAME_TO_PLATFORM = {
     "докдок": "докдок",
     "32топ": "32топ", "32top": "32топ", "32 топ": "32топ",
     "докту": "докту", "doctu": "докту",
-    # Добавим варианты с заглавными буквами
     "Яндекс": "яндекс", "ЯНДЕКС": "яндекс",
     "Google": "google", "GOOGLE": "google",
     "2ГИС": "2гис", "2Гис": "2гис",
@@ -69,10 +67,8 @@ def match_platform(raw_name: str) -> str | None:
 
 def platform_from_sheet_name(sheet_name: str) -> str | None:
     key = sheet_name.strip()
-    # сначала ищем точное совпадение в словаре
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
-    # затем пробуем привести к нижнему регистру
     key_lower = key.lower()
     if key_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key_lower]
@@ -86,7 +82,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ============ ПУБЛИКАЦИЯ СЛОТОВ (с логами) ============
+# ============ ПУБЛИКАЦИЯ СЛОТОВ ============
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -117,31 +113,46 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
+                # Логируем заголовки (первая строка)
+                headers = records[0] if records else []
+                logger.info(f"📌 Заголовки листа '{sheet_name}': {headers[:10] if len(headers)>10 else headers}")
+
                 # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
+                    # Логируем каждую строку с её содержимым
+                    logger.info(f"🔍 Строка {row_idx}: {row}")
+
                     if len(row) < 8:
+                        logger.info(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
+                        logger.info(f"⏭️ Строка {row_idx}: дата или время пустые (date='{date_str}', time='{time_str}')")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
+                        logger.info(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
+                        logger.info(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except:
+                    except Exception as e:
+                        logger.info(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
+                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
+                    else:
+                        logger.info(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
