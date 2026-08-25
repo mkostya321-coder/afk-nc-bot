@@ -2,11 +2,11 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH, REPORT_CHAT_ID, REPORT_THREAD_ID
+from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
-    add_warning, get_warning_count, get_all_users_with_payout
+    add_warning, get_warning_count
 )
 import sqlite3
 
@@ -20,6 +20,25 @@ def log_action(message: Message, action: str):
         message.bot.send_message(LOG_CHANNEL_ID, text)
     except:
         pass
+
+def calculate_tiktok_payout(views: int) -> int:
+    """Рассчитывает сумму выплаты за просмотры Tik Tok по шкале."""
+    if views <= 0:
+        return 0
+    if views <= 1_000_000:
+        # 10 руб за 1000 просмотров
+        return (views // 1000) * 10
+    elif views <= 1_500_000:
+        # первые 1 млн по 10 руб/1000, остальное по 5 руб/1000
+        first_part = 1_000_000
+        second_part = views - first_part
+        return (first_part // 1000) * 10 + (second_part // 1000) * 5
+    else:
+        # первые 1 млн по 10, следующие 500 тыс по 5, остальное по 2
+        first_part = 1_000_000
+        second_part = 500_000
+        third_part = views - first_part - second_part
+        return (first_part // 1000) * 10 + (second_part // 1000) * 5 + (third_part // 1000) * 2
 
 # ---------- Справка в зависимости от роли ----------
 @router.message(Command("helpadm"))
@@ -38,24 +57,31 @@ async def cmd_helpadm(message: Message):
         text += (
             "📢 Публикация слотов:\n"
             "/yandex, /google, /gis, /avito, /vk, /otzovik, /doctoru, /dokdok, /prodoctors, /doctu, /32top\n"
-            "📋 /slots — активные слоты\n"
-            "🔒 /close <ID> — закрыть слот\n"
-            "🔒 /closeall — закрыть все слоты\n"
+            "📋 /slots — активные слоты (доступно и модераторам)\n"
+            "🔒 /close <ID> — закрыть слот (только GA и владелец)\n"
+            "🔒 /closeall — закрыть все слоты (только GA и владелец)\n"
             "👤 /userblock <user_id/username> — блокировка\n"
             "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-11\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150 (после выплат)\n"
+            "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
         )
-    if is_moderator(user_id):
+    if is_moderator(user_id) and not is_ga(user_id):
         text += (
-            "/slots, /info <username>, /userblock <user_id/username>\n"
-            "/warn <user_id/username> <причина> — предупреждение\n"
+            "📋 /slots — список активных слотов\n"
+            "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
+            "ℹ️ /info <username> — профиль пользователя\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
+            "🔒 /close и /closeall — ДОСТУПНЫ ТОЛЬКО ДЛЯ GA И ВЛАДЕЛЬЦА\n"
         )
-    if is_comoderator(user_id):
+    if is_comoderator(user_id) and not is_ga(user_id):
         text += (
-            "/slots, /info <username>, /userblock <user_id/username>\n"
-            "/warn <user_id/username> <причина> — предупреждение\n"
+            "📋 /slots — список активных слотов\n"
+            "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
+            "ℹ️ /info <username> — профиль пользователя\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
+            "🔒 /close и /closeall — ДОСТУПНЫ ТОЛЬКО ДЛЯ GA И ВЛАДЕЛЬЦА\n"
         )
     await message.answer(text)
 
@@ -115,59 +141,6 @@ async def warn_user(message: Message):
         log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
-
-# ---------- /slots, /close, /closeall ----------
-@router.message(Command("slots"))
-async def list_slots(message: Message):
-    if not is_moderator(message.from_user.id):
-        return
-    from bot.handlers.slots import active_slots
-    if not active_slots:
-        await message.answer("Нет активных слотов.")
-        return
-    lines = ["Активные слоты (ID):"]
-    for msg_id, data in active_slots.items():
-        lines.append(f"🔸 {data.get('command', data.get('platform', '?'))} {data.get('price', data.get('count', '?'))} — ID: {msg_id}")
-    await message.answer("\n".join(lines))
-
-@router.message(Command("close"))
-async def close_slot(message: Message):
-    if not is_moderator(message.from_user.id):
-        return
-    try:
-        _, slot_id = message.text.split()
-        slot_id = int(slot_id)
-    except:
-        await message.answer("Использование: /close <ID>")
-        return
-    from bot.handlers.slots import active_slots, CHANNEL_ID
-    if slot_id not in active_slots:
-        await message.answer("❌ Слот не найден.")
-        return
-    data = active_slots.pop(slot_id)
-    await message.bot.edit_message_text(
-        chat_id=CHANNEL_ID, message_id=slot_id,
-        text="Извините, данный слот устарел или был закрыт…"
-    )
-    await message.answer(f"✅ Слот «{data.get('command', data.get('platform', '?'))}» закрыт.")
-    log_action(message, f"Закрыт слот {slot_id}")
-
-@router.message(Command("closeall"))
-async def close_all_slots(message: Message):
-    if not is_moderator(message.from_user.id):
-        return
-    from bot.handlers.slots import active_slots, CHANNEL_ID
-    for slot_id in list(active_slots.keys()):
-        try:
-            await message.bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=slot_id,
-                text="Извините, данный слот устарел или был закрыт…"
-            )
-        except:
-            pass
-        del active_slots[slot_id]
-    await message.answer("✅ Все слоты закрыты.")
-    log_action(message, "Закрыты все слоты")
 
 # ---------- /userblock ----------
 @router.message(Command("userblock"))
@@ -331,14 +304,12 @@ async def reset_balance(message: Message):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            # Сначала получаем всех, у кого payout >= 150
             cur.execute("SELECT user_id FROM users WHERE payout >= 150")
             rows = cur.fetchall()
             user_ids = [row[0] for row in rows]
             if not user_ids:
                 await message.answer("Нет пользователей с балансом >= 150₽ для сброса.")
                 return
-            # Обнуляем payout и периодические счётчики только у них
             placeholders = ','.join(['?'] * len(user_ids))
             cur.execute(f"""
                 UPDATE users SET payout = 0,
@@ -353,14 +324,15 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- НОВАЯ КОМАНДА /payout_report (только владелец) ----------
+# ---------- /payout_report (только владелец) ----------
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
     if not is_owner(message.from_user.id):
         return
 
     try:
-        users = get_all_users_with_payout()  # функция из database.py
+        from bot.database import get_all_users_with_payout
+        users = get_all_users_with_payout()
         if not users:
             await message.answer("📭 Нет пользователей с балансом >= 150₽.")
             return
@@ -375,8 +347,7 @@ async def cmd_payout_report(message: Message):
 
         full_text = "\n".join(text_lines)
         max_len = 4000
-
-        # Отправляем в беседу отчёта
+        from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
         for i in range(0, len(full_text), max_len):
             chunk = full_text[i:i+max_len]
             await message.bot.send_message(
@@ -392,3 +363,66 @@ async def cmd_payout_report(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
+
+# ---------- НОВАЯ КОМАНДА: /tiktok_pay (ГА и владелец) ----------
+@router.message(Command("tiktok_pay"))
+async def cmd_tiktok_pay(message: Message):
+    if not is_ga(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer("❌ Использование: /tiktok_pay <user_id или username> <количество_просмотров>\n"
+                             "Пример: /tiktok_pay 123456789 1500000")
+        return
+
+    target = parts[1]
+    try:
+        views = int(parts[2])
+        if views <= 0:
+            await message.answer("❌ Количество просмотров должно быть больше 0.")
+            return
+    except ValueError:
+        await message.answer("❌ Количество просмотров должно быть числом.")
+        return
+
+    # Находим пользователя
+    if target.isdigit():
+        user_id = int(target)
+        user = get_user(user_id)
+    else:
+        user = get_user_by_username(target)
+    if not user:
+        await message.answer(f"❌ Пользователь с идентификатором '{target}' не найден.")
+        return
+
+    user_id = user["user_id"]
+
+    # Рассчитываем сумму
+    amount = calculate_tiktok_payout(views)
+    if amount == 0:
+        await message.answer("❌ Сумма выплаты равна 0. Проверьте количество просмотров.")
+        return
+
+    # Начисляем
+    update_user_field(user_id, "payout", user["payout"] + amount)
+    update_user_field(user_id, "total_earned", user["total_earned"] + amount)
+
+    # Логируем
+    log_msg = (
+        f"🎬 Начисление за Tik Tok\n"
+        f"👤 Пользователь: @{user.get('tg_username', user_id)} (ID: {user_id})\n"
+        f"📊 Просмотров: {views}\n"
+        f"💰 Сумма: {amount}₽\n"
+        f"🕒 Выполнил: @{message.from_user.username} (ID: {message.from_user.id})"
+    )
+    await message.bot.send_message(LOG_CHANNEL_ID, log_msg)
+
+    await message.answer(
+        f"✅ Выплата за Tik Tok начислена!\n"
+        f"Пользователь: @{user.get('tg_username', user_id)}\n"
+        f"Просмотров: {views}\n"
+        f"Сумма: {amount}₽\n"
+        f"Новый баланс к выплате: {user['payout'] + amount}₽"
+    )
+    log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
