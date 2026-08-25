@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
-from bot.database import is_registered, is_blocked, get_user, is_ga, get_user_by_username
+from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pytz
@@ -37,7 +37,6 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Шаблоны инструкций для каждой платформы ----------
 PLATFORM_TEMPLATES = {
     "яндекс": {
         "instruction": (
@@ -368,7 +367,6 @@ async def send_instruction(user_id: int, bot):
 # ---------- Обработчик кнопки взять слот (из канала) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
-    # Сначала отвечаем на callback, чтобы избежать таймаута
     try:
         await callback.answer()
     except Exception:
@@ -615,7 +613,6 @@ async def handle_screenshot(message: Message):
     if request["state"] != "waiting_screenshot":
         return
 
-    # Получаем ID отзыва из столбца S (19)
     sheet = get_sheet()
     current_row = request["assigned_rows"][request["current_index"]]
     review_id = None
@@ -629,7 +626,6 @@ async def handle_screenshot(message: Message):
             logger.error(f"Не удалось получить/сгенерировать ID для строки {current_row}: {e}")
             review_id = "Unknown"
 
-    # Пересылаем скриншот в канал с ID
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
@@ -643,7 +639,6 @@ async def handle_screenshot(message: Message):
     except Exception as e:
         logger.error(f"Не удалось переслать скриншот в канал: {e}")
 
-    # Обновляем статус текущего отзыва на "на модерации"
     if sheet:
         try:
             sheet.update_cell(current_row, 10, "на модерации")
@@ -671,7 +666,6 @@ async def send_next_review(message: Message, request: dict, sheet):
         del slot_requests[message.from_user.id]
         return
 
-    # Отправляем инструкцию с фото
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
@@ -681,14 +675,12 @@ async def send_next_review(message: Message, request: dict, sheet):
         del slot_requests[message.from_user.id]
         return
 
-    # Получаем данные
     link = row[6]
     text = row[13]
     stars = row[2].strip() if len(row) > 2 else ""
     gender = row[12].strip().upper() if len(row) > 12 else ""
     platform = request["platform"]
 
-    # Проверяем столбец R (18-й индекс, если считать с 0) — фото к отзыву
     photo_link = row[17].strip() if len(row) > 17 else ""
     photo_warning = ""
     if photo_link:
@@ -697,13 +689,11 @@ async def send_next_review(message: Message, request: dict, sheet):
             "Если вы не прикрепите фото, отзыв будет оплачен на 50% ниже.\n\n"
         )
 
-    # Формируем основной текст в зависимости от платформы
     template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
     instruction_text = template["instruction"]
     extra_text = template["extra_text"]
     warning = template["warning"]
 
-    # Текст о поле
     gender_text = ""
     if gender == "М":
         gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
@@ -712,7 +702,6 @@ async def send_next_review(message: Message, request: dict, sheet):
     else:
         gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила')."
 
-    # Собираем финальное сообщение
     final_msg = (
         f"{instruction_text}\n\n"
         f"{photo_warning}"
@@ -729,7 +718,6 @@ async def send_next_review(message: Message, request: dict, sheet):
         f"{warning}"
     )
 
-    # Отправляем сообщение, ссылку и текст отзыва
     await message.answer(final_msg, parse_mode=ParseMode.HTML)
     await message.answer(link)
     await message.answer(text)
@@ -739,7 +727,8 @@ async def send_next_review(message: Message, request: dict, sheet):
 # ---------- Админские команды ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
-    if not is_ga(message.from_user.id): return
+    if not is_moderator(message.from_user.id):  # Теперь доступно модераторам и комодераторам
+        return
     if not active_slots:
         await message.answer("Нет активных слотов.")
         return
@@ -750,7 +739,8 @@ async def list_slots(message: Message):
 
 @router.message(Command("close"))
 async def close_slot(message: Message):
-    if not is_ga(message.from_user.id): return
+    if not is_ga(message.from_user.id):  # Только GA и владелец
+        return
     try:
         _, slot_id = message.text.split()
         slot_id = int(slot_id)
@@ -769,7 +759,8 @@ async def close_slot(message: Message):
 
 @router.message(Command("closeall"))
 async def close_all_slots(message: Message):
-    if not is_ga(message.from_user.id): return
+    if not is_ga(message.from_user.id):  # Только GA и владелец
+        return
     for slot_id in list(active_slots.keys()):
         try:
             await message.bot.edit_message_text(
