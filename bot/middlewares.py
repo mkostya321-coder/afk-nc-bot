@@ -15,51 +15,40 @@ from bot.config import (
 
 class AutoMenuMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        # ---- Игнорирование определённых чатов/тем ----
         if isinstance(event, Message):
             chat_id = event.chat.id
             thread_id = event.message_thread_id or 0
 
-            # Игнорируем старую беседу для отчётов по выплатам
             if chat_id == REPORT_CHAT_ID:
                 return
 
-            # Игнорируем тему/беседу для отчётов Tik Tok
             if chat_id == TIKTOK_REPORT_CHAT_ID:
                 if TIKTOK_REPORT_THREAD_ID == 0 or thread_id == TIKTOK_REPORT_THREAD_ID:
                     return
 
-            # Игнорируем тему/беседу для заявок на сотрудничество
             if chat_id == COLLABORATION_CHAT_ID:
                 if COLLABORATION_THREAD_ID == 0 or thread_id == COLLABORATION_THREAD_ID:
                     return
 
-        # ---- Колбэки пропускаем без изменений ----
         if isinstance(event, CallbackQuery):
             return await handler(event, data)
 
-        # ---- Обработка сообщений ----
         if isinstance(event, Message):
-            # Пропускаем команды
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
 
-            # Пропускаем кнопки меню
             if event.text in ["📋 Профиль", "💼 Слоты", "❓ Помощь", "📝 Регистрация",
                               "👥 Реферальная система", "👥 Мои рефералы",
                               "🎯 Другие задания", "🤝 Сотрудничество с NC"]:
                 return await handler(event, data)
 
-            # Пропускаем, если пользователь в процессе взятия слота
             if event.from_user.id in slot_requests:
                 return await handler(event, data)
 
-            # Пропускаем, если есть активное состояние FSM
             state = data.get("state")
             if state and await state.get_state():
                 return await handler(event, data)
 
-            # Проверка подписки (кроме администраторов)
             user_id = event.from_user.id
             role = get_admin_role(user_id)
             if not role:
@@ -72,7 +61,6 @@ class AutoMenuMiddleware(BaseMiddleware):
                     )
                     return
 
-            # Если пользователь не зарегистрирован – показываем главное меню
             add_user(event.from_user.id, event.from_user.username, event.from_user.full_name)
             await event.answer("👋 Главное меню", reply_markup=main_menu_keyboard())
             return
