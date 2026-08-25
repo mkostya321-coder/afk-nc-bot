@@ -6,7 +6,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from bot.config import MANAGER_USERNAME, DB_PATH, LOG_CHANNEL_ID, TIKTOK_VIDEO_ID, TIKTOK_VIDEO_PATH
+from bot.config import (
+    MANAGER_USERNAME, DB_PATH, LOG_CHANNEL_ID,
+    TIKTOK_VIDEO_ID, TIKTOK_VIDEO_PATH,
+    TIKTOK_REPORT_CHAT_ID, TIKTOK_REPORT_THREAD_ID,
+    COLLABORATION_CHAT_ID, COLLABORATION_THREAD_ID
+)
 from bot.database import (
     add_user, get_user, get_user_by_username,
     is_registered, update_user_field, is_blocked
@@ -31,7 +36,7 @@ class IntroState(StatesGroup):
     first = State()
     second = State()
 
-# ---------- Новые состояния для Tik Tok и Сотрудничества ----------
+# ---------- Новые состояния ----------
 class TikTokReport(StatesGroup):
     account_name = State()
     screenshot_profile = State()
@@ -45,7 +50,7 @@ class CollaborationForm(StatesGroup):
     links = State()
     contact = State()
 
-# ============= ПРАВИЛА (оставляем как есть) =============
+# ============= ПРАВИЛА =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -114,7 +119,6 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
     if is_registered(user_id):
-        # показываем меню без "Регистрация"
         await message.answer("👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями.", reply_markup=main_menu_keyboard(is_registered=True))
     else:
         await show_intro(message, state)
@@ -227,13 +231,77 @@ async def menu_help(message: Message):
         "/help – Эта справка\n\n"
         f"По всем вопросам: @{MANAGER_USERNAME}"
     )
-    # Меню с учётом регистрации
     user = get_user(message.from_user.id)
     is_reg = user and user.get("name") is not None
     await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
 
-# ---------- Реферальная система (оставляем без изменений) ----------
-# ... (код рефералки уже есть, я не повторяю его для краткости)
+# ---------- РЕФЕРАЛЬНАЯ СИСТЕМА ----------
+@router.message(F.text == "👥 Реферальная система")
+async def referral_info(message: Message):
+    logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id} (@{message.from_user.username}) нажал на кнопку")
+    try:
+        text = (
+            "📢 Реферальная система\n\n"
+            "👥 Как участвовать?\n"
+            "1️⃣ Приглашение. Зарегистрированный пользователь приглашает друга.\n"
+            "2️⃣ Регистрация. При создании аккаунта друг в обязательном порядке указывает в вопросе №5 username того, кто его пригласил.\n"
+            "3️⃣ Выполнение условий. Чтобы активировать выплату, приглашённый должен оставить одобренные отзывы в таком объёме:\n"
+            "   • 10 отзывов на Яндекс.Картах\n"
+            "   • 15 отзывов на Google Картах или на 2ГИС (можно комбинировать, например 7 Google + 8 2ГИС, но не менее 15 в сумме)\n\n"
+            "⏳ На выполнение даётся 28 дней с момента регистрации. Если за это время условия не выполнены, реферал считается ❌ не выполненным, и вознаграждение уже не получить.\n\n"
+            "✅ Отзывы должны пройти модерацию. Приглашённый может написать больше, но награда начисляется в момент, когда минимальные требования выполнены.\n\n"
+            "💰 Вознаграждение:\n"
+            "   • Пригласивший получает 450 рублей\n"
+            "   • Приглашённый получает 200 рублей\n\n"
+            "📅 Выплата производится в ближайшую среду или четверг (день зарплаты) после фиксации выполнения всех условий."
+        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 Назад", callback_data="referral:back")
+        kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
+        kb.adjust(2)
+        await message.answer(text, reply_markup=kb.as_markup())
+        logger.info(f"✅ РЕФЕРАЛКА: сообщение отправлено {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"❌ РЕФЕРАЛКА ошибка: {e}")
+        await message.answer("Произошла ошибка. Попробуйте позже.")
+
+@router.callback_query(F.data == "referral:back")
+async def referral_back(callback: CallbackQuery):
+    logger.info(f"🔄 РЕФЕРАЛКА: назад {callback.from_user.id}")
+    try:
+        await callback.message.delete()
+        user = get_user(callback.from_user.id)
+        is_reg = user and user.get("name") is not None
+        await callback.message.answer("👋 Главное меню", reply_markup=main_menu_keyboard(is_registered=is_reg))
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"❌ Ошибка referral_back: {e}")
+        await callback.answer("Ошибка", show_alert=True)
+
+@router.callback_query(F.data == "referral:invite")
+async def referral_invite(callback: CallbackQuery):
+    logger.info(f"📨 РЕФЕРАЛКА: пригласить {callback.from_user.id}")
+    try:
+        user_id = callback.from_user.id
+        user = get_user(user_id)
+        username = user.get("tg_username") if user else None
+        if not username:
+            await callback.answer("❌ У вас не указан Telegram username. Заполните профиль.", show_alert=True)
+            return
+        invite_text = (
+            "Привет.\nПриглашаю в бот @ncjobbot. Схема такая:\n"
+            "Ты регистрируешься, указываешь мой юзернейм: `" + username + "`\n"
+            "Получаешь бонус 200 рублей и ещё 2 250 рублей за выполнение отзывов (10 Яндекс + 15 Google или 2ГИС).\n"
+            "Все что нужно делать просить знакомых оставлять отзывы. Ты сам просишь своих друзей писать отзывы. Даёшь им готовый текст и ссылку — они оставляют, а платят тебе.\n"
+            "Всё просто. За каждого друга — свои деньги. Бот надёжный.\n\n"
+            "Найди @ncjobbot в Telegram и вводи мой юзернейм при старте."
+        )
+        await callback.message.answer(invite_text)
+        await callback.answer("Текст приглашения отправлен в чат.", show_alert=True)
+        logger.info(f"✅ РЕФЕРАЛКА: приглашение отправлено {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка referral_invite: {e}")
+        await callback.answer("Ошибка", show_alert=True)
 
 # ---------- РЕГИСТРАЦИЯ ----------
 @router.message(Command("reg"))
@@ -245,7 +313,6 @@ async def start_registration(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
     if is_registered(user_id):
-        # после регистрации показываем меню без кнопки "Регистрация"
         await message.answer("✅ Вы уже зарегистрированы!", reply_markup=main_menu_keyboard(is_registered=True))
         return
     await state.set_state(RegForm.name)
@@ -322,6 +389,113 @@ async def process_bank(message: Message, state: FSMContext):
         reply_markup=main_menu_keyboard(is_registered=True)
     )
 
+# ---------- 👥 Мои рефералы ----------
+@router.message(F.text == "👥 Мои рефералы")
+async def show_my_referrals(message: Message, state: FSMContext):
+    if is_blocked(message.from_user.id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user or not user.get("name"):
+        await message.answer("❌ Вы не зарегистрированы.")
+        return
+    tg_username = user.get("tg_username")
+    if not tg_username:
+        await message.answer("❌ У вас не указан Telegram username. Заполните профиль.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT name, tg_username, registered_at, yandex_total, google_total, gis_total "
+        "FROM users WHERE LOWER(REPLACE(referrer, '@', '')) = ?",
+        (tg_username.lower(),)
+    )
+    referrals = cur.fetchall()
+    conn.close()
+
+    if not referrals:
+        await message.answer("👥 У вас пока нет рефералов.")
+        return
+
+    now = datetime.now()
+    data = []
+    for ref in referrals:
+        name = ref["name"] or "Без имени"
+        username = ref["tg_username"] or "unknown"
+        reg_time_str = ref["registered_at"]
+        if reg_time_str:
+            try:
+                reg_time = datetime.fromisoformat(reg_time_str)
+            except:
+                reg_time = now
+            deadline = reg_time + timedelta(days=REFERRAL_DEADLINE_DAYS)
+            remaining = (deadline - now).days
+        else:
+            remaining = 0
+
+        yandex = ref["yandex_total"] or 0
+        google = ref["google_total"] or 0
+        gis = ref["gis_total"] or 0
+
+        if yandex >= 10 and (google + gis) >= 15:
+            status = "✅ Выполнен"
+        elif remaining <= 0:
+            status = "❌ Не выполнен"
+        else:
+            status = "🚀 В процессе"
+
+        data.append((name, username, status))
+
+    PAGE_SIZE = 10
+    total_pages = (len(data) + PAGE_SIZE - 1) // PAGE_SIZE
+    await state.update_data(ref_page=0, ref_data=data, ref_total_pages=total_pages)
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Страница 1", callback_data="ignore")
+    if total_pages > 1:
+        kb.button(text="Страница 2 →", callback_data="ref_nav:2")
+    kb.adjust(1)
+
+    text = build_page_text(data, 0, PAGE_SIZE)
+    await message.answer(text, reply_markup=kb.as_markup())
+
+def build_page_text(data, page, page_size):
+    start = page * page_size
+    end = start + page_size
+    page_items = data[start:end]
+    lines = [f"👥 Мои рефералы (стр. {page+1})"]
+    for name, username, status in page_items:
+        lines.append(f"{name} (@{username}) – {status}")
+    return "\n".join(lines)
+
+@router.callback_query(F.data.startswith("ref_nav:"))
+async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1]) - 1
+    data_state = await state.get_data()
+    ref_data = data_state.get("ref_data", [])
+    total_pages = data_state.get("ref_total_pages", 1)
+
+    if not ref_data:
+        await callback.answer("Нет данных.", show_alert=True)
+        return
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(text=f"← Страница {page}", callback_data=f"ref_nav:{page}"))
+    buttons.append(InlineKeyboardButton(text=f"Страница {page+1}", callback_data="ignore"))
+    if page < total_pages - 1:
+        buttons.append(InlineKeyboardButton(text=f"Страница {page+2} →", callback_data=f"ref_nav:{page+2}"))
+
+    keyboard = InlineKeyboardBuilder()
+    keyboard.row(*buttons)
+
+    text = build_page_text(ref_data, page, 10)
+    await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
+    await callback.answer()
+
 # ============ НОВЫЙ РАЗДЕЛ: ДРУГИЕ ЗАДАНИЯ ============
 
 @router.message(F.text == "🎯 Другие задания")
@@ -362,7 +536,6 @@ async def tiktok_task(callback: CallbackQuery):
         "Удачи! 🚀"
     )
 
-    # Отправляем видео
     try:
         if TIKTOK_VIDEO_ID:
             await callback.message.answer_video(video=TIKTOK_VIDEO_ID, caption=rules, parse_mode="HTML")
@@ -370,7 +543,6 @@ async def tiktok_task(callback: CallbackQuery):
             video_file = FSInputFile(TIKTOK_VIDEO_PATH)
             await callback.message.answer_video(video=video_file, caption=rules, parse_mode="HTML")
         else:
-            # если нет видео, отправляем только текст
             await callback.message.answer(rules, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Ошибка отправки видео Tik Tok: {e}")
@@ -407,7 +579,6 @@ async def process_tiktok_account(message: Message, state: FSMContext):
 
 @router.message(TikTokReport.screenshot_profile, F.photo)
 async def process_tiktok_screenshot_profile(message: Message, state: FSMContext):
-    # сохраняем file_id
     await state.update_data(screenshot_profile=message.photo[-1].file_id)
     await state.set_state(TikTokReport.video_link)
     await message.answer("3. Отправьте ссылку на ролик, за который хотите получить выплату:")
@@ -428,7 +599,6 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    # Формируем отчёт
     report = (
         f"📊 <b>Новый отчет Tik Tok</b>\n"
         f"👤 Пользователь: @{message.from_user.username} (ID: {message.from_user.id})\n"
@@ -438,15 +608,25 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
         f"📸 Скриншот просмотров: (см. ниже)"
     )
 
-    # Отправляем в канал логов
     try:
-        # сначала текст
-        await message.bot.send_message(LOG_CHANNEL_ID, report, parse_mode="HTML")
-        # затем два скриншота
+        await message.bot.send_message(
+            chat_id=TIKTOK_REPORT_CHAT_ID,
+            text=report,
+            message_thread_id=TIKTOK_REPORT_THREAD_ID or None,
+            parse_mode="HTML"
+        )
         if data.get('screenshot_profile'):
-            await message.bot.send_photo(LOG_CHANNEL_ID, data['screenshot_profile'])
+            await message.bot.send_photo(
+                chat_id=TIKTOK_REPORT_CHAT_ID,
+                photo=data['screenshot_profile'],
+                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
+            )
         if data.get('screenshot_views'):
-            await message.bot.send_photo(LOG_CHANNEL_ID, data['screenshot_views'])
+            await message.bot.send_photo(
+                chat_id=TIKTOK_REPORT_CHAT_ID,
+                photo=data['screenshot_views'],
+                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
+            )
     except Exception as e:
         logger.error(f"Ошибка отправки отчета Tik Tok: {e}")
 
@@ -517,11 +697,13 @@ async def collaboration_contact(message: Message, state: FSMContext):
     )
 
     try:
-        await message.bot.send_message(LOG_CHANNEL_ID, report, parse_mode="HTML")
+        await message.bot.send_message(
+            chat_id=COLLABORATION_CHAT_ID,
+            text=report,
+            message_thread_id=COLLABORATION_THREAD_ID or None,
+            parse_mode="HTML"
+        )
     except Exception as e:
         logger.error(f"Ошибка отправки заявки на сотрудничество: {e}")
 
     await message.answer("✅ Ваша заявка отправлена! Менеджер свяжется с вами в ближайшее время.")
-
-# ---------- 👥 Мои рефералы (без изменений) ----------
-# ... (код рефералов уже есть, я не повторяю для краткости)
