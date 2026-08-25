@@ -82,7 +82,6 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ============ ПУБЛИКАЦИЯ СЛОТОВ (с детальными логами) ============
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -113,39 +112,30 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
-                        logger.debug(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
-                        logger.debug(f"⏭️ Строка {row_idx}: дата или время пустые (date='{date_str}', time='{time_str}')")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
-                        logger.debug(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
-                        logger.debug(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except Exception as e:
-                        logger.debug(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
+                    except:
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
-                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
-                    else:
-                        logger.debug(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -176,7 +166,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация через 2 часа ---
+                # --- Перепубликация ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -303,7 +293,6 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(60)
 
-# ============ ОБНОВЛЕНИЕ СТАТИСТИКИ (с исправлением E) ============
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
@@ -328,7 +317,7 @@ async def update_stats_from_sheet_once():
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
 
-        updates = []  # список (sheet, row_idx, new_e_value)
+        updates = []
 
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
@@ -342,10 +331,9 @@ async def update_stats_from_sheet_once():
                     continue
                 platform_raw = row[3].strip()
                 status = row[9].strip().lower()
-                flag_stat = row[8].strip()  # I
+                flag_stat = row[8].strip()
                 executor = row[10].strip()
 
-                # Пропускаем уже обработанные (I не 0 и не пусто)
                 if flag_stat not in ("", "0"):
                     continue
 
@@ -355,8 +343,7 @@ async def update_stats_from_sheet_once():
 
                 executor_clean = executor.lstrip("@").lower()
                 user = get_user_by_username(executor_clean)
-
-                e_value = None  # для столбца E
+                e_value = None
 
                 if status == "опубликован":
                     if user:
@@ -384,10 +371,10 @@ async def update_stats_from_sheet_once():
                                 cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
                             cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
                             conn.commit()
-                        e_value = 1  # опубликован
+                        e_value = 1
                         logger.info(f"✅ Начислено {price}₽ пользователю {uid} за {platform}")
                     else:
-                        e_value = 2  # пользователь не найден
+                        e_value = 2
 
                 elif status == "опубликован опз":
                     if user:
@@ -453,21 +440,20 @@ async def update_stats_from_sheet_once():
                         e_value = 2
 
                 elif status == "опубликован не по тх":
-                    e_value = 4  # игнорируем
+                    e_value = 4
                     logger.info(f"ℹ️ Строка {row_idx} на листе {sheet_name}: опубликован не по ТХ, пропускаем")
 
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
-        # Применяем обновления E
         for sheet, row_idx, e_value in updates:
             try:
-                sheet.update_cell(row_idx, 5, e_value)  # столбец E
+                sheet.update_cell(row_idx, 5, e_value)
                 logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
 
-        # Пересчёт выплат (на всякий случай)
+        # Пересчёт выплат
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
