@@ -36,25 +36,50 @@ PLATFORM_ALIASES = {
     "32топ": ["32топ", "32top", "32 топ"],
 }
 
+# ==================== ОБНОВЛЁННЫЙ СЛОВАРЬ ДЛЯ НАЗВАНИЙ ЛИСТОВ ====================
 SHEET_NAME_TO_PLATFORM = {
-    "яндекс": "яндекс", "yandex": "яндекс",
+    # Твои точные названия (с пробелами и скобками)
+    "ЯНДЕКС (К)": "яндекс",
+    "2ГИС (Г)": "2гис",
+    "google (С)": "google",
+    " АВИТО (А)": "авито",        # с пробелом в начале
+    "Продокторов (ПР)": "про докторов",
+    "ВК (ВК)": "вк",
+    "ДокДок (ДД)": "докдок",
+    "32Топ (Т)": "32топ",
+    "Докту (ДК)": "докту",
+    # Варианты без скобок (на всякий случай)
+    "ЯНДЕКС": "яндекс",
+    "2ГИС": "2гис",
     "google": "google",
-    "2гис": "2гис", "2гис": "2гис",
-    "авито": "авито", "avito": "авито",
-    "продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
-    "вк": "вк", "vk": "вк",
+    "АВИТО": "авито",
+    "Продокторов": "про докторов",
+    "ВК": "вк",
+    "ДокДок": "докдок",
+    "32Топ": "32топ",
+    "Докту": "докту",
+    # Нижний регистр
+    "яндекс": "яндекс",
+    "yandex": "яндекс",
+    "2гис": "2гис",
+    "авито": "авито",
+    "avito": "авито",
+    "вк": "вк",
+    "vk": "вк",
+    "отзовик": "отзовик",
+    "otzovik": "отзовик",
+    "доктору": "доктору",
+    "doctoru": "доктору",
     "докдок": "докдок",
-    "32топ": "32топ", "32top": "32топ", "32 топ": "32топ",
-    "докту": "докту", "doctu": "докту",
-    "Яндекс": "яндекс", "ЯНДЕКС": "яндекс",
-    "Google": "google", "GOOGLE": "google",
-    "2ГИС": "2гис", "2Гис": "2гис",
-    "Авито": "авито", "АВИТО": "авито",
-    "Продокторов": "про докторов", "ПРОДОКТОРОВ": "про докторов",
-    "ВК": "вк", "VK": "вк",
-    "ДокДок": "докдок", "ДОКДОК": "докдок",
-    "32ТОП": "32топ", "32Топ": "32топ",
-    "Докту": "докту", "ДОКТУ": "докту",
+    "doc doc": "докдок",
+    "про докторов": "про докторов",
+    "продокторов": "про докторов",
+    "prodoctors": "про докторов",
+    "докту": "докту",
+    "doctu": "докту",
+    "32топ": "32топ",
+    "32top": "32топ",
+    "32 топ": "32топ",
 }
 
 def match_platform(raw_name: str) -> str | None:
@@ -66,12 +91,23 @@ def match_platform(raw_name: str) -> str | None:
     return None
 
 def platform_from_sheet_name(sheet_name: str) -> str | None:
+    """Определяет платформу по точному названию листа"""
     key = sheet_name.strip()
+    # Сначала ищем точное совпадение (включая пробелы и скобки)
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
+    # Затем пробуем привести к нижнему регистру
     key_lower = key.lower()
     if key_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key_lower]
+    # Если ничего не найдено, пробуем удалить всё после скобки (если есть)
+    if "(" in key:
+        base = key.split("(")[0].strip()
+        if base in SHEET_NAME_TO_PLATFORM:
+            return SHEET_NAME_TO_PLATFORM[base]
+        base_lower = base.lower()
+        if base_lower in SHEET_NAME_TO_PLATFORM:
+            return SHEET_NAME_TO_PLATFORM[base_lower]
     return None
 
 def get_credentials():
@@ -82,7 +118,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ============ ПУБЛИКАЦИЯ СЛОТОВ ============
+# ============ ПУБЛИКАЦИЯ СЛОТОВ (без изменений) ============
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -113,46 +149,34 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # Логируем заголовки (первая строка)
                 headers = records[0] if records else []
                 logger.info(f"📌 Заголовки листа '{sheet_name}': {headers[:10] if len(headers)>10 else headers}")
 
                 # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
-                    # Логируем каждую строку с её содержимым
-                    logger.info(f"🔍 Строка {row_idx}: {row}")
-
                     if len(row) < 8:
-                        logger.info(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
-                        logger.info(f"⏭️ Строка {row_idx}: дата или время пустые (date='{date_str}', time='{time_str}')")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
-                        logger.info(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
-                        logger.info(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except Exception as e:
-                        logger.info(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
+                    except:
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
-                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
-                    else:
-                        logger.info(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
