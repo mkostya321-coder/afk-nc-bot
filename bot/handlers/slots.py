@@ -162,7 +162,7 @@ PLATFORM_TEMPLATES = {
     },
 }
 
-# ---------- Ручная публикация (оставляем как есть) ----------
+# ---------- Ручная публикация ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
@@ -329,7 +329,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Функция отправки инструкции (исправлена) ----------
+# ---------- Функция отправки инструкции ----------
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -340,7 +340,6 @@ async def send_instruction(user_id: int, bot):
             "4. Отправьте скриншот в этот чат.\n"
             "5. Если скриншот не соответствует требованиям, отзыв НЕ БУДЕТ ОПЛАЧЕН."
         )
-        # Проверяем, есть ли ID
         if INSTRUCTION_PHOTO_ID:
             logger.info(f"📸 Отправка инструкции по ID: {INSTRUCTION_PHOTO_ID}")
             await bot.send_photo(
@@ -369,29 +368,45 @@ async def send_instruction(user_id: int, bot):
 # ---------- Обработчик кнопки взять слот (из канала) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
+    # Сначала отвечаем на callback, чтобы избежать таймаута
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     user_id = callback.from_user.id
     if not is_registered(user_id):
-        await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
+        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
         return
     if is_blocked(user_id):
-        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
+
     parts = callback.data.split("|")
     if len(parts) < 5:
-        await callback.answer("Некорректный запрос.", show_alert=True)
+        await callback.bot.send_message(user_id, "Некорректный запрос.")
         return
+
     _, platform, count_str, date, time_safe = parts
-    count = int(count_str)
+    try:
+        count = int(count_str)
+    except:
+        await callback.bot.send_message(user_id, "Некорректное количество.")
+        return
+
     time = time_safe.replace('-', ':')
     slot_msg_id = callback.message.message_id
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
-        await callback.answer("❌ Этот слот уже неактивен.", show_alert=True)
+        await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
         return
+
     if user_id in cooldowns and platform in cooldowns[user_id]:
         if datetime.now() < cooldowns[user_id][platform]:
-            await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
+            remaining = (cooldowns[user_id][platform] - datetime.now()).seconds // 3600
+            await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
             return
+
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
@@ -404,21 +419,26 @@ async def take_slot_start(callback: CallbackQuery):
         "row_ids": slot_info["row_ids"],
         "from_menu": False
     }
+
     await callback.bot.send_message(
         chat_id=user_id,
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
-    await callback.answer()
 
 # ---------- Обработчик выбора платформы из меню "Слоты" ----------
 @router.callback_query(F.data.startswith("choose_platform|"))
 async def choose_platform(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     user_id = callback.from_user.id
     if not is_registered(user_id):
-        await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
+        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
         return
     if is_blocked(user_id):
-        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
 
     platform = callback.data.split("|")[1]
@@ -428,12 +448,13 @@ async def choose_platform(callback: CallbackQuery):
             all_rows.extend(slot["row_ids"])
 
     if not all_rows:
-        await callback.answer("❌ Нет доступных отзывов для этой платформы.", show_alert=True)
+        await callback.bot.send_message(user_id, "❌ Нет доступных отзывов для этой платформы.")
         return
 
     if user_id in cooldowns and platform in cooldowns[user_id]:
         if datetime.now() < cooldowns[user_id][platform]:
-            await callback.answer(f"⏳ Вы уже брали {platform}. Повторно можно будет через 24 часа.", show_alert=True)
+            remaining = (cooldowns[user_id][platform] - datetime.now()).seconds // 3600
+            await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
             return
 
     slot_requests[user_id] = {
@@ -448,11 +469,11 @@ async def choose_platform(callback: CallbackQuery):
         "row_ids": all_rows,
         "from_menu": True
     }
+
     await callback.bot.send_message(
         chat_id=user_id,
         text=f"📊 Доступно отзывов на платформе {platform}: {len(all_rows)} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
-    await callback.answer()
 
 # ---------- Обработчик ввода количества (общий) ----------
 @router.message(F.text)
