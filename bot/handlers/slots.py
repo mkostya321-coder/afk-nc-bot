@@ -3,7 +3,7 @@ from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
@@ -37,7 +37,132 @@ MESSAGE_TEMPLATE = (
     "Обязуюсь отправить скриншот/ы до 23:59 МСК, с правилами ознакомлен."
 )
 
-# ---------- Ручная публикация ----------
+# ---------- Шаблоны инструкций для каждой платформы ----------
+PLATFORM_TEMPLATES = {
+    "яндекс": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "google": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "2гис": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "вк": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": (
+            "<b>- На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.</b>\n"
+            "ДЛЯ 90% прохода:\n"
+            "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "докдок": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "докту": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "32топ": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "про докторов": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "авито": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "photo_required": False,
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+}
+
+# ---------- Ручная публикация (оставляем как есть) ----------
 async def publish_slot(message: Message, slot_name: str, post_text: str, price: str):
     raw_text = MESSAGE_TEMPLATE.format(slot_name=slot_name, price=price)
     encoded_text = quote(raw_text, safe='')
@@ -65,8 +190,105 @@ async def yandex_slot(message: Message):
     )
     await publish_slot(message, "Яндекс карты", text, "150₽")
 
-# Остальные команды (google, gis, avito, vk, otzovik, doctoru, dokdok, prodoctors, doctu, 32top) аналогичны
-# Для краткости они не переписаны, но должны быть. В вашем проекте они уже есть, я не удаляю их.
+@router.message(Command("google"))
+async def google_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: GOOGLE\nЗадача: Выполнить отзыв/ы GOOGLE\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "GOOGLE", text, "50₽")
+
+@router.message(Command("gis"))
+async def gis_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: 2ГИС\nЗадача: Выполнить отзыв/ы 2ГИС\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "2ГИС", text, "50₽")
+
+@router.message(Command("avito"))
+async def avito_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: Авито\nЗадача: Выполнить отзыв/ы Авито\nОплата: 700 руб/шт\n"
+        "Дедлайн: 2 суток с момента принятия слота\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "Авито", text, "700₽")
+
+@router.message(Command("vk"))
+async def vk_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: ВК\nЗадача: Выполнить отзыв/ы ВК\nОплата: 50 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "ВК", text, "50₽")
+
+@router.message(Command("otzovik"))
+async def otzovik_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: Отзовик\nЗадача: Выполнить отзыв/ы ОТЗОВИК\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "Отзовик", text, "100₽")
+
+@router.message(Command("doctoru"))
+async def doctoru_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: Doctoru\nЗадача: Выполнить отзыв/ы Doctoru\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "Doctoru", text, "100₽")
+
+@router.message(Command("dokdok"))
+async def dokdok_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: ДокДок\nЗадача: Выполнить отзыв/ы ДокДок\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "ДокДок", text, "100₽")
+
+@router.message(Command("prodoctors"))
+async def prodoctors_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: Про Докторов\nЗадача: Выполнить отзыв/ы Про Докторов\nОплата: 180 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "Про Докторов", text, "180₽")
+
+@router.message(Command("doctu"))
+async def doctu_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: ДокТу\nЗадача: Выполнить отзыв/ы ДокТу\nОплата: 110 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "ДокТу", text, "110₽")
+
+@router.message(Command("32top"))
+async def top32_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    text = (
+        "🔥 Слот: 32ТОП\nЗадача: Выполнить отзыв/ы 32ТОП\nОплата: 100 руб/шт\n"
+        "Дедлайн: Сегодня до 23:59 (МСК)\nТребуется человек: До закрытия слота.\n"
+        "Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    await publish_slot(message, "32ТОП", text, "100₽")
 
 # ---------- Планирование автослота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
@@ -107,7 +329,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         "attempt": attempt
     }
 
-# ---------- Функция отправки инструкции ----------
+# ---------- Функция отправки инструкции (исправлена) ----------
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -118,22 +340,25 @@ async def send_instruction(user_id: int, bot):
             "4. Отправьте скриншот в этот чат.\n"
             "5. Если скриншот не соответствует требованиям, отзыв НЕ БУДЕТ ОПЛАЧЕН."
         )
+        # Проверяем, есть ли ID
         if INSTRUCTION_PHOTO_ID:
+            logger.info(f"📸 Отправка инструкции по ID: {INSTRUCTION_PHOTO_ID}")
             await bot.send_photo(
                 chat_id=user_id,
                 photo=INSTRUCTION_PHOTO_ID,
                 caption=caption
             )
+        elif INSTRUCTION_PHOTO_PATH and os.path.exists(INSTRUCTION_PHOTO_PATH):
+            logger.info(f"📸 Отправка инструкции из файла: {INSTRUCTION_PHOTO_PATH}")
+            with open(INSTRUCTION_PHOTO_PATH, 'rb') as photo:
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=caption
+                )
         else:
-            if os.path.exists(INSTRUCTION_PHOTO_PATH):
-                with open(INSTRUCTION_PHOTO_PATH, 'rb') as photo:
-                    await bot.send_photo(
-                        chat_id=user_id,
-                        photo=photo,
-                        caption=caption
-                    )
-            else:
-                await bot.send_message(chat_id=user_id, text=caption)
+            logger.warning("❌ Нет ни ID, ни файла для инструкции. Отправляем только текст.")
+            await bot.send_message(chat_id=user_id, text=caption)
     except Exception as e:
         logger.error(f"Ошибка отправки инструкции: {e}")
         try:
@@ -359,7 +584,7 @@ async def cancel_task(message: Message):
         "Остальные возвращены в слот и будут переопубликованы."
     )
 
-# ---------- Обработка скриншотов (добавлен ID) ----------
+# ---------- Обработка скриншотов ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -377,7 +602,6 @@ async def handle_screenshot(message: Message):
         try:
             review_id = sheet.cell(current_row, 19).value
             if not review_id:
-                # Если ID нет (старые данные) — генерируем и записываем
                 review_id = secrets.token_hex(4)
                 sheet.update_cell(current_row, 19, review_id)
         except Exception as e:
@@ -426,6 +650,7 @@ async def send_next_review(message: Message, request: dict, sheet):
         del slot_requests[message.from_user.id]
         return
 
+    # Отправляем инструкцию с фото
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
@@ -434,29 +659,106 @@ async def send_next_review(message: Message, request: dict, sheet):
         await message.answer("❌ Ошибка данных в таблице.")
         del slot_requests[message.from_user.id]
         return
+
+    # Получаем данные
     link = row[6]
     text = row[13]
     stars = row[2].strip() if len(row) > 2 else ""
     gender = row[12].strip().upper() if len(row) > 12 else ""
-    info_msg = (
-        f"⭐ Количество звезд: {stars}\n"
-        "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ – 1 ЧЕЛОВЕК 1 ОТЗЫВ\n"
-    )
+    platform = request["platform"]
+
+    # Проверяем столбец R (18-й индекс, если считать с 0) — фото к отзыву
+    photo_link = row[17].strip() if len(row) > 17 else ""
+    photo_warning = ""
+    if photo_link:
+        photo_warning = (
+            "📸 <b>Фотография к ОБЯЗАТЕЛЬНОМУ прикреплению к отзыву!</b>\n"
+            "Если вы не прикрепите фото, отзыв будет оплачен на 50% ниже.\n\n"
+        )
+
+    # Формируем основной текст в зависимости от платформы
+    template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
+    instruction_text = template["instruction"]
+    extra_text = template["extra_text"]
+    warning = template["warning"]
+
+    # Текст о поле
+    gender_text = ""
     if gender == "М":
-        info_msg += "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах.\n"
+        gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
     elif gender == "Ж":
-        info_msg += "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах.\n"
+        gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
     else:
-        info_msg += "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила').\n"
-    info_msg += "💡 Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n\nПожалуйста, после выполнения пришлите скриншот отзыва.\n\nЕсли хотите отказаться от оставшихся заданий, отправьте команду /cancel."
-    await message.answer(info_msg)
+        gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила')."
+
+    # Собираем финальное сообщение
+    final_msg = (
+        f"{instruction_text}\n\n"
+        f"{photo_warning}"
+        f"⭐ Количество звезд: {stars}\n"
+        "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
+        "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
+        f"{gender_text}\n"
+    )
+    if extra_text:
+        final_msg += f"{extra_text}\n"
+    final_msg += (
+        "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
+        "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
+        f"{warning}"
+    )
+
+    # Отправляем сообщение, ссылку и текст отзыва
+    await message.answer(final_msg, parse_mode=ParseMode.HTML)
     await message.answer(link)
     await message.answer(text)
     await message.answer("Ожидаю скриншот и продолжаем работу.")
     request["state"] = "waiting_screenshot"
 
 # ---------- Админские команды ----------
-# ... (оставляем как было)
+@router.message(Command("slots"))
+async def list_slots(message: Message):
+    if not is_ga(message.from_user.id): return
+    if not active_slots:
+        await message.answer("Нет активных слотов.")
+        return
+    lines = ["Активные слоты (ID):"]
+    for msg_id, data in active_slots.items():
+        lines.append(f"🔸 {data.get('command', data.get('platform', '?'))} {data.get('price', data.get('count', '?'))} — ID: {msg_id}")
+    await message.answer("\n".join(lines))
+
+@router.message(Command("close"))
+async def close_slot(message: Message):
+    if not is_ga(message.from_user.id): return
+    try:
+        _, slot_id = message.text.split()
+        slot_id = int(slot_id)
+    except:
+        await message.answer("Использование: /close <ID>")
+        return
+    if slot_id not in active_slots:
+        await message.answer("❌ Слот не найден.")
+        return
+    data = active_slots.pop(slot_id)
+    await message.bot.edit_message_text(
+        chat_id=CHANNEL_ID, message_id=slot_id,
+        text="Извините, данный слот устарел или был закрыт…"
+    )
+    await message.answer(f"✅ Слот «{data.get('command', data.get('platform', '?'))}» закрыт.")
+
+@router.message(Command("closeall"))
+async def close_all_slots(message: Message):
+    if not is_ga(message.from_user.id): return
+    for slot_id in list(active_slots.keys()):
+        try:
+            await message.bot.edit_message_text(
+                chat_id=CHANNEL_ID, message_id=slot_id,
+                text="Извините, данный слот устарел или был закрыт…"
+            )
+        except:
+            pass
+        del active_slots[slot_id]
+    await message.answer("✅ Все слоты закрыты.")
 
 # ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
 @router.message(Command("job"))
