@@ -1,6 +1,5 @@
 import os
 
-# ---------- Основные настройки ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in environment")
@@ -12,7 +11,6 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@newChapterJob")
 MANAGER_USERNAME = "New_Chapterr24"
 OTHER_JOBS_CHANNEL = "https://t.me/jobNchapter"
-
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 if not SHEET_ID:
     raise ValueError("GOOGLE_SHEET_ID not found in environment")
@@ -34,13 +32,12 @@ INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", "instruction.jpg")
 
 REQUIRED_CHANNEL_ID = os.getenv("REQUIRED_CHANNEL_ID", "@newchapterjob")
 
-# ---------- Tik Tok ----------
+# Tik Tok
 TIKTOK_VIDEO_ID = os.getenv("TIKTOK_VIDEO_ID")
 TIKTOK_VIDEO_PATH = os.getenv("TIKTOK_VIDEO_PATH", "tiktok.mp4")
-
 TIKTOK_REPORT_CHAT_ID = os.getenv("TIKTOK_REPORT_CHAT_ID", "-100...")
 TIKTOK_REPORT_THREAD_ID = int(os.getenv("TIKTOK_REPORT_THREAD_ID", "0"))
 
-# ---------- Сотрудничество ----------
+# Сотрудничество
 COLLABORATION_CHAT_ID = os.getenv("COLLABORATION_CHAT_ID", "-100...")
 COLLABORATION_THREAD_ID = int(os.getenv("COLLABORATION_THREAD_ID", "0"))
