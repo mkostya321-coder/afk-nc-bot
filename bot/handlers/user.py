@@ -36,21 +36,20 @@ class IntroState(StatesGroup):
     first = State()
     second = State()
 
-# ---------- Новые состояния ----------
 class TikTokReport(StatesGroup):
     account_name = State()
     screenshot_profile = State()
     video_link = State()
     screenshot_views = State()
 
+# Новые состояния для сотрудничества (после кнопки)
 class CollaborationForm(StatesGroup):
-    company_name = State()
-    reviews_count = State()
     platforms = State()
-    links = State()
-    contact = State()
+    counts = State()
+    description = State()
+    texts = State()  # заказывают у нас или сами
 
-# ============= ПРАВИЛА =============
+# ============= ПРАВИЛА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -70,18 +69,20 @@ RULES_2 = (
     "🙂Инструкция по работе с отзывами⚠️\n\n"
     "1. Кто может оставлять отзывы⁉️\n"
     "Привлекай только друзей и знакомых.\n"
-    "Один человек может оставить только один отзыв в Яндекс Картах и один отзыв в Google Картах или 2ГИС и так на каждой платформе по разу, (ВСЕ ЧТО СПЕРЕДИ ДО НЕ ОПЛАЧИВАЮТСЯ СДЕЛАЙ ЖИРНЫМ ТЕКСТОМ) если человек сделал 2 и более отзыва эти отзывы НЕ ОПЛАЧИВАЮТСЯ.\n"
+    "Один человек может оставить только один отзыв в Яндекс Картах и один отзыв в Google Картах или 2ГИС и так на каждой платформе по разу, если человек сделал 2 и более отзыва эти отзывы НЕ ОПЛАЧИВАЮТСЯ.\n"
     "Повторно просить того же человека нельзя.‼️‼️\n\n"
     "2. Формат получения заданий\n"
     "Отзывы скидываются в формате:\n"
     "Ссылка\n"
+    "Фотография к отзыву (если требуется) \n"
     "Текст\n"
     "Пол (указан при необходимости)📌\n\n"
     "4. Как учитывать пол💬\n"
     "🔴Бот в первом сообщение указывает нужно ли учесть пол данного отзыва.\n\n"
     "5. На каждый сделанный отзыв вы обязуетесь отправить скриншот боту который отправил вам отзывы.⚠️\n"
-    "Скриншоты нужно отправлять в той форме в которой вам скажет бот, если скриншот будет не соответствовать - ОТЗЫВ НЕ ОПЛАЧИВАЕТСЯ\n"
-    "Если на скриншоте что-то другое - ПРЕД 1/3 если количество предупреждений дойдет до 3/3 блокировка навсегда, с шансом снять ее через 1 месяц.\n\n"
+    "Скриншоты нужно отправлять в той форме в которой вам скажет бот, если скриншот будет не соответствовать ТЗ - ОТЗЫВ НЕ ОПЛАЧИВАЕТСЯ\n"
+    "Если на скриншоте что-то другое не связанное с выполнением работы - выдается предупреждение 1/3.\n"
+    "Если количество предупреждений достигнет 3/3 -> блокировка навсегда, с возможностью снять ее через 1 месяц.(на усмотрение администрации)\n\n"
     "6. ❗️Сотрудник, который берет 5 отзывов+- в определенный день, должен предоставить и отправить все подтверждающие скриншоты до 2️⃣3️⃣:5️⃣9️⃣ по московскому времени в день когда ему отправил отзывы бот. В случае несоблюдения этого срока, оплата за отзывы, полученные в этот день, будет снижена на 50%❗️\n\n"
     "Если бот пишет что пол не важен. ‼️То обязательно следи за текстом: если в тексте есть слова в женском роде, например покупала или ходила, а ты отправляешь задание парню, он должен изменить их на мужской род — покупал, ходил.‼️И наоборот. Отзыв должен соответствовать полу того, кто его пишет.✔️"
 )
@@ -627,8 +628,9 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
                 photo=data['screenshot_views'],
                 message_thread_id=TIKTOK_REPORT_THREAD_ID or None
             )
+        logger.info(f"✅ Отчет Tik Tok отправлен в беседу {TIKTOK_REPORT_CHAT_ID}, тема {TIKTOK_REPORT_THREAD_ID}")
     except Exception as e:
-        logger.error(f"Ошибка отправки отчета Tik Tok: {e}")
+        logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
 
     await message.answer("✅ Отчет отправлен! Менеджер проверит его в ближайшее время.")
 
@@ -636,64 +638,78 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
 async def process_tiktok_screenshot_views_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
 
-# ---------- Кнопка "Сотрудничество с NC" ----------
+# ---------- Кнопка "Сотрудничество с NC" (с описанием и кнопкой) ----------
 @router.message(F.text == "🤝 Сотрудничество с NC")
-async def collaboration_start(message: Message, state: FSMContext):
+async def collaboration_start(message: Message):
     if is_blocked(message.from_user.id):
         await message.answer("⛔ Вы заблокированы.")
         return
-    await state.set_state(CollaborationForm.company_name)
-    await message.answer(
+    # Показываем описание и кнопку "Перейти к заполнению формы"
+    text = (
         "🤝 <b>Сотрудничество с NC</b>\n\n"
-        "Заполните форму для передачи ваших отзывов под работу NC.\n"
-        "Вы должны быть осведомлены, что перед началом работы вы выплачиваете 60% от зарплаты людям (по ставкам NC).\n"
-        "NC берет 20% от чистой прибыли за использование сервиса (минимум 60₽ за отзыв).\n\n"
-        "Введите название вашей компании/проекта:",
+        "Вы хотите передать свои отзывы под работу нашей команде.\n"
+        "Мы берём на себя организацию выполнения отзывов, выплаты исполнителям и контроль качества.\n\n"
+        "<b>Условия сотрудничества:</b>\n"
+        "• Вы выплачиваете <b>60%</b> от зарплаты исполнителей (по нашим ставкам).\n"
+        "• За использование сервиса NC берёт <b>20%</b> от чистой прибыли (минимум 60₽ за отзыв).\n"
+        "• Если вы заказываете текста для отзывов у нас – стоимость составляет <b>35₽</b> за один отзыв.\n\n"
+        "Заполните форму, и мы свяжемся с вами для деталей."
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📝 Перейти к заполнению формы", callback_data="collaboration_form")
+    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+@router.callback_query(F.data == "collaboration_form")
+async def collaboration_form_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(CollaborationForm.platforms)
+    await callback.message.answer(
+        "📝 <b>Форма сотрудничества</b>\n\n"
+        "Ответьте на вопросы для отправки заявки.\n"
+        "1. Какие платформы вы хотите передать к нам в работу? (Яндекс, Google, 2ГИС, Авито, и т.д.)",
         parse_mode="HTML"
     )
-
-@router.message(CollaborationForm.company_name)
-async def collaboration_company(message: Message, state: FSMContext):
-    await state.update_data(company_name=message.text.strip())
-    await state.set_state(CollaborationForm.reviews_count)
-    await message.answer("Сколько отзывов вы готовы передать? (укажите число)")
-
-@router.message(CollaborationForm.reviews_count)
-async def collaboration_count(message: Message, state: FSMContext):
-    try:
-        count = int(message.text.strip())
-        await state.update_data(reviews_count=count)
-    except:
-        await message.answer("Пожалуйста, введите число.")
-        return
-    await state.set_state(CollaborationForm.platforms)
-    await message.answer("На каких платформах ваши отзывы? (Яндекс, Google, 2ГИС и т.д.)")
 
 @router.message(CollaborationForm.platforms)
 async def collaboration_platforms(message: Message, state: FSMContext):
     await state.update_data(platforms=message.text.strip())
-    await state.set_state(CollaborationForm.links)
-    await message.answer("Предоставьте ссылки на ваши отзывы (можно несколько, каждую с новой строки):")
+    await state.set_state(CollaborationForm.counts)
+    await message.answer(
+        "2. Какое количество отзывов требуется на каждую платформу?\n"
+        "Укажите в формате: Яндекс – 50, Google – 30, и т.д."
+    )
 
-@router.message(CollaborationForm.links)
-async def collaboration_links(message: Message, state: FSMContext):
-    await state.update_data(links=message.text.strip())
-    await state.set_state(CollaborationForm.contact)
-    await message.answer("Ваши контактные данные (Telegram username или телефон):")
+@router.message(CollaborationForm.counts)
+async def collaboration_counts(message: Message, state: FSMContext):
+    await state.update_data(counts=message.text.strip())
+    await state.set_state(CollaborationForm.description)
+    await message.answer(
+        "3. Подробно распишите каждый заказ:\n"
+        "Например: какие именно объекты, какие требования, есть ли фото для прикрепления, и т.д."
+    )
 
-@router.message(CollaborationForm.contact)
-async def collaboration_contact(message: Message, state: FSMContext):
+@router.message(CollaborationForm.description)
+async def collaboration_description(message: Message, state: FSMContext):
+    await state.update_data(description=message.text.strip())
+    await state.set_state(CollaborationForm.texts)
+    await message.answer(
+        "4. Текста на отзывы вы заказываете у нас или отправляете сами?\n"
+        "Если заказываете у нас – стоимость 35₽ за отзыв.\n"
+        "Напишите: 'Заказываем у NC' или 'Отправляем сами'."
+    )
+
+@router.message(CollaborationForm.texts)
+async def collaboration_texts(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
     report = (
         f"🤝 <b>Новая заявка на сотрудничество</b>\n"
         f"👤 От: @{message.from_user.username} (ID: {message.from_user.id})\n"
-        f"🏢 Компания: {data.get('company_name')}\n"
-        f"📊 Кол-во отзывов: {data.get('reviews_count')}\n"
         f"📌 Платформы: {data.get('platforms')}\n"
-        f"🔗 Ссылки:\n{data.get('links')}\n"
-        f"📞 Контакты: {data.get('contact')}"
+        f"📊 Количество по платформам:\n{data.get('counts')}\n"
+        f"📝 Описание заказов:\n{data.get('description')}\n"
+        f"✍️ Текста: {message.text.strip()}"
     )
 
     try:
@@ -703,7 +719,8 @@ async def collaboration_contact(message: Message, state: FSMContext):
             message_thread_id=COLLABORATION_THREAD_ID or None,
             parse_mode="HTML"
         )
+        logger.info(f"✅ Заявка на сотрудничество отправлена в беседу {COLLABORATION_CHAT_ID}")
     except Exception as e:
-        logger.error(f"Ошибка отправки заявки на сотрудничество: {e}")
+        logger.error(f"❌ Ошибка отправки заявки на сотрудничество: {e}")
 
     await message.answer("✅ Ваша заявка отправлена! Менеджер свяжется с вами в ближайшее время.")
