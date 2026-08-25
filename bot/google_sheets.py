@@ -115,27 +115,35 @@ async def monitor_schedule(bot, active_slots: dict):
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
+                        logger.debug(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
+                        logger.debug(f"⏭️ Строка {row_idx}: дата или время пустые")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
+                        logger.debug(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
+                        logger.debug(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except:
+                    except Exception as e:
+                        logger.debug(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
+                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
+                    else:
+                        logger.debug(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -154,8 +162,8 @@ async def monitor_schedule(bot, active_slots: dict):
                         for row_idx in row_ids:
                             try:
                                 review_id = secrets.token_hex(4)
-                                sheet.update_cell(row_idx, 17, 1)  # Q
-                                sheet.update_cell(row_idx, 19, review_id)  # S
+                                sheet.update_cell(row_idx, 17, 1)
+                                sheet.update_cell(row_idx, 19, review_id)
                             except Exception as e:
                                 logger.error(f"Не удалось обновить Q/ID для строки {row_idx}: {e}")
                         await publish_scheduled_slot(
@@ -201,7 +209,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     elif new_attempt == 3:
                         col_idx = 14  # O
                     elif new_attempt == 4:
-                        col_idx = 9   # I (завершительная)
+                        col_idx = 9   # I
                     else:
                         col_idx = None
 
@@ -453,7 +461,7 @@ async def update_stats_from_sheet_once():
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
 
-        # Пересчёт выплат
+        # Пересчёт выплат (на всякий случай)
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
