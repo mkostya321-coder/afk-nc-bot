@@ -59,7 +59,14 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                warned_by INTEGER NOT NULL
+                warned_by INTEGER NOT NULL,
+                expires_at TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
         """)
         if OWNER_ID:
@@ -143,38 +150,49 @@ def is_comoderator(user_id: int) -> bool:
     role = get_admin_role(user_id)
     return role in ('owner', 'ga', 'moderator', 'comoderator')
 
-# ---------- Предупреждения ----------
+# ---------- Предупреждения (с датами истечения) ----------
 def add_warning(user_id: int, reason: str, warned_by: int):
+    # Продлеваем существующие активные предупреждения на 45 дней
+    extend_warnings_expiry(user_id, 45)
+    # Добавляем новое (срок 30 дней)
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO warnings (user_id, reason, warned_by) VALUES (?, ?, ?)", (user_id, reason, warned_by))
+        cur.execute("""
+            INSERT INTO warnings (user_id, reason, warned_by, expires_at)
+            VALUES (?, ?, ?, datetime('now', '+30 days'))
+        """, (user_id, reason, warned_by))
         conn.commit()
 
 def get_warning_count(user_id: int) -> int:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
+        cur.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ? AND expires_at > datetime('now')", (user_id,))
         return cur.fetchone()[0]
 
-def get_all_users_with_payout():
+def get_active_warnings(user_id: int) -> list:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE payout >= 150")
+        cur.execute("""
+            SELECT id, reason, created_at, expires_at, warned_by
+            FROM warnings
+            WHERE user_id = ? AND expires_at > datetime('now')
+            ORDER BY created_at ASC
+        """, (user_id,))
         return [dict(row) for row in cur.fetchall()]
 
-def init_settings():
+def extend_warnings_expiry(user_id: int, days: int = 45):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
+            UPDATE warnings
+            SET expires_at = datetime(expires_at, '+' || ? || ' days')
+            WHERE user_id = ? AND expires_at > datetime('now')
+        """, (days, user_id))
         conn.commit()
 
-def get_setting(key: str) -> str | None:
+# ---------- Настройки ----------
+def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -186,3 +204,11 @@ def set_setting(key: str, value: str):
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
+
+# ---------- Выплаты и рефералы ----------
+def get_all_users_with_payout():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE payout >= 150")
+        return [dict(row) for row in cur.fetchall()]
