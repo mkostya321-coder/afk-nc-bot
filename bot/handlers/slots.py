@@ -727,7 +727,7 @@ async def send_next_review(message: Message, request: dict, sheet):
 # ---------- Админские команды ----------
 @router.message(Command("slots"))
 async def list_slots(message: Message):
-    if not is_moderator(message.from_user.id):  # Теперь доступно модераторам и комодераторам
+    if not is_moderator(message.from_user.id):
         return
     if not active_slots:
         await message.answer("Нет активных слотов.")
@@ -739,7 +739,7 @@ async def list_slots(message: Message):
 
 @router.message(Command("close"))
 async def close_slot(message: Message):
-    if not is_ga(message.from_user.id):  # Только GA и владелец
+    if not is_ga(message.from_user.id):
         return
     try:
         _, slot_id = message.text.split()
@@ -759,7 +759,7 @@ async def close_slot(message: Message):
 
 @router.message(Command("closeall"))
 async def close_all_slots(message: Message):
-    if not is_ga(message.from_user.id):  # Только GA и владелец
+    if not is_ga(message.from_user.id):
         return
     for slot_id in list(active_slots.keys()):
         try:
@@ -780,7 +780,7 @@ async def cmd_job(message: Message):
         await message.answer("⛔ Вы заблокированы.")
         return
     if not active_slots:
-        await message.answer("😔 К сожалению на данный момент все слоты закрыты, ожидайте нового слота.\nС уважением команда New Chapter.")
+        await message.answer("😔 К сожалению, на данный момент все слоты закрыты. Ожидайте нового слота.\nС уважением, команда New Chapter.")
         return
 
     platforms = set()
