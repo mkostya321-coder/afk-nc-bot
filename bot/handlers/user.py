@@ -10,7 +10,8 @@ from bot.config import (
     MANAGER_USERNAME, DB_PATH, LOG_CHANNEL_ID,
     TIKTOK_VIDEO_ID, TIKTOK_VIDEO_PATH,
     TIKTOK_REPORT_CHAT_ID, TIKTOK_REPORT_THREAD_ID,
-    COLLABORATION_CHAT_ID, COLLABORATION_THREAD_ID
+    COLLABORATION_CHAT_ID, COLLABORATION_THREAD_ID,
+    SUPPORT_CHAT_ID, SUPPORT_THREAD_ID
 )
 from bot.database import (
     add_user, get_user, get_user_by_username,
@@ -37,6 +38,7 @@ class IntroState(StatesGroup):
     second = State()
 
 class TikTokReport(StatesGroup):
+    intro = State()          # новый шаг – показ описания
     account_name = State()
     screenshot_profile = State()
     video_link = State()
@@ -48,6 +50,10 @@ class CollaborationForm(StatesGroup):
     description = State()
     texts = State()
 
+class SupportForm(StatesGroup):
+    problem = State()
+
+# ============= ПРАВИЛА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -124,6 +130,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 # ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
+@router.message(Command("profile"))
 async def menu_profile(message: Message):
     if is_blocked(message.from_user.id):
         await message.answer("⛔ Вы заблокированы.")
@@ -167,7 +174,7 @@ async def menu_profile(message: Message):
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n\n"
         f"С нами уже: {time_str}\n"
-        f"К выплате ср/чт: {user['payout']}₽\n"
+        f"К выплате чт: {user['payout']}₽\n"   # изменено: убрано "ср/"
         f"Заработано за всё время: {user['total_earned']}₽\n\n"
         f"📊 Статистика (текущий период):\n"
         f"Яндекс: {user['yandex_passed']}\n"
@@ -219,6 +226,7 @@ async def cmd_myotz(message: Message):
 
 # ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
+@router.message(Command("help"))
 async def menu_help(message: Message):
     text = (
         "🆘 Доступные команды:\n"
@@ -227,12 +235,111 @@ async def menu_help(message: Message):
         "/profile – Ваш профиль\n"
         "/job – Активные слоты\n"
         "/myotz – Общая статистика за всё время\n"
-        "/help – Эта справка\n\n"
+        "/help – Эта справка\n"
+        "/manual – Инструкция по правильной публикации отзывов\n"
+        "/money – Полная информация по системе выплат\n"
+        "/tiktok – Справка по Tik Tok\n"
+        "/support – Заявка в поддержку\n\n"
         f"По всем вопросам: @{MANAGER_USERNAME}"
     )
     user = get_user(message.from_user.id)
     is_reg = user and user.get("name") is not None
     await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
+
+# ---------- /manual – инструкция по публикации отзывов ----------
+@router.message(Command("manual"))
+async def cmd_manual(message: Message):
+    text = RULES_1 + "\n\n" + RULES_2
+    await message.answer(text)
+
+# ---------- /money – система выплат ----------
+@router.message(Command("money"))
+async def cmd_money(message: Message):
+    text = (
+        "💳 <b>Система выплат</b>\n\n"
+        "Здравствуйте! Здесь вы можете ознакомиться с полной системой выплат, чтобы потом у вас не возникали вопросы.\n\n"
+        "<b>💰 Расценки за отзывы (за 1 шт.):</b>\n"
+        "• Яндекс — 150₽\n"
+        "• Google — 50₽\n"
+        "• 2ГИС — 50₽\n"
+        "• Авито — 700₽\n"
+        "• ВК — 50₽\n"
+        "• Отзовик — 100₽\n"
+        "• Doctoru — 100₽\n"
+        "• ДокДок — 100₽\n"
+        "• Про Докторов — 180₽\n"
+        "• ДокТу — 110₽\n"
+        "• 32ТОП — 100₽\n\n"
+        "<b>📅 Когда выплата?</b>\n"
+        "Все выплаты производятся <b>по четвергам</b>.\n"
+        "В четверг вы получаете деньги за всё, что успели сделать <b>до понедельника (включительно)</b>.\n"
+        "То есть отзывы, выполненные в понедельник, проходят модерацию во вторник, и за них вы получаете в ближайший четверг.\n"
+        "Отзывы, выполненные во вторник, среду и т.д., переносятся на следующий четверг.\n"
+        "В среду деньги начисляются на ваш баланс в четверг вечером или в пятницу.\n\n"
+        "<b>⚠️ Важное правило:</b>\n"
+        "Если вы не отказались от задания и не выполнили его до 23:30, то задания снимаются, а все выполненные отзывы из этого слота оплачиваются на <b>30% ниже</b>.\n"
+        "Пожалуйста, будьте внимательны: либо доделывайте все отзывы, либо отказывайтесь заранее!\n\n"
+        "Удачи в работе! 🚀"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+# ---------- /tiktok – справка по Tik Tok ----------
+@router.message(Command("tiktok"))
+async def cmd_tiktok(message: Message):
+    text = (
+        "🎬 <b>Справка по Tik Tok</b>\n\n"
+        "В этой справке вы можете ознакомиться с выплатами по Tik Tok.\n\n"
+        "Когда вы делаете отчёт, фиксируется последнее количество просмотров.\n"
+        "Отчёт следует сделать <b>до вторника (включительно)</b>.\n\n"
+        "💰 Максимальная выплата — <b>10 000 рублей</b>.\n"
+        "Если у вас выходит до 15 000 рублей, администратор может внести сразу всю выплату в отчёт на ближайший четверг (на усмотрение Главного Администратора).\n"
+        "Сумма зависит от количества людей, которым нужно выплатить.\n\n"
+        "<b>📌 Важно!</b>\n"
+        "Перед публикацией вашего рекламного ролика обязательно заходите в раздел «Другие задания» → «Tik Tok».\n"
+        "Если в инструкции написано, что публикация роликов Tik Tok на сегодняшний день (дата) закрыта, то не выкладывайте ролик!\n"
+        "Будьте внимательны: администрация при проверке отчёта будет смотреть, в какой день был опубликован ролик.\n"
+        "Если публикация была в день, когда Tik Tok был закрыт, выплаты не будет.\n\n"
+        "Удачи в творчестве! 🎥"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+# ---------- /support – заявка в поддержку ----------
+@router.message(Command("support"))
+async def cmd_support(message: Message, state: FSMContext):
+    if is_blocked(message.from_user.id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    await state.set_state(SupportForm.problem)
+    await message.answer(
+        "📝 <b>Заявка в поддержку</b>\n\n"
+        "Опишите вашу проблему подробно, и мы свяжемся с вами в ближайшее время.\n"
+        "1. Подробно опишите вашу проблему:",
+        parse_mode="HTML"
+    )
+
+@router.message(SupportForm.problem)
+async def process_support(message: Message, state: FSMContext):
+    problem = message.text.strip()
+    await state.clear()
+
+    report = (
+        f"🆘 <b>Новая заявка в поддержку</b>\n"
+        f"👤 Пользователь: @{message.from_user.username} (ID: {message.from_user.id})\n"
+        f"📝 Проблема:\n{problem}"
+    )
+
+    try:
+        await message.bot.send_message(
+            chat_id=SUPPORT_CHAT_ID,
+            text=report,
+            message_thread_id=SUPPORT_THREAD_ID or None,
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ Заявка в поддержку отправлена в беседу {SUPPORT_CHAT_ID}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки заявки в поддержку: {e}")
+
+    await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
 # ---------- Реферальная система ----------
 @router.message(F.text == "👥 Реферальная система")
@@ -505,6 +612,7 @@ async def other_tasks(message: Message):
     kb.adjust(1)
     await message.answer("Выберите задание:", reply_markup=kb.as_markup())
 
+# ---------- Tik Tok: показ видео и правил ----------
 @router.callback_query(F.data == "task_tiktok")
 async def tiktok_task(callback: CallbackQuery):
     await callback.answer()
@@ -546,20 +654,35 @@ async def tiktok_task(callback: CallbackQuery):
         logger.error(f"Ошибка отправки видео Tik Tok: {e}")
         await callback.message.answer(rules, parse_mode="HTML")
 
+# ---------- Отчет Tik Tok (сначала описание и кнопка) ----------
 @router.callback_query(F.data == "report_tiktok")
-async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
+async def report_tiktok_intro(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     if not is_registered(user_id):
         await callback.message.answer("❌ Сначала зарегистрируйтесь.")
         return
 
+    text = (
+        "📊 <b>Отчет по Tik Tok</b>\n\n"
+        "Для предоставления отчета вам необходимо ответить на несколько вопросов и приложить скриншоты.\n\n"
+        "Вам нужно будет указать:\n"
+        "• Название вашего аккаунта Tik Tok\n"
+        "• Скриншот профиля (с последними роликами и возможностью редактирования)\n"
+        "• Ссылку на ролик\n"
+        "• Скриншот с количеством просмотров\n\n"
+        "Нажмите кнопку ниже, чтобы начать заполнение отчета."
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📝 Перейти к заполнению формы", callback_data="report_tiktok_form")
+    await callback.message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+@router.callback_query(F.data == "report_tiktok_form")
+async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.set_state(TikTokReport.account_name)
     await callback.message.answer(
-        "📝 <b>Отчет по Tik Tok</b>\n\n"
-        "Ответьте на несколько вопросов для отправки отчета.\n"
-        "1. Название вашего аккаунта Tik Tok:",
-        parse_mode="HTML"
+        "1. Название вашего аккаунта Tik Tok:"
     )
 
 @router.message(TikTokReport.account_name)
@@ -568,9 +691,9 @@ async def process_tiktok_account(message: Message, state: FSMContext):
     await state.set_state(TikTokReport.screenshot_profile)
     await message.answer(
         "2. Отправьте скриншот внутри профиля, где видно:\n"
-        "2.1) Ваши последние ролики\n"
-        "2.2) Возможность изменять профиль\n"
-        "2.3) Что-то добавлять и т.д.\n"
+        "• Ваши последние ролики\n"
+        "• Возможность изменять профиль\n"
+        "• Что-то добавлять и т.д.\n"
         "На скриншоте ничего нельзя замазывать."
     )
 
