@@ -15,7 +15,8 @@ from bot.config import (
 )
 from bot.database import (
     add_user, get_user, get_user_by_username,
-    is_registered, update_user_field, is_blocked
+    is_registered, update_user_field, is_blocked,
+    get_active_warnings, get_setting, set_setting
 )
 from bot.keyboards.reply import main_menu_keyboard
 from bot.handlers.slots import active_slots
@@ -38,7 +39,6 @@ class IntroState(StatesGroup):
     second = State()
 
 class TikTokReport(StatesGroup):
-    intro = State()          # новый шаг – показ описания
     account_name = State()
     screenshot_profile = State()
     video_link = State()
@@ -140,6 +140,7 @@ async def menu_profile(message: Message):
         await message.answer("❌ Вы ещё не зарегистрированы. Используйте кнопку «📝 Регистрация».")
         return
 
+    user_id = message.from_user.id
     reg_time = datetime.fromisoformat(user["registered_at"]) if user["registered_at"] else datetime.now()
     delta = datetime.now() - reg_time
     days = delta.days
@@ -168,13 +169,25 @@ async def menu_profile(message: Message):
             else:
                 ref_status = "🚀 в процессе"
 
+    # ---- Предупреждения ----
+    active_warnings = get_active_warnings(user_id)
+    warn_text = ""
+    if active_warnings:
+        warn_text = "⚠️ Предупреждения:\n"
+        for i, w in enumerate(active_warnings, 1):
+            created = datetime.fromisoformat(w['created_at']).strftime("%d.%m.%Y")
+            expires = datetime.fromisoformat(w['expires_at']).strftime("%d.%m.%Y")
+            warn_text += f"{i}/3 – {w['reason']}\n   Выдано: {created}, снимется: {expires}\n"
+    else:
+        warn_text = "⚠️ Предупреждений нет."
+
     text = (
         f"📋 Профиль\n\n"
         f"Имя: {user['name']}\n"
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n\n"
         f"С нами уже: {time_str}\n"
-        f"К выплате чт: {user['payout']}₽\n"   # изменено: убрано "ср/"
+        f"К выплате чт: {user['payout']}₽\n"
         f"Заработано за всё время: {user['total_earned']}₽\n\n"
         f"📊 Статистика (текущий период):\n"
         f"Яндекс: {user['yandex_passed']}\n"
@@ -193,6 +206,7 @@ async def menu_profile(message: Message):
         f"💳 Реквизиты\n"
         f"Номер телефона/карты: {user['phone_card']}\n"
         f"Банк: {user['bank']}\n\n"
+        f"{warn_text}\n\n"
         f"Чтобы посмотреть общие отзывы за всё время, используйте /myotz"
     )
     await message.answer(text)
@@ -246,13 +260,13 @@ async def menu_help(message: Message):
     is_reg = user and user.get("name") is not None
     await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
 
-# ---------- /manual – инструкция по публикации отзывов ----------
+# ---------- /manual ----------
 @router.message(Command("manual"))
 async def cmd_manual(message: Message):
     text = RULES_1 + "\n\n" + RULES_2
     await message.answer(text)
 
-# ---------- /money – система выплат ----------
+# ---------- /money ----------
 @router.message(Command("money"))
 async def cmd_money(message: Message):
     text = (
@@ -283,7 +297,7 @@ async def cmd_money(message: Message):
     )
     await message.answer(text, parse_mode="HTML")
 
-# ---------- /tiktok – справка по Tik Tok ----------
+# ---------- /tiktok ----------
 @router.message(Command("tiktok"))
 async def cmd_tiktok(message: Message):
     text = (
@@ -303,12 +317,11 @@ async def cmd_tiktok(message: Message):
     )
     await message.answer(text, parse_mode="HTML")
 
-# ---------- /support – заявка в поддержку ----------
+# ---------- /support ----------
 @router.message(Command("support"))
 async def cmd_support(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
-        await message.answer("⛔ Вы заблокированы.")
-        return
+        await message.answer("⛔ Вы заблокированы, но можете оставить заявку в поддержку.")
     await state.set_state(SupportForm.problem)
     await message.answer(
         "📝 <b>Заявка в поддержку</b>\n\n"
@@ -612,13 +625,24 @@ async def other_tasks(message: Message):
     kb.adjust(1)
     await message.answer("Выберите задание:", reply_markup=kb.as_markup())
 
-# ---------- Tik Tok: показ видео и правил ----------
+# ---------- Tik Tok: показ видео и правил (с проверкой остановки) ----------
 @router.callback_query(F.data == "task_tiktok")
 async def tiktok_task(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     if not is_registered(user_id):
         await callback.message.answer("❌ Сначала зарегистрируйтесь.")
+        return
+
+    # Проверка на остановку Tik Tok
+    stop_date = get_setting("tiktok_stop_date")
+    if stop_date:
+        await callback.message.answer(
+            f"⛔ <b>Внимание!</b> Участие в Tik Tok приостановлено с <b>{stop_date}</b>.\n"
+            "Все ролики, опубликованные после этой даты, <b>не оплачиваются</b>.\n"
+            "Пожалуйста, будьте внимательны! Это правило прописано в справке /tiktok.",
+            parse_mode="HTML"
+        )
         return
 
     rules = (
