@@ -9,7 +9,9 @@ from bot.database import (
     add_warning, get_warning_count
 )
 import sqlite3
+import logging
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 def log_action(message: Message, action: str):
@@ -22,19 +24,15 @@ def log_action(message: Message, action: str):
         pass
 
 def calculate_tiktok_payout(views: int) -> int:
-    """Рассчитывает сумму выплаты за просмотры Tik Tok по шкале."""
     if views <= 0:
         return 0
     if views <= 1_000_000:
-        # 10 руб за 1000 просмотров
         return (views // 1000) * 10
     elif views <= 1_500_000:
-        # первые 1 млн по 10 руб/1000, остальное по 5 руб/1000
         first_part = 1_000_000
         second_part = views - first_part
         return (first_part // 1000) * 10 + (second_part // 1000) * 5
     else:
-        # первые 1 млн по 10, следующие 500 тыс по 5, остальное по 2
         first_part = 1_000_000
         second_part = 500_000
         third_part = views - first_part - second_part
@@ -204,7 +202,7 @@ async def cmd_info(message: Message):
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n"
         f"С нами уже: {time_str}\n"
-        f"К выплате ср/чт: {user['payout']}₽\n"
+        f"К выплате чт: {user['payout']}₽\n"
         f"Заработано за всё время: {user['total_earned']}₽\n\n"
         f"📊 Статистика по слотам:\n"
         f"Яндекс: {user['yandex_passed']}\n"
@@ -288,12 +286,13 @@ async def user_edit(message: Message):
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
         return
-    from bot.google_sheets import update_stats_from_sheet_once
     await message.answer("⏳ Запускаю обновление статистики...")
     try:
+        from bot.google_sheets import update_stats_from_sheet_once
         await update_stats_from_sheet_once()
         await message.answer("✅ Статистика успешно обновлена!")
     except Exception as e:
+        logger.error(f"Ошибка в /update_stats: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- /resetbalance (ГА и владелец) ----------
@@ -364,7 +363,7 @@ async def cmd_payout_report(message: Message):
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
 
-# ---------- НОВАЯ КОМАНДА: /tiktok_pay (ГА и владелец) ----------
+# ---------- /tiktok_pay (ГА и владелец) ----------
 @router.message(Command("tiktok_pay"))
 async def cmd_tiktok_pay(message: Message):
     if not is_ga(message.from_user.id):
@@ -386,7 +385,6 @@ async def cmd_tiktok_pay(message: Message):
         await message.answer("❌ Количество просмотров должно быть числом.")
         return
 
-    # Находим пользователя
     if target.isdigit():
         user_id = int(target)
         user = get_user(user_id)
@@ -397,18 +395,14 @@ async def cmd_tiktok_pay(message: Message):
         return
 
     user_id = user["user_id"]
-
-    # Рассчитываем сумму
     amount = calculate_tiktok_payout(views)
     if amount == 0:
         await message.answer("❌ Сумма выплаты равна 0. Проверьте количество просмотров.")
         return
 
-    # Начисляем
     update_user_field(user_id, "payout", user["payout"] + amount)
     update_user_field(user_id, "total_earned", user["total_earned"] + amount)
 
-    # Логируем
     log_msg = (
         f"🎬 Начисление за Tik Tok\n"
         f"👤 Пользователь: @{user.get('tg_username', user_id)} (ID: {user_id})\n"
