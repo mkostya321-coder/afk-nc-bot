@@ -6,7 +6,7 @@ from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
-    add_warning, get_warning_count, get_setting, set_setting
+    add_warning, get_warning_count, get_active_warnings, get_setting, set_setting
 )
 import sqlite3
 import logging
@@ -38,7 +38,7 @@ def calculate_tiktok_payout(views: int) -> int:
         third_part = views - first_part - second_part
         return (first_part // 1000) * 10 + (second_part // 1000) * 5 + (third_part // 1000) * 2
 
-# ---------- Справка в зависимости от роли ----------
+# ---------- Справка ----------
 @router.message(Command("helpadm"))
 async def cmd_helpadm(message: Message):
     user_id = message.from_user.id
@@ -59,23 +59,26 @@ async def cmd_helpadm(message: Message):
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
-            "⛔ /stop_tiktok — закрыть участие в Tik Tok (установить дату остановки)\n"
+            "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение (с датой снятия)\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
         )
     if is_comoderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение (с датой снятия)\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
         )
     await message.answer(text)
 
-# ---------- /setrole (поддерживает и ID, и username) ----------
+# ---------- /setrole ----------
 @router.message(Command("setrole"))
 async def set_role(message: Message):
     if not is_owner(message.from_user.id):
@@ -105,7 +108,7 @@ async def set_role(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn ----------
+# ---------- /warn (с датой снятия) ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -124,22 +127,54 @@ async def warn_user(message: Message):
         if not user:
             await message.answer("❌ Пользователь не найден")
             return
+
         add_warning(user["user_id"], reason, message.from_user.id)
-        warn_count = get_warning_count(user["user_id"])
+        active_warnings = get_active_warnings(user["user_id"])
+        warn_count = len(active_warnings)
         if warn_count >= 3:
             toggle_block(user["user_id"])
             await message.answer(f"✅ Пользователь @{user.get('username') or user['user_id']} получил третье предупреждение и заблокирован.")
             try:
-                await message.bot.send_message(user["user_id"], f"⛔ Вы получили третье предупреждение и заблокированы.\nПричина: {reason}")
+                await message.bot.send_message(user["user_id"], f"⛔ Вы получили третье предупреждение и заблокированы.\nПричина: {reason}\nВы можете обратиться в поддержку через /support.")
             except:
                 pass
         else:
-            await message.answer(f"✅ Предупреждение ({warn_count}/3) отправлено пользователю @{user.get('username') or user['user_id']}.")
+            last_warn = active_warnings[-1]
+            expires_str = datetime.fromisoformat(last_warn['expires_at']).strftime("%d.%m.%Y")
+            await message.answer(f"✅ Предупреждение ({warn_count}/3) отправлено пользователю @{user.get('username') or user['user_id']}.\nДата снятия: {expires_str}")
             try:
-                await message.bot.send_message(user["user_id"], f"⚠️ Предупреждение ({warn_count}/3): {reason}")
+                await message.bot.send_message(user["user_id"], f"⚠️ Предупреждение ({warn_count}/3): {reason}\nБудет снято: {expires_str}")
             except:
                 pass
-        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']}")
+        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']} ({reason})")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+# ---------- /smsuser ----------
+@router.message(Command("smsuser"))
+async def sms_user(message: Message):
+    if not is_moderator(message.from_user.id):
+        return
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer("Использование: /smsuser <username> <текст сообщения>")
+            return
+        target = parts[1]
+        text = parts[2]
+        user = get_user_by_username(target)
+        if not user:
+            await message.answer("❌ Пользователь не найден.")
+            return
+        try:
+            await message.bot.send_message(
+                user["user_id"],
+                f"📩 Сообщение от Администрации проекта:\n\n{text}"
+            )
+            await message.answer("✅ Сообщение отправлено.")
+            log_action(message, f"Отправлено SMS пользователю {user['user_id']}: {text}")
+        except Exception as e:
+            await message.answer(f"❌ Не удалось отправить сообщение: {e}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -201,6 +236,18 @@ async def cmd_info(message: Message):
             ref_status = "выполнено"
         else:
             ref_status = "в процессе"
+    # Предупреждения
+    active_warnings = get_active_warnings(user["user_id"])
+    warn_text = ""
+    if active_warnings:
+        warn_text = "\n⚠️ Предупреждения:\n"
+        for i, w in enumerate(active_warnings, 1):
+            created = datetime.fromisoformat(w['created_at']).strftime("%d.%m.%Y")
+            expires = datetime.fromisoformat(w['expires_at']).strftime("%d.%m.%Y")
+            warn_text += f"{i}/3 – {w['reason']}\n   Выдано: {created}, снимется: {expires}\n"
+    else:
+        warn_text = "\n⚠️ Предупреждений нет."
+
     text = (
         f"🕵️ Профиль пользователя @{user.get('tg_username', args[1])}:\n\n"
         f"Имя: {user['name']}\n"
@@ -222,7 +269,8 @@ async def cmd_info(message: Message):
         f"ДокТу: {user['doctu_passed']}\n"
         f"32ТОП: {user['top32_passed']}\n\n"
         f"Рефералка: {ref if ref != '0' else 'нет'} ({ref_status})\n"
-        f"Реквизиты: {user['phone_card']} / {user['bank']}"
+        f"Реквизиты: {user['phone_card']} / {user['bank']}\n"
+        f"{warn_text}"
     )
     await message.answer(text)
 
@@ -419,12 +467,12 @@ async def cmd_stop_tiktok(message: Message):
     if not is_ga(message.from_user.id):
         return
     try:
+        from bot.google_sheets import moscow_tz
         now = datetime.now(moscow_tz)
         date_str = now.strftime("%d.%m.%Y")
         set_setting("tiktok_stop_date", date_str)
         await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.")
         log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
-        # Отправить уведомление в канал логов
         await message.bot.send_message(
             LOG_CHANNEL_ID,
             f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
