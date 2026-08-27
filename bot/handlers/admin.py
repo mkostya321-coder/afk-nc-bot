@@ -6,7 +6,7 @@ from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
-    add_warning, get_warning_count
+    add_warning, get_warning_count, get_setting, set_setting
 )
 import sqlite3
 import logging
@@ -53,33 +53,25 @@ async def cmd_helpadm(message: Message):
         text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
     if is_ga(user_id):
         text += (
-            "📢 Публикация слотов:\n"
-            "/yandex, /google, /gis, /avito, /vk, /otzovik, /doctoru, /dokdok, /prodoctors, /doctu, /32top\n"
-            "📋 /slots — активные слотов (доступно и модераторам)\n"
-            "🔒 /close <ID> — закрыть слот (только GA и владелец)\n"
-            "🔒 /closeall — закрыть все слоты (только GA и владелец)\n"
             "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
-            "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-11\n"
+            "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "🔄 /update_stats — обновить статистику\n"
-            "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150 (после выплат)\n"
+            "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
+            "⛔ /stop_tiktok — закрыть участие в Tik Tok (установить дату остановки)\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
-            "📋 /slots — список активных слотов\n"
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
-            "🔒 /close и /closeall — ДОСТУПНЫ ТОЛЬКО ДЛЯ GA И ВЛАДЕЛЬЦА\n"
         )
     if is_comoderator(user_id) and not is_ga(user_id):
         text += (
-            "📋 /slots — список активных слотов\n"
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "⚠️ /warn <user_id/username> <причина> — предупреждение (1/3, 2/3, 3/3 – бан)\n"
-            "🔒 /close и /closeall — ДОСТУПНЫ ТОЛЬКО ДЛЯ GA И ВЛАДЕЛЬЦА\n"
         )
     await message.answer(text)
 
@@ -98,8 +90,6 @@ async def set_role(message: Message):
         if role not in ['owner', 'ga', 'moderator', 'comoderator']:
             await message.answer("❌ Неверная роль. Допустимо: owner, ga, moderator, comoderator")
             return
-
-        # Определяем user_id
         if target.isdigit():
             user_id = int(target)
         else:
@@ -109,14 +99,13 @@ async def set_role(message: Message):
                 await message.answer(f"❌ Пользователь с username '{target}' не найден.")
                 return
             user_id = user["user_id"]
-
         set_admin_role(user_id, role)
         await message.answer(f"✅ Роль {role} назначена пользователю {user_id}")
         log_action(message, f"Назначена роль {role} пользователю {user_id}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn (модератор и выше) ----------
+# ---------- /warn ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -135,7 +124,6 @@ async def warn_user(message: Message):
         if not user:
             await message.answer("❌ Пользователь не найден")
             return
-
         add_warning(user["user_id"], reason, message.from_user.id)
         warn_count = get_warning_count(user["user_id"])
         if warn_count >= 3:
@@ -238,7 +226,7 @@ async def cmd_info(message: Message):
     )
     await message.answer(text)
 
-# ---------- /useredit (ГА и владелец) ----------
+# ---------- /useredit ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_ga(message.from_user.id):
@@ -298,7 +286,7 @@ async def user_edit(message: Message):
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
-# ---------- /update_stats (ГА и владелец) ----------
+# ---------- /update_stats ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
@@ -312,7 +300,7 @@ async def cmd_update_stats(message: Message):
         logger.error(f"Ошибка в /update_stats: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /resetbalance (ГА и владелец) ----------
+# ---------- /resetbalance ----------
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
     if not is_ga(message.from_user.id):
@@ -340,19 +328,17 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /payout_report (только владелец) ----------
+# ---------- /payout_report ----------
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
     if not is_owner(message.from_user.id):
         return
-
     try:
         from bot.database import get_all_users_with_payout
         users = get_all_users_with_payout()
         if not users:
             await message.answer("📭 Нет пользователей с балансом >= 150₽.")
             return
-
         text_lines = ["<b>📋 Список на выплату (по запросу)</b>\n"]
         for u in users:
             username = u.get('tg_username') or u.get('username') or str(u['user_id'])
@@ -360,7 +346,6 @@ async def cmd_payout_report(message: Message):
             bank = u.get('bank') or '—'
             line = f"👤 @{username} (ID: {u['user_id']})\n💰 Сумма: {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
             text_lines.append(line)
-
         full_text = "\n".join(text_lines)
         max_len = 4000
         from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
@@ -372,26 +357,21 @@ async def cmd_payout_report(message: Message):
                 message_thread_id=REPORT_THREAD_ID or None,
                 parse_mode="HTML"
             )
-
         await message.answer("✅ Отчёт по выплатам отправлен в беседу.")
         log_action(message, "Запрошен отчёт по выплатам (команда /payout_report)")
-
     except Exception as e:
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
 
-# ---------- /tiktok_pay (ГА и владелец) ----------
+# ---------- /tiktok_pay ----------
 @router.message(Command("tiktok_pay"))
 async def cmd_tiktok_pay(message: Message):
     if not is_ga(message.from_user.id):
         return
-
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("❌ Использование: /tiktok_pay <user_id или username> <количество_просмотров>\n"
-                             "Пример: /tiktok_pay 123456789 1500000")
+        await message.answer("❌ Использование: /tiktok_pay <user_id или username> <количество_просмотров>\nПример: /tiktok_pay 123456789 1500000")
         return
-
     target = parts[1]
     try:
         views = int(parts[2])
@@ -401,7 +381,6 @@ async def cmd_tiktok_pay(message: Message):
     except ValueError:
         await message.answer("❌ Количество просмотров должно быть числом.")
         return
-
     if target.isdigit():
         user_id = int(target)
         user = get_user(user_id)
@@ -410,16 +389,13 @@ async def cmd_tiktok_pay(message: Message):
     if not user:
         await message.answer(f"❌ Пользователь с идентификатором '{target}' не найден.")
         return
-
     user_id = user["user_id"]
     amount = calculate_tiktok_payout(views)
     if amount == 0:
         await message.answer("❌ Сумма выплаты равна 0. Проверьте количество просмотров.")
         return
-
     update_user_field(user_id, "payout", user["payout"] + amount)
     update_user_field(user_id, "total_earned", user["total_earned"] + amount)
-
     log_msg = (
         f"🎬 Начисление за Tik Tok\n"
         f"👤 Пользователь: @{user.get('tg_username', user_id)} (ID: {user_id})\n"
@@ -428,7 +404,6 @@ async def cmd_tiktok_pay(message: Message):
         f"🕒 Выполнил: @{message.from_user.username} (ID: {message.from_user.id})"
     )
     await message.bot.send_message(LOG_CHANNEL_ID, log_msg)
-
     await message.answer(
         f"✅ Выплата за Tik Tok начислена!\n"
         f"Пользователь: @{user.get('tg_username', user_id)}\n"
@@ -437,3 +412,22 @@ async def cmd_tiktok_pay(message: Message):
         f"Новый баланс к выплате: {user['payout'] + amount}₽"
     )
     log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
+
+# ---------- /stop_tiktok ----------
+@router.message(Command("stop_tiktok"))
+async def cmd_stop_tiktok(message: Message):
+    if not is_ga(message.from_user.id):
+        return
+    try:
+        now = datetime.now(moscow_tz)
+        date_str = now.strftime("%d.%m.%Y")
+        set_setting("tiktok_stop_date", date_str)
+        await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.")
+        log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
+        # Отправить уведомление в канал логов
+        await message.bot.send_message(
+            LOG_CHANNEL_ID,
+            f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
