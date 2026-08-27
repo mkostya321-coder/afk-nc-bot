@@ -49,16 +49,16 @@ async def cmd_helpadm(message: Message):
 
     text = "🛠 Команды администратора:\n\n"
     if is_owner(user_id):
-        text += "👑 /setrole <user_id> <owner|ga|moderator|comoderator> — назначить роль\n"
+        text += "👑 /setrole <user_id или username> <owner|ga|moderator|comoderator> — назначить роль\n"
         text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
     if is_ga(user_id):
         text += (
             "📢 Публикация слотов:\n"
             "/yandex, /google, /gis, /avito, /vk, /otzovik, /doctoru, /dokdok, /prodoctors, /doctu, /32top\n"
-            "📋 /slots — активные слоты (доступно и модераторам)\n"
+            "📋 /slots — активные слотов (доступно и модераторам)\n"
             "🔒 /close <ID> — закрыть слот (только GA и владелец)\n"
             "🔒 /closeall — закрыть все слоты (только GA и владелец)\n"
-            "👤 /userblock <user_id/username> — блокировка\n"
+            "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
             "💰 /useredit <...> — изменить payout, earned, phone, bank, myotz 1-11\n"
             "ℹ️ /info <username> — профиль пользователя\n"
             "🔄 /update_stats — обновить статистику\n"
@@ -83,21 +83,36 @@ async def cmd_helpadm(message: Message):
         )
     await message.answer(text)
 
-# ---------- /setrole (только владелец) ----------
+# ---------- /setrole (поддерживает и ID, и username) ----------
 @router.message(Command("setrole"))
 async def set_role(message: Message):
     if not is_owner(message.from_user.id):
         return
     try:
         parts = message.text.split()
-        target_id = int(parts[1])
+        if len(parts) < 3:
+            await message.answer("❌ Использование: /setrole <user_id или username> <owner|ga|moderator|comoderator>")
+            return
+        target = parts[1]
         role = parts[2].lower()
         if role not in ['owner', 'ga', 'moderator', 'comoderator']:
             await message.answer("❌ Неверная роль. Допустимо: owner, ga, moderator, comoderator")
             return
-        set_admin_role(target_id, role)
-        await message.answer(f"✅ Роль {role} назначена пользователю {target_id}")
-        log_action(message, f"Назначена роль {role} пользователю {target_id}")
+
+        # Определяем user_id
+        if target.isdigit():
+            user_id = int(target)
+        else:
+            clean_username = target.lstrip('@')
+            user = get_user_by_username(clean_username)
+            if not user:
+                await message.answer(f"❌ Пользователь с username '{target}' не найден.")
+                return
+            user_id = user["user_id"]
+
+        set_admin_role(user_id, role)
+        await message.answer(f"✅ Роль {role} назначена пользователю {user_id}")
+        log_action(message, f"Назначена роль {role} пользователю {user_id}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -147,6 +162,9 @@ async def user_block(message: Message):
         return
     try:
         parts = message.text.split()
+        if len(parts) < 2:
+            await message.answer("Использование: /userblock <user_id или username>")
+            return
         target = parts[1]
         if target.isdigit():
             user_id = int(target)
@@ -156,16 +174,15 @@ async def user_block(message: Message):
                 await message.answer("❌ Пользователь не найден.")
                 return
             user_id = user["user_id"]
-    except:
-        await message.answer("Использование: /userblock <user_id или username>")
-        return
-    new_status = toggle_block(user_id)
-    if new_status is None:
-        await message.answer("❌ Пользователь не найден.")
-    else:
-        status_text = "заблокирован" if new_status else "разблокирован"
-        await message.answer(f"✅ Пользователь {user_id} {status_text}.")
-        log_action(message, f"Пользователь {user_id} {status_text}")
+        new_status = toggle_block(user_id)
+        if new_status is None:
+            await message.answer("❌ Пользователь не найден.")
+        else:
+            status_text = "заблокирован" if new_status else "разблокирован"
+            await message.answer(f"✅ Пользователь {user_id} {status_text}.")
+            log_action(message, f"Пользователь {user_id} {status_text}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- /info ----------
 @router.message(Command("info"))
