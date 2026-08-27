@@ -121,30 +121,39 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
+                # Детальное логирование для каждой строки
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
+                        logger.info(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
+                        logger.info(f"⏭️ Строка {row_idx}: дата или время пустые (date='{date_str}', time='{time_str}')")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
+                        logger.info(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
+                        logger.info(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except:
+                    except Exception as e:
+                        logger.info(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
+                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
+                    else:
+                        logger.info(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -175,6 +184,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
+                # Перепубликация – оставляем без изменений (уже есть логи)
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -226,6 +236,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
+                # Закрытие в 23:30 – без изменений
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
