@@ -42,6 +42,6 @@ TIKTOK_REPORT_THREAD_ID = int(os.getenv("TIKTOK_REPORT_THREAD_ID", "0"))
 COLLABORATION_CHAT_ID = os.getenv("COLLABORATION_CHAT_ID", "-100...")
 COLLABORATION_THREAD_ID = int(os.getenv("COLLABORATION_THREAD_ID", "0"))
 
-# Поддержка (заявки /support)
+# Поддержка
 SUPPORT_CHAT_ID = os.getenv("SUPPORT_CHAT_ID", "-100...")
 SUPPORT_THREAD_ID = int(os.getenv("SUPPORT_THREAD_ID", "0"))
