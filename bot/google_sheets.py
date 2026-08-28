@@ -36,34 +36,28 @@ PLATFORM_ALIASES = {
     "32топ": ["32топ", "32top", "32 топ"],
 }
 
+# Расширенный словарь с точными названиями листов (без ведущих пробелов)
 SHEET_NAME_TO_PLATFORM = {
-    "яндекс": "яндекс", "yandex": "яндекс",
-    "google": "google",
-    "2гис": "2гис",
-    "авито": "авито", "avito": "авито",
-    "продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
-    "вк": "вк", "vk": "вк",
-    "докдок": "докдок",
-    "32топ": "32топ", "32top": "32топ", "32 топ": "32топ",
-    "докту": "докту", "doctu": "докту",
+    # Точные названия из логов (без пробелов в начале)
     "ЯНДЕКС (К)": "яндекс",
     "2ГИС (Г)": "2гис",
     "google (С)": "google",
-    " АВИТО (А)": "авито",
+    "АВИТО (А)": "авито",          # исправлено – без пробела в начале
     "Продокторов (ПР)": "про докторов",
     "ВК (ВК)": "вк",
     "ДокДок (ДД)": "докдок",
     "32Топ (Т)": "32топ",
     "Докту (ДК)": "докту",
-    "Яндекс": "яндекс", "ЯНДЕКС": "яндекс",
-    "Google": "google", "GOOGLE": "google",
-    "2ГИС": "2гис", "2Гис": "2гис",
-    "Авито": "авито", "АВИТО": "авито",
-    "Продокторов": "про докторов", "ПРОДОКТОРОВ": "про докторов",
-    "ВК": "вк", "VK": "вк",
-    "ДокДок": "докдок", "ДОКДОК": "докдок",
-    "32ТОП": "32топ", "32Топ": "32топ",
-    "Докту": "докту", "ДОКТУ": "докту",
+    # Варианты без скобок
+    "ЯНДЕКС": "яндекс", "Яндекс": "яндекс", "yandex": "яндекс",
+    "2ГИС": "2гис", "2гис": "2гис",
+    "google": "google", "Google": "google", "GOOGLE": "google",
+    "АВИТО": "авито", "Авито": "авито", "avito": "авито",
+    "Продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
+    "ВК": "вк", "вк": "вк", "vk": "вк",
+    "ДокДок": "докдок", "докдок": "докдок",
+    "32Топ": "32топ", "32топ": "32топ", "32top": "32топ",
+    "Докту": "докту", "докту": "докту", "doctu": "докту",
 }
 
 def match_platform(raw_name: str) -> str | None:
@@ -75,12 +69,22 @@ def match_platform(raw_name: str) -> str | None:
     return None
 
 def platform_from_sheet_name(sheet_name: str) -> str | None:
+    # Убираем пробелы в начале и конце
     key = sheet_name.strip()
+    # Сначала точное совпадение
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
+    # Потом пробуем без учёта регистра
     key_lower = key.lower()
     if key_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key_lower]
+    # Если ничего не найдено, пробуем сопоставить по первому слову (например, "ЯНДЕКС")
+    first_word = key.split()[0] if key.split() else key
+    if first_word in SHEET_NAME_TO_PLATFORM:
+        return SHEET_NAME_TO_PLATFORM[first_word]
+    first_word_lower = first_word.lower()
+    if first_word_lower in SHEET_NAME_TO_PLATFORM:
+        return SHEET_NAME_TO_PLATFORM[first_word_lower]
     return None
 
 def get_credentials():
@@ -228,7 +232,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
-                # ---------- ЗАКРЫТИЕ В 23:30 (ПЕРЕПИСАННАЯ ЛОГИКА) ----------
+                # ---------- ЗАКРЫТИЕ В 23:30 (ОБРАБОТКА ВСЕХ АКТИВНЫХ СЕССИЙ) ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
@@ -241,25 +245,18 @@ async def monitor_schedule(bot, active_slots: dict):
                             if not assigned_rows:
                                 continue
 
-                            # Получаем статусы для этих строк
-                            sheet = None
-                            # Нужно найти лист, в котором находятся строки. Мы можем получить sheet по первой строке, но проще использовать get_sheet() для первого листа? Но строки могут быть на разных листах.
-                            # Лучше для каждой строки обновлять её на своём листе. Но нам нужно знать лист. Мы можем получить данные о том, на каком листе находится строка, но у нас нет этой информации.
-                            # Поэтому мы пройдём по всем листам и будем обновлять строки.
-                            # Это неэффективно, но сработает.
+                            # Обновляем строки на всех листах
                             for sheet in spreadsheet.worksheets():
                                 for row_idx in assigned_rows:
                                     try:
-                                        # Проверяем, есть ли такая строка на этом листе
-                                        # Можно просто попытаться обновить, если ошибка – пропускаем
                                         j_val = sheet.cell(row_idx, 10).value or ""
                                         if j_val.lower() == "на модерации":
                                             sheet.update_cell(row_idx, 10, "на модерации с ОПЗ")
                                             logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
                                         elif j_val.lower() == "в работе":
                                             sheet.update_cell(row_idx, 10, "не принят в работу")
-                                            sheet.update_cell(row_idx, 11, "")  # очищаем исполнителя
-                                            sheet.update_cell(row_idx, 9, 888)  # I = 888
+                                            sheet.update_cell(row_idx, 11, "")
+                                            sheet.update_cell(row_idx, 9, 888)
                                             sheet.format(f"I{row_idx}", {
                                                 "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                             })
@@ -282,7 +279,7 @@ async def monitor_schedule(bot, active_slots: dict):
                             # Удаляем сессию пользователя
                             del slot_requests[user_id]
 
-                    # 2. Закрываем все активные слоты (удаляем из active_slots и редактируем сообщения)
+                    # 2. Закрываем все активные слоты
                     for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
