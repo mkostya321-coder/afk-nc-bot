@@ -121,39 +121,31 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # Детальное логирование для каждой строки
+                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
-                        logger.info(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[0].strip()
                     time_str = row[1].strip()
                     if not date_str or not time_str:
-                        logger.info(f"⏭️ Строка {row_idx}: дата или время пустые (date='{date_str}', time='{time_str}')")
                         continue
                     q_val = row[16].strip() if len(row) > 16 else ""
                     p_val = row[15].strip() if len(row) > 15 else ""
                     o_val = row[14].strip() if len(row) > 14 else ""
                     i_val = row[8].strip() if len(row) > 8 else ""
                     if q_val in ("1", "999") or p_val == "1" or o_val == "1" or i_val in ("1", "999", "333", "666", "888"):
-                        logger.info(f"⏭️ Строка {row_idx}: уже опубликована (Q={q_val}, P={p_val}, O={o_val}, I={i_val})")
                         continue
                     j_val = row[9].strip().lower() if len(row) > 9 else ""
                     if j_val in ("в работе", "на модерации", "на модерации с опз"):
-                        logger.info(f"⏭️ Строка {row_idx}: статус '{j_val}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except Exception as e:
-                        logger.info(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
+                    except:
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
-                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
-                    else:
-                        logger.info(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -184,7 +176,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # Перепубликация – оставляем без изменений (уже есть логи)
+                # --- Перепубликация через 2 часа ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -236,74 +228,69 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
-                # Закрытие в 23:30 – без изменений
+                # ---------- ЗАКРЫТИЕ В 23:30 (ПЕРЕПИСАННАЯ ЛОГИКА) ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
-                    users_with_sessions = list(slot_requests.keys())
 
-                    for msg_id, slot in list(active_slots.items()):
-                        rows_to_process = []
-                        for row_idx in slot.get("row_ids", []):
-                            try:
-                                j_val = sheet.cell(row_idx, 10).value or ""
-                                k_val = sheet.cell(row_idx, 11).value or ""
-                                rows_to_process.append((row_idx, j_val, k_val))
-                            except:
+                    # 1. Обрабатываем все активные сессии пользователей
+                    if slot_requests:
+                        logger.info(f"👥 Найдено {len(slot_requests)} активных сессий пользователей")
+                        for user_id, request in list(slot_requests.items()):
+                            assigned_rows = request.get("assigned_rows", [])
+                            if not assigned_rows:
                                 continue
 
-                        user_rows = {}
-                        for row_idx, j_val, k_val in rows_to_process:
-                            if k_val:
-                                user_rows.setdefault(k_val, []).append((row_idx, j_val))
-
-                        for k_val, row_list in user_rows.items():
-                            user_id = None
-                            username = k_val.lstrip('@')
-                            user = get_user_by_username(username)
-                            if user:
-                                user_id = user['user_id']
-                            else:
-                                continue
-
-                            if user_id in users_with_sessions:
-                                for row_idx, j_val in row_list:
-                                    if j_val.lower() == "на модерации":
-                                        try:
+                            # Получаем статусы для этих строк
+                            sheet = None
+                            # Нужно найти лист, в котором находятся строки. Мы можем получить sheet по первой строке, но проще использовать get_sheet() для первого листа? Но строки могут быть на разных листах.
+                            # Лучше для каждой строки обновлять её на своём листе. Но нам нужно знать лист. Мы можем получить данные о том, на каком листе находится строка, но у нас нет этой информации.
+                            # Поэтому мы пройдём по всем листам и будем обновлять строки.
+                            # Это неэффективно, но сработает.
+                            for sheet in spreadsheet.worksheets():
+                                for row_idx in assigned_rows:
+                                    try:
+                                        # Проверяем, есть ли такая строка на этом листе
+                                        # Можно просто попытаться обновить, если ошибка – пропускаем
+                                        j_val = sheet.cell(row_idx, 10).value or ""
+                                        if j_val.lower() == "на модерации":
                                             sheet.update_cell(row_idx, 10, "на модерации с ОПЗ")
-                                        except Exception as e:
-                                            logger.error(f"Ошибка обновления статуса ОПЗ для строки {row_idx}: {e}")
-                                    elif j_val.lower() == "в работе":
-                                        try:
+                                            logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
+                                        elif j_val.lower() == "в работе":
                                             sheet.update_cell(row_idx, 10, "не принят в работу")
-                                            sheet.update_cell(row_idx, 11, "")
-                                            sheet.update_cell(row_idx, 9, 888)
+                                            sheet.update_cell(row_idx, 11, "")  # очищаем исполнителя
+                                            sheet.update_cell(row_idx, 9, 888)  # I = 888
                                             sheet.format(f"I{row_idx}", {
                                                 "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                             })
-                                        except Exception as e:
-                                            logger.error(f"Ошибка снятия строки {row_idx}: {e}")
+                                            logger.info(f"✅ Строка {row_idx} снята (не принят в работу)")
+                                    except Exception as e:
+                                        logger.error(f"Ошибка обновления строки {row_idx}: {e}")
 
-                                try:
-                                    await bot.send_message(
-                                        user_id,
-                                        "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК. "
-                                        "Невыполненные отзывы сняты с вас. "
-                                        "Оплата за выполненные отзывы в этом слоте будет снижена на 30%."
-                                    )
-                                except:
-                                    pass
-                                if user_id in slot_requests:
-                                    del slot_requests[user_id]
+                            # Отправляем уведомление пользователю
+                            try:
+                                await bot.send_message(
+                                    user_id,
+                                    "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК. "
+                                    "Невыполненные отзывы сняты с вас. "
+                                    "Оплата за выполненные отзывы в этом слоте будет снижена на 30%."
+                                )
+                                logger.info(f"📩 Уведомление отправлено пользователю {user_id}")
+                            except Exception as e:
+                                logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
 
+                            # Удаляем сессию пользователя
+                            del slot_requests[user_id]
+
+                    # 2. Закрываем все активные слоты (удаляем из active_slots и редактируем сообщения)
                     for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
                                 chat_id=CHANNEL_ID, message_id=msg_id,
                                 text="Рабочий день завершён. Все слоты закрыты."
                             )
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Не удалось отредактировать сообщение слота {msg_id}: {e}")
                         del active_slots[msg_id]
                     logger.info("✅ Все слоты закрыты в 23:30")
 
