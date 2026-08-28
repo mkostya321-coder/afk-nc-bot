@@ -36,19 +36,17 @@ PLATFORM_ALIASES = {
     "32топ": ["32топ", "32top", "32 топ"],
 }
 
-# Расширенный словарь с точными названиями листов (без ведущих пробелов)
+# Расширенный словарь с точными названиями листов
 SHEET_NAME_TO_PLATFORM = {
-    # Точные названия из логов (без пробелов в начале)
     "ЯНДЕКС (К)": "яндекс",
     "2ГИС (Г)": "2гис",
     "google (С)": "google",
-    "АВИТО (А)": "авито",          # исправлено – без пробела в начале
+    "АВИТО (А)": "авито",
     "Продокторов (ПР)": "про докторов",
     "ВК (ВК)": "вк",
     "ДокДок (ДД)": "докдок",
     "32Топ (Т)": "32топ",
     "Докту (ДК)": "докту",
-    # Варианты без скобок
     "ЯНДЕКС": "яндекс", "Яндекс": "яндекс", "yandex": "яндекс",
     "2ГИС": "2гис", "2гис": "2гис",
     "google": "google", "Google": "google", "GOOGLE": "google",
@@ -69,16 +67,13 @@ def match_platform(raw_name: str) -> str | None:
     return None
 
 def platform_from_sheet_name(sheet_name: str) -> str | None:
-    # Убираем пробелы в начале и конце
     key = sheet_name.strip()
-    # Сначала точное совпадение
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
-    # Потом пробуем без учёта регистра
     key_lower = key.lower()
     if key_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key_lower]
-    # Если ничего не найдено, пробуем сопоставить по первому слову (например, "ЯНДЕКС")
+    # пробуем по первому слову
     first_word = key.split()[0] if key.split() else key
     if first_word in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[first_word]
@@ -125,7 +120,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # --- Первичная публикация ---
+                # --- Первичная публикация (без изменений) ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
@@ -180,7 +175,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация через 2 часа ---
+                # --- Перепубликация через 2 часа (без изменений) ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -232,12 +227,14 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
-                # ---------- ЗАКРЫТИЕ В 23:30 (ОБРАБОТКА ВСЕХ АКТИВНЫХ СЕССИЙ) ----------
+                # ---------- ЗАКРЫТИЕ В 23:30 (ПЕРЕПИСАНА ЛОГИКА) ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
 
-                    # 1. Обрабатываем все активные сессии пользователей
+                    # Собираем все листы для поиска строк
+                    all_sheets = spreadsheet.worksheets()
+
                     if slot_requests:
                         logger.info(f"👥 Найдено {len(slot_requests)} активных сессий пользователей")
                         for user_id, request in list(slot_requests.items()):
@@ -245,24 +242,34 @@ async def monitor_schedule(bot, active_slots: dict):
                             if not assigned_rows:
                                 continue
 
-                            # Обновляем строки на всех листах
-                            for sheet in spreadsheet.worksheets():
-                                for row_idx in assigned_rows:
+                            # Для каждой строки ищем лист, на котором она находится, и обновляем
+                            for row_idx in assigned_rows:
+                                updated = False
+                                for sheet in all_sheets:
                                     try:
+                                        # Проверяем, существует ли строка на этом листе (читаем ячейку)
                                         j_val = sheet.cell(row_idx, 10).value or ""
+                                        # Если удалось прочитать – значит строка на этом листе
                                         if j_val.lower() == "на модерации":
                                             sheet.update_cell(row_idx, 10, "на модерации с ОПЗ")
                                             logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
+                                            updated = True
+                                            break
                                         elif j_val.lower() == "в работе":
                                             sheet.update_cell(row_idx, 10, "не принят в работу")
-                                            sheet.update_cell(row_idx, 11, "")
-                                            sheet.update_cell(row_idx, 9, 888)
+                                            sheet.update_cell(row_idx, 11, "")  # очищаем исполнителя
+                                            sheet.update_cell(row_idx, 9, 888)  # I = 888
                                             sheet.format(f"I{row_idx}", {
                                                 "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                             })
-                                            logger.info(f"✅ Строка {row_idx} снята (не принят в работу)")
+                                            logger.info(f"✅ Строка {row_idx} снята (не принят в работу), I=888")
+                                            updated = True
+                                            break
                                     except Exception as e:
-                                        logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+                                        # Если ошибка – значит строки нет на этом листе, продолжаем поиск
+                                        continue
+                                if not updated:
+                                    logger.warning(f"⚠️ Строка {row_idx} не найдена ни на одном листе")
 
                             # Отправляем уведомление пользователю
                             try:
@@ -279,7 +286,7 @@ async def monitor_schedule(bot, active_slots: dict):
                             # Удаляем сессию пользователя
                             del slot_requests[user_id]
 
-                    # 2. Закрываем все активные слоты
+                    # Закрываем все активные слоты
                     for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
