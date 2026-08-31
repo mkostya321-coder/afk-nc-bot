@@ -69,6 +69,14 @@ def init_db():
                 value TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS review_takes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         if OWNER_ID:
             cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
         conn.commit()
@@ -152,9 +160,7 @@ def is_comoderator(user_id: int) -> bool:
 
 # ---------- Предупреждения (с датами истечения) ----------
 def add_warning(user_id: int, reason: str, warned_by: int):
-    # Продлеваем существующие активные предупреждения на 45 дней
     extend_warnings_expiry(user_id, 45)
-    # Добавляем новое (срок 30 дней)
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -212,3 +218,38 @@ def get_all_users_with_payout():
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE payout >= 150")
         return [dict(row) for row in cur.fetchall()]
+
+# ---------- Лимиты на взятие отзывов ----------
+def init_review_takes():
+    # таблица создаётся в init_db
+    pass
+
+def add_review_take(user_id: int, platform: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO review_takes (user_id, platform) VALUES (?, ?)", (user_id, platform))
+        conn.commit()
+
+def count_review_takes_last_24h(user_id: int, platform: str) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM review_takes
+            WHERE user_id = ? AND platform = ? AND taken_at > datetime('now', '-1 day')
+        """, (user_id, platform))
+        return cur.fetchone()[0]
+
+def get_limit(platform: str) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key = ?", (f"limit_{platform}",))
+        row = cur.fetchone()
+        if row:
+            return int(row[0])
+        return 10  # по умолчанию
+
+def set_limit(platform: str, limit: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (f"limit_{platform}", str(limit)))
+        conn.commit()
