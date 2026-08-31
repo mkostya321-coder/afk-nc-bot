@@ -2,7 +2,7 @@ import os, sqlite3, logging, asyncio, secrets
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from aiogram.utils.keyboard import InlineKeyboardBuilder   # <-- добавлен импорт
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
 from bot.database import get_user_by_username, get_user
 
@@ -161,20 +161,26 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
     builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
     builder.adjust(1)
-    sent_msg = await bot.send_message(
-        chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
-    )
-    active_slots_dict[sent_msg.message_id] = {
-        "platform": platform,
-        "count": count,
-        "initial_count": count,
-        "row_ids": row_ids,
-        "date": date,
-        "time": time,
-        "publish_time": datetime.now(moscow_tz),
-        "attempt": attempt,
-        "mapping": mapping
-    }
+    try:
+        sent_msg = await bot.send_message(
+            chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
+        )
+        logger.info(f"✅ Слот {platform} опубликован, ID сообщения: {sent_msg.message_id}")
+        active_slots_dict[sent_msg.message_id] = {
+            "platform": platform,
+            "count": count,
+            "initial_count": count,
+            "row_ids": row_ids,
+            "date": date,
+            "time": time,
+            "publish_time": datetime.now(moscow_tz),
+            "attempt": attempt,
+            "mapping": mapping
+        }
+        return sent_msg
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке сообщения слота: {e}")
+        return None
 
 # ---------- Монитор расписания ----------
 async def monitor_schedule(bot, active_slots: dict):
@@ -208,30 +214,39 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
+                # Детальный проход по строкам с выводом причины пропуска
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
+                        logger.debug(f"⏭️ Строка {row_idx}: меньше 8 столбцов ({len(row)})")
                         continue
                     date_str = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
                     time_str = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
                     if not date_str or not time_str:
+                        logger.debug(f"⏭️ Строка {row_idx}: дата или время пустые")
                         continue
                     flag_first = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
                     flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
                     flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
                     flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
                     if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888"):
+                        logger.debug(f"⏭️ Строка {row_idx}: уже опубликована (Q={flag_first}, P={flag_second}, O={flag_third}, I={flag_final})")
                         continue
                     status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
                     if status in ("в работе", "на модерации", "на модерации с опз"):
+                        logger.debug(f"⏭️ Строка {row_idx}: статус '{status}' не позволяет публикацию")
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                         slot_time = moscow_tz.localize(slot_time)
-                    except:
+                    except Exception as e:
+                        logger.debug(f"⏭️ Строка {row_idx}: ошибка парсинга времени ({date_str} {time_str}): {e}")
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
+                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
+                    else:
+                        logger.debug(f"⏭️ Строка {row_idx}: время {slot_time.strftime('%H:%M')} ещё не наступило (сейчас {now.strftime('%H:%M')})")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -246,18 +261,23 @@ async def monitor_schedule(bot, active_slots: dict):
                         count_available = len(items)
                         row_ids = [item[0] for item in items]
                         logger.info(f"🚀 Публикуем слот {platform} на {date} {time}, {count_available} шт.")
-                        for row_idx in row_ids:
-                            try:
-                                review_id = secrets.token_hex(4)
-                                sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
-                                sheet.update_cell(row_idx, mapping["id_col"], review_id)
-                            except Exception as e:
-                                logger.error(f"Не удалось обновить флаг/ID для строки {row_idx}: {e}")
-                        await publish_scheduled_slot(
+                        # Сначала отправляем сообщение
+                        sent_msg = await publish_scheduled_slot(
                             bot, active_slots, platform, count_available,
                             date, time, row_ids, attempt=1, mapping=mapping
                         )
-                        logger.info(f"✅ Слот {platform} опубликован (лист {sheet_name})")
+                        if sent_msg:
+                            # Если сообщение успешно отправлено, ставим флаги
+                            for row_idx in row_ids:
+                                try:
+                                    review_id = secrets.token_hex(4)
+                                    sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
+                                    sheet.update_cell(row_idx, mapping["id_col"], review_id)
+                                    logger.info(f"✅ Флаги Q=1 и ID={review_id} установлены для строки {row_idx}")
+                                except Exception as e:
+                                    logger.error(f"Не удалось обновить флаг/ID для строки {row_idx}: {e}")
+                        else:
+                            logger.error(f"❌ Не удалось опубликовать слот {platform} – сообщение не отправлено")
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
@@ -307,11 +327,15 @@ async def monitor_schedule(bot, active_slots: dict):
                             except Exception as e:
                                 logger.error(f"Не удалось обновить столбец {col} для строки {row_idx}: {e}")
 
-                    await publish_scheduled_slot(
+                    # Отправляем новое сообщение
+                    sent_msg = await publish_scheduled_slot(
                         bot, active_slots, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows, attempt=new_attempt, mapping=mapping
                     )
-                    logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
+                    if sent_msg:
+                        logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
+                    else:
+                        logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
                 # --- Закрытие в 23:30 ---
                 if now.hour == 23 and now.minute >= 30:
