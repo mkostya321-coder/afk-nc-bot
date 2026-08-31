@@ -492,7 +492,6 @@ async def handle_screenshot(message: Message):
             continue
     if not review_id:
         review_id = secrets.token_hex(4)
-        # ищем лист
         for s in spreadsheet.worksheets():
             try:
                 s.cell(current_row, 1)
@@ -593,7 +592,15 @@ async def send_next_review(message: Message, request: dict, sheet):
             f"Платформа: {platform_name}\n"
             f"Ссылка на платформу: {link}"
         )
-        await message.answer(info_msg, parse_mode="HTML")
+
+        # Дополнительная информация о датах
+        date_info = (
+            "\n\n<b>❗ Важно!</b>\n"
+            "Если в документе, который вы получили, нет даты рождения пациента, укажите, что возраст пациента от 20 лет.\n"
+            "Если в документе нет даты посещения, укажите, что посещение было в течение последних 7 дней (дата не должна быть сегодняшней)."
+        )
+
+        await message.answer(info_msg + date_info, parse_mode="HTML")
 
         # 3. Документ (H)
         doc_link = row[mapping["photo_doc_col"]-1] if len(row) >= mapping["photo_doc_col"] else ""
