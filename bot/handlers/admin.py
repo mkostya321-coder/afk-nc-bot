@@ -7,20 +7,22 @@ from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
-    get_limit, set_limit
+    get_limit, set_limit, get_all_registered_users
 )
 import sqlite3
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-async def log_action(message: Message, action: str):  # <-- сделано асинхронной
+def log_action(message: Message, action: str):
     try:
         text = f"👤 @{message.from_user.username or message.from_user.id} ({message.from_user.id})\n" \
                f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n" \
                f"⚙️ {action}"
-        await message.bot.send_message(LOG_CHANNEL_ID, text)  # <-- добавлен await
+        # Исправлено: добавляем await и запускаем в фоне, чтобы не блокировать
+        asyncio.create_task(message.bot.send_message(LOG_CHANNEL_ID, text))
     except:
         pass
 
@@ -38,21 +40,6 @@ def calculate_tiktok_payout(views: int) -> int:
         second_part = 500_000
         third_part = views - first_part - second_part
         return (first_part // 1000) * 10 + (second_part // 1000) * 5 + (third_part // 1000) * 2
-
-# ---------- Функция для рассылки уведомлений всем зарегистрированным пользователям ----------
-async def broadcast_to_users(bot, text: str):
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users WHERE name IS NOT NULL")  # только зарегистрированные
-        users = cur.fetchall()
-    count = 0
-    for (user_id,) in users:
-        try:
-            await bot.send_message(user_id, text)
-            count += 1
-        except Exception as e:
-            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
-    return count
 
 # ---------- Справка ----------
 @router.message(Command("helpadm"))
@@ -76,7 +63,7 @@ async def cmd_helpadm(message: Message):
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
             "⛔ /stop_tiktok — закрыть участие в Tik Tok (с уведомлением всех пользователей)\n"
-            "✅ /start_tiktok — возобновить участие в Tik Tok (с уведомлением всех пользователей)\n"
+            "▶️ /start_tiktok — возобновить участие в Tik Tok (с уведомлением всех пользователей)\n"
             "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
             "📊 /set_limit <platform> <limit> — установить лимит на количество отзывов за 24 часа для платформы\n"
         )
@@ -122,11 +109,11 @@ async def set_role(message: Message):
             user_id = user["user_id"]
         set_admin_role(user_id, role)
         await message.answer(f"✅ Роль {role} назначена пользователю {user_id}")
-        await log_action(message, f"Назначена роль {role} пользователю {user_id}")
+        log_action(message, f"Назначена роль {role} пользователю {user_id}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn ----------
+# ---------- /warn (с датой снятия) ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -164,7 +151,7 @@ async def warn_user(message: Message):
                 await message.bot.send_message(user["user_id"], f"⚠️ Предупреждение ({warn_count}/3): {reason}\nБудет снято: {expires_str}")
             except:
                 pass
-        await log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']} ({reason})")
+        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']} ({reason})")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -190,7 +177,7 @@ async def sms_user(message: Message):
                 f"📩 Сообщение от Администрации проекта:\n\n{text}"
             )
             await message.answer("✅ Сообщение отправлено.")
-            await log_action(message, f"Отправлено SMS пользователю {user['user_id']}: {text}")
+            log_action(message, f"Отправлено SMS пользователю {user['user_id']}: {text}")
         except Exception as e:
             await message.answer(f"❌ Не удалось отправить сообщение: {e}")
     except Exception as e:
@@ -221,7 +208,7 @@ async def user_block(message: Message):
         else:
             status_text = "заблокирован" if new_status else "разблокирован"
             await message.answer(f"✅ Пользователь {user_id} {status_text}.")
-            await log_action(message, f"Пользователь {user_id} {status_text}")
+            log_action(message, f"Пользователь {user_id} {status_text}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -349,7 +336,7 @@ async def user_edit(message: Message):
         await message.answer("Неизвестное поле.")
         return
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
-    await log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
+    log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
 # ---------- /update_stats ----------
 @router.message(Command("update_stats"))
@@ -389,7 +376,7 @@ async def reset_balance(message: Message):
             """, user_ids)
             conn.commit()
         await message.answer(f"✅ Балансы сброшены у {len(user_ids)} пользователей (у кого было >=150₽).")
-        await log_action(message, f"Сброшены балансы у {len(user_ids)} пользователей (>=150₽)")
+        log_action(message, f"Сброшены балансы у {len(user_ids)} пользователей (>=150₽)")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -423,10 +410,10 @@ async def cmd_payout_report(message: Message):
                 parse_mode="HTML"
             )
         await message.answer("✅ Отчёт по выплатам отправлен в беседу.")
-        await log_action(message, "Запрошен отчёт по выплатам (команда /payout_report)")
+        log_action(message, "Запрошен отчёт по выплатам (команда /payout_report)")
     except Exception as e:
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
-        await log_action(message, f"Ошибка в /payout_report: {e}")
+        log_action(message, f"Ошибка в /payout_report: {e}")
 
 # ---------- /tiktok_pay ----------
 @router.message(Command("tiktok_pay"))
@@ -476,9 +463,9 @@ async def cmd_tiktok_pay(message: Message):
         f"Сумма: {amount}₽\n"
         f"Новый баланс к выплате: {user['payout'] + amount}₽"
     )
-    await log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
+    log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
 
-# ---------- /stop_tiktok (с рассылкой) ----------
+# ---------- /stop_tiktok (закрыть с уведомлением) ----------
 @router.message(Command("stop_tiktok"))
 async def cmd_stop_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -488,45 +475,71 @@ async def cmd_stop_tiktok(message: Message):
         now = datetime.now(moscow_tz)
         date_str = now.strftime("%d.%m.%Y")
         set_setting("tiktok_stop_date", date_str)
-        await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.\nРассылка уведомлений пользователям...")
-        await log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
+        await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.")
+        log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
         await message.bot.send_message(
             LOG_CHANNEL_ID,
             f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
         )
+
         # Рассылка всем зарегистрированным пользователям
-        broadcast_text = (
-            f"⛔ <b>Внимание!</b> Участие в Tik Tok приостановлено с <b>{date_str}</b>.\n"
-            "Все ролики, опубликованные после этой даты, <b>не оплачиваются</b>.\n"
-            "Пожалуйста, будьте внимательны! Это правило прописано в справке /tiktok."
-        )
-        count = await broadcast_to_users(message.bot, broadcast_text)
-        await message.answer(f"✅ Уведомление отправлено {count} пользователям.")
+        users = get_all_registered_users()
+        if users:
+            sent = 0
+            for user in users:
+                try:
+                    await message.bot.send_message(
+                        user["user_id"],
+                        f"⛔ <b>Внимание!</b> Участие в Tik Tok приостановлено с <b>{date_str}</b>.\n"
+                        "Все ролики, опубликованные после этой даты, <b>не оплачиваются</b>.\n"
+                        "Пожалуйста, будьте внимательны!",
+                        parse_mode="HTML"
+                    )
+                    sent += 1
+                    await asyncio.sleep(0.1)  # небольшая задержка, чтобы не превысить лимит
+                except:
+                    pass
+            await message.answer(f"📨 Уведомление отправлено {sent} пользователям.")
+        else:
+            await message.answer("Нет зарегистрированных пользователей для уведомления.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /start_tiktok (возобновление с рассылкой) ----------
+# ---------- /start_tiktok (открыть с уведомлением) ----------
 @router.message(Command("start_tiktok"))
 async def cmd_start_tiktok(message: Message):
     if not is_ga(message.from_user.id):
         return
     try:
         # Удаляем дату остановки
-        set_setting("tiktok_stop_date", "")  # или удалить ключ
-        await message.answer("✅ Участие в Tik Tok возобновлено.\nРассылка уведомлений пользователям...")
-        await log_action(message, "Возобновлено участие в Tik Tok")
+        set_setting("tiktok_stop_date", "")
+        await message.answer("✅ Участие в Tik Tok возобновлено.\nТеперь вы можете публиковать ролики и получать выплаты.")
+        log_action(message, "Возобновлено участие в Tik Tok")
         await message.bot.send_message(
             LOG_CHANNEL_ID,
-            "✅ Tik Tok возобновлён. Публикация роликов разрешена."
+            "▶️ Tik Tok открыт для публикаций. Все новые ролики оплачиваются."
         )
+
         # Рассылка всем зарегистрированным пользователям
-        broadcast_text = (
-            "✅ <b>Участие в Tik Tok возобновлено!</b>\n"
-            "Вы можете снова публиковать рекламные ролики New Chapter и получать выплаты.\n"
-            "Все условия и правила остаются в силе. Удачи в творчестве! 🎬"
-        )
-        count = await broadcast_to_users(message.bot, broadcast_text)
-        await message.answer(f"✅ Уведомление отправлено {count} пользователям.")
+        users = get_all_registered_users()
+        if users:
+            sent = 0
+            for user in users:
+                try:
+                    await message.bot.send_message(
+                        user["user_id"],
+                        "▶️ <b>Хорошие новости!</b> Участие в Tik Tok возобновлено!\n"
+                        "Теперь вы можете публиковать рекламные ролики и получать выплаты.\n"
+                        "Удачи в творчестве! 🚀",
+                        parse_mode="HTML"
+                    )
+                    sent += 1
+                    await asyncio.sleep(0.1)
+                except:
+                    pass
+            await message.answer(f"📨 Уведомление отправлено {sent} пользователям.")
+        else:
+            await message.answer("Нет зарегистрированных пользователей для уведомления.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -548,6 +561,6 @@ async def cmd_set_limit(message: Message):
             return
         set_limit(platform, limit)
         await message.answer(f"✅ Лимит для платформы '{platform}' установлен на {limit} отзывов за 24 часа.")
-        await log_action(message, f"Установлен лимит {limit} для платформы {platform}")
+        log_action(message, f"Установлен лимит {limit} для платформы {platform}")
     except ValueError:
         await message.answer("❌ Лимит должен быть числом.")
