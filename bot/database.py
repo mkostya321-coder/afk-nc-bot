@@ -63,6 +63,12 @@ def init_db():
                 expires_at TIMESTAMP
             )
         """)
+        # Если таблица warnings уже существовала без колонки expires_at – добавляем
+        cur.execute("PRAGMA table_info(warnings)")
+        columns = [col[1] for col in cur.fetchall()]
+        if 'expires_at' not in columns:
+            cur.execute("ALTER TABLE warnings ADD COLUMN expires_at TIMESTAMP")
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -220,10 +226,6 @@ def get_all_users_with_payout():
         return [dict(row) for row in cur.fetchall()]
 
 # ---------- Лимиты на взятие отзывов ----------
-def init_review_takes():
-    # таблица создаётся в init_db
-    pass
-
 def add_review_take(user_id: int, platform: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -246,7 +248,7 @@ def get_limit(platform: str) -> int:
         row = cur.fetchone()
         if row:
             return int(row[0])
-        return 10  # по умолчанию
+        return 10
 
 def set_limit(platform: str, limit: int):
     with sqlite3.connect(DB_PATH) as conn:
