@@ -17,7 +17,7 @@ PRICES = {
     "отзовик": 100,
     "доктору": 100,
     "докдок": 100,
-    "про докторов": 200,   # изменено с 180 на 200
+    "про докторов": 200,
     "докту": 110,
     "32топ": 100,
 }
@@ -58,48 +58,47 @@ SHEET_NAME_TO_PLATFORM = {
 }
 
 def get_column_mapping(platform: str):
-    """Возвращает словарь с номерами столбцов (1-based) для различных полей."""
     standard = {
-        "date_col": 1,          # A
-        "time_col": 2,          # B
-        "stars_col": 3,         # C
-        "platform_col": 4,      # D
-        "link_col": 7,          # G (ссылка на карточку)
-        "status_col": 10,       # J (статус)
-        "executor_col": 11,     # K (исполнитель)
-        "gender_col": 13,       # M (пол)
-        "text_col": 14,         # N (текст отзыва)
-        "flag_first_col": 17,   # Q
-        "flag_second_col": 16,  # P
-        "flag_third_col": 15,   # O
-        "flag_final_col": 9,    # I
-        "id_col": 19,           # S
-        "update_col": 5,        # E
+        "date_col": 1,
+        "time_col": 2,
+        "stars_col": 3,
+        "platform_col": 4,
+        "link_col": 7,
+        "status_col": 10,
+        "executor_col": 11,
+        "gender_col": 13,
+        "text_col": 14,
+        "flag_first_col": 17,
+        "flag_second_col": 16,
+        "flag_third_col": 15,
+        "flag_final_col": 9,
+        "id_col": 19,
+        "update_col": 5,
     }
     if platform == "про докторов":
         return {
-            "date_col": 1,        # A
-            "time_col": 2,        # B
-            "stars_col": 3,       # C
-            "platform_col": 4,    # D
-            "link_col": 11,       # K (ссылка на платформу)
-            "status_col": 14,     # N (статус)
-            "executor_col": 15,   # O (исполнитель)
-            "gender_col": 16,     # P (РОД)
-            "text_col": None,     # нет единого текста
-            "flag_first_col": 22, # V (ОБНЛ 1)
-            "flag_second_col": 21,# U (обнл 2)
-            "flag_third_col": 20, # T (обнд 3)
-            "flag_final_col": 13, # M (ОТПРАВЛЕН В РАБОТУ)
-            "id_col": 23,         # W (ИНД НОМЕР)
-            "update_col": 5,      # E (Обновление)
-            "text_history_col": 17,   # Q (История)
-            "text_like_col": 18,      # R (Больше понравилось)
-            "text_minus_col": 19,     # S (Минусы)
-            "tz_col": 10,             # J (ТЗ)
-            "doctor_name_col": 12,    # L (Имя врача)
-            "doctor_direction_col": 9, # I (направление)
-            "photo_doc_col": 8,       # H (ФОТО/ЧЕК/ДОК-ВА)
+            "date_col": 1,
+            "time_col": 2,
+            "stars_col": 3,
+            "platform_col": 4,
+            "link_col": 11,
+            "status_col": 14,
+            "executor_col": 15,
+            "gender_col": 16,
+            "text_col": None,
+            "flag_first_col": 22,
+            "flag_second_col": 21,
+            "flag_third_col": 20,
+            "flag_final_col": 13,
+            "id_col": 23,
+            "update_col": 5,
+            "text_history_col": 17,
+            "text_like_col": 18,
+            "text_minus_col": 19,
+            "tz_col": 10,
+            "doctor_name_col": 12,
+            "doctor_direction_col": 9,
+            "photo_doc_col": 8,
         }
     return standard
 
@@ -165,7 +164,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
@@ -220,7 +218,6 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация через 2 часа ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -272,7 +269,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
-                # ---------- Закрытие в 23:30 (уже есть, оставляем как есть) ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
@@ -402,7 +398,7 @@ async def update_stats_from_sheet_once():
                 continue
             sheet_name = sheet.title
             platform = platform_from_sheet_name(sheet_name)
-            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")  # fallback
+            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
             logger.info(f"📊 Обработка листа '{sheet_name}' для статистики")
 
             for row_idx, row in enumerate(records[1:], start=2):
@@ -447,4 +443,118 @@ async def update_stats_from_sheet_once():
                             if field_prefix:
                                 passed_field = f"{field_prefix}_passed"
                                 total_field = f"{field_prefix}_total"
-                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
+                            conn.commit()
+                        e_value = 1
+                        logger.info(f"✅ Начислено {price}₽ пользователю {uid} за {platform}")
+                    else:
+                        e_value = 2
+
+                elif status == "опубликован опз":
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        price_opz = int(price * 0.7)
+                        field_map = {
+                            "яндекс": "yandex",
+                            "google": "google",
+                            "2гис": "gis",
+                            "авито": "avito",
+                            "вк": "vk",
+                            "отзовик": "otzovik",
+                            "доктору": "doctoru",
+                            "докдок": "dokdok",
+                            "про докторов": "prodoctors",
+                            "докту": "doctu",
+                            "32топ": "top32",
+                        }
+                        field_prefix = field_map.get(platform)
+                        with sqlite3.connect(DB_PATH) as conn:
+                            cur = conn.cursor()
+                            if field_prefix:
+                                passed_field = f"{field_prefix}_passed"
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
+                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
+                            conn.commit()
+                        e_value = 1
+                        logger.info(f"✅ Начислено {price_opz}₽ (ОПЗ) пользователю {uid} за {platform}")
+                    else:
+                        e_value = 2
+
+                elif status == "удален":
+                    if user:
+                        uid = user["user_id"]
+                        price = PRICES.get(platform, 0)
+                        with sqlite3.connect(DB_PATH) as conn:
+                            cur = conn.cursor()
+                            cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
+                            cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
+                            field_map = {
+                                "яндекс": "yandex",
+                                "google": "google",
+                                "2гис": "gis",
+                                "авито": "avito",
+                                "вк": "vk",
+                                "отзовик": "otzovik",
+                                "доктору": "doctoru",
+                                "докдок": "dokdok",
+                                "про докторов": "prodoctors",
+                                "докту": "doctu",
+                                "32топ": "top32",
+                            }
+                            field_prefix = field_map.get(platform)
+                            if field_prefix:
+                                total_field = f"{field_prefix}_total"
+                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
+                            conn.commit()
+                        e_value = 3
+                        logger.info(f"✅ Вычтено {price}₽ у пользователя {uid} за удалённый отзыв ({platform})")
+                    else:
+                        e_value = 2
+
+                elif status == "опубликован не по тх":
+                    e_value = 4
+                    logger.info(f"ℹ️ Строка {row_idx} на листе {sheet_name}: опубликован не по ТХ, пропускаем")
+
+                if e_value is not None:
+                    updates.append((sheet, row_idx, e_value))
+
+        for sheet, row_idx, e_value in updates:
+            try:
+                sheet.update_cell(row_idx, 5, e_value)
+                logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+            except Exception as e:
+                logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
+
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
+                       otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
+                       doctu_passed, top32_passed
+                FROM users
+            """)
+            for user_row in cur.fetchall():
+                uid = user_row[0]
+                period_total = (
+                    user_row[1] * PRICES.get("яндекс", 0) +
+                    user_row[2] * PRICES.get("google", 0) +
+                    user_row[3] * PRICES.get("2гис", 0) +
+                    user_row[4] * PRICES.get("авито", 0) +
+                    user_row[5] * PRICES.get("вк", 0) +
+                    user_row[6] * PRICES.get("отзовик", 0) +
+                    user_row[7] * PRICES.get("доктору", 0) +
+                    user_row[8] * PRICES.get("докдок", 0) +
+                    user_row[9] * PRICES.get("про докторов", 0) +
+                    user_row[10] * PRICES.get("докту", 0) +
+                    user_row[11] * PRICES.get("32топ", 0)
+                )
+                cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
+            conn.commit()
+
+        logger.info(f"✅ Статистика обновлена, обработано строк: {len(updates)}")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
