@@ -2,8 +2,9 @@ import os, sqlite3, logging, asyncio, secrets
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from .config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID
-from .database import get_user_by_username, get_user
+from aiogram.utils.keyboard import InlineKeyboardBuilder   # <-- добавлен импорт
+from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
+from bot.database import get_user_by_username, get_user
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
