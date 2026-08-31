@@ -133,6 +133,49 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
+# ---------- Публикация слота (локальная функция) ----------
+async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
+                                 date: str, time: str, row_ids: list, attempt: int = 1, mapping=None):
+    if mapping is None:
+        mapping = get_column_mapping(platform)
+    platform_names = {
+        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
+        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
+        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
+    }
+    pretty_name = platform_names.get(platform, platform)
+    post_text = (
+        f"🔥 Слот: {pretty_name}\n"
+        f"📅 Дата: {date}\n"
+        f"⏰ Время: {time} (МСК)\n"
+        f"📌 Доступно отзывов: {count} шт.\n"
+        f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
+        f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
+    )
+    time_safe = time.replace(':', '-')
+    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
+    url_to_bot = "https://t.me/ncjobbot?start"
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✋ Взять слот", callback_data=callback_data)
+    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
+    builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
+    builder.adjust(1)
+    sent_msg = await bot.send_message(
+        chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
+    )
+    active_slots_dict[sent_msg.message_id] = {
+        "platform": platform,
+        "count": count,
+        "initial_count": count,
+        "row_ids": row_ids,
+        "date": date,
+        "time": time,
+        "publish_time": datetime.now(moscow_tz),
+        "attempt": attempt,
+        "mapping": mapping
+    }
+
+# ---------- Монитор расписания ----------
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -198,7 +241,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         time_str = row[mapping["time_col"]-1].strip()
                         groups[(date_str, time_str)].append((row_idx, row))
 
-                    from .handlers.slots import publish_scheduled_slot
                     for (date, time), items in groups.items():
                         count_available = len(items)
                         row_ids = [item[0] for item in items]
@@ -218,6 +260,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
+                # --- Перепубликация ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -269,6 +312,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     )
                     logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
 
+                # --- Закрытие в 23:30 ---
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
@@ -325,47 +369,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(60)
 
-async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
-                                 date: str, time: str, row_ids: list, attempt: int = 1, mapping=None):
-    if mapping is None:
-        mapping = get_column_mapping(platform)
-    platform_names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
-        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
-        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
-    }
-    pretty_name = platform_names.get(platform, platform)
-    post_text = (
-        f"🔥 Слот: {pretty_name}\n"
-        f"📅 Дата: {date}\n"
-        f"⏰ Время: {time} (МСК)\n"
-        f"📌 Доступно отзывов: {count} шт.\n"
-        f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
-        f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
-    )
-    time_safe = time.replace(':', '-')
-    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-    url_to_bot = "https://t.me/ncjobbot?start"
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", callback_data=callback_data)
-    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
-    builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)
-    sent_msg = await bot.send_message(
-        chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
-    )
-    active_slots_dict[sent_msg.message_id] = {
-        "platform": platform,
-        "count": count,
-        "initial_count": count,
-        "row_ids": row_ids,
-        "date": date,
-        "time": time,
-        "publish_time": datetime.now(moscow_tz),
-        "attempt": attempt,
-        "mapping": mapping
-    }
-
+# ---------- Обновление статистики ----------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
