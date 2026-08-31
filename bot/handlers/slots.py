@@ -244,7 +244,7 @@ async def take_slot_start(callback: CallbackQuery):
         "row_ids": slot_info["row_ids"],
         "from_menu": False,
         "mapping": slot_info.get("mapping", get_column_mapping(platform)),
-        "sheet_title": slot_info.get("sheet_title")  # сохраняем название листа
+        "sheet_title": slot_info.get("sheet_title")
     }
 
     await callback.bot.send_message(
@@ -363,11 +363,10 @@ async def handle_quantity_input(message: Message):
                         sheet.update_cell(row_idx, mapping["status_col"], "в работе")
                         sheet.update_cell(row_idx, mapping["executor_col"], username)
                         logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
-                        time.sleep(0.1)  # небольшая задержка для соблюдения лимитов
+                        time.sleep(0.1)
                 except Exception as e:
                     logger.error(f"Ошибка обновления строк на листе {sheet_title}: {e}")
             else:
-                # fallback
                 for sheet in spreadsheet.worksheets():
                     for row_idx in assigned_rows:
                         try:
@@ -540,7 +539,6 @@ async def handle_screenshot(message: Message):
             except:
                 pass
         else:
-            # fallback
             for s in spreadsheet.worksheets():
                 try:
                     s.cell(current_row, 1)
@@ -658,10 +656,20 @@ async def send_next_review(message: Message, request: dict):
 
         await message.answer(info_msg + date_info, parse_mode="HTML")
 
-        # 3. Документ (H)
+        # 3. Документ (H) – ОБЯЗАТЕЛЬНОЕ ПРИКРЕПЛЕНИЕ
         doc_link = row[mapping["photo_doc_col"]-1] if len(row) >= mapping["photo_doc_col"] else ""
         if doc_link:
-            await message.answer(f"📎 <b>Документ с информацией для заполнения отзыва по ТЗ</b>\n\n{doc_link}", parse_mode="HTML")
+            doc_warning = (
+                "📎 <b>Документ с информацией для заполнения отзыва по ТЗ</b> – "
+                "ОБЯЗАТЕЛЬНО прикрепите этот документ к отзыву!\n"
+                "Без прикреплённого документа отзыв НЕ БУДЕТ ОПЛАЧЕН."
+            )
+            await message.answer(f"{doc_warning}\n\n{doc_link}", parse_mode="HTML")
+        else:
+            await message.answer(
+                "⚠️ Документ для прикрепления отсутствует. Пожалуйста, свяжитесь с администратором.",
+                parse_mode="HTML"
+            )
 
         # 4-9. Части отзыва
         history = row[mapping["text_history_col"]-1] if len(row) >= mapping["text_history_col"] else ""
