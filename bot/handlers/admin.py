@@ -6,13 +6,14 @@ from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
-    add_warning, get_warning_count, get_active_warnings, get_setting, set_setting
+    add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
+    get_limit, set_limit
 )
 import sqlite3
 import logging
 
 logger = logging.getLogger(__name__)
-router = Router()   # <---- ЭТО БЫЛО ПРОПУЩЕНО
+router = Router()
 
 def log_action(message: Message, action: str):
     try:
@@ -61,6 +62,7 @@ async def cmd_helpadm(message: Message):
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
             "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
             "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
+            "📊 /set_limit <platform> <limit> — установить лимит на количество отзывов за 24 часа для платформы\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
@@ -165,7 +167,7 @@ async def sms_user(message: Message):
         user = get_user_by_username(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
-            return
+        return
         try:
             await message.bot.send_message(
                 user["user_id"],
@@ -236,7 +238,6 @@ async def cmd_info(message: Message):
             ref_status = "выполнено"
         else:
             ref_status = "в процессе"
-    # Предупреждения
     active_warnings = get_active_warnings(user["user_id"])
     warn_text = ""
     if active_warnings:
@@ -479,3 +480,25 @@ async def cmd_stop_tiktok(message: Message):
         )
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
+# ---------- /set_limit (GA и владелец) ----------
+@router.message(Command("set_limit"))
+async def cmd_set_limit(message: Message):
+    if not is_ga(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer("❌ Использование: /set_limit <platform> <limit>\n"
+                             "Пример: /set_limit яндекс 15")
+        return
+    platform = parts[1].lower()
+    try:
+        limit = int(parts[2])
+        if limit < 1:
+            await message.answer("❌ Лимит должен быть положительным числом.")
+            return
+        set_limit(platform, limit)
+        await message.answer(f"✅ Лимит для платформы '{platform}' установлен на {limit} отзывов за 24 часа.")
+        log_action(message, f"Установлен лимит {limit} для платформы {platform}")
+    except ValueError:
+        await message.answer("❌ Лимит должен быть числом.")
