@@ -255,3 +255,12 @@ def set_limit(platform: str, limit: int):
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (f"limit_{platform}", str(limit)))
         conn.commit()
+
+# ---------- Получение всех зарегистрированных пользователей для рассылки ----------
+def get_all_registered_users():
+    """Возвращает список всех зарегистрированных пользователей (user_id, tg_username)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, tg_username FROM users WHERE name IS NOT NULL")
+        return [dict(row) for row in cur.fetchall()]
