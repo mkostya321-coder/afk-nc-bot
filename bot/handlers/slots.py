@@ -7,7 +7,8 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
-from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username
+from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username, add_review_take, count_review_takes_last_24h, get_limit
+from bot.google_sheets import get_column_mapping
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pytz
@@ -43,7 +44,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": (
             "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
             "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
@@ -58,7 +58,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": (
             "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
             "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
@@ -73,7 +72,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": (
             "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
             "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
@@ -88,7 +86,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": (
             "<b>- На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.</b>\n"
             "ДЛЯ 90% прохода:\n"
@@ -104,7 +101,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": "",
         "warning": (
             "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
@@ -116,7 +112,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": "",
         "warning": (
             "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
@@ -128,19 +123,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
-    },
-    "про докторов": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "photo_required": False,
         "extra_text": "",
         "warning": (
             "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
@@ -152,7 +134,6 @@ PLATFORM_TEMPLATES = {
             "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
             "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
         ),
-        "photo_required": False,
         "extra_text": "",
         "warning": (
             "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
@@ -160,45 +141,6 @@ PLATFORM_TEMPLATES = {
         )
     },
 }
-
-# ---------- Планирование автослота (используется из google_sheets.py) ----------
-async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
-                                 date: str, time: str, row_ids: list, attempt: int = 1):
-    platform_names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
-        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
-        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
-    }
-    pretty_name = platform_names.get(platform, platform)
-    post_text = (
-        f"🔥 Слот: {pretty_name}\n"
-        f"📅 Дата: {date}\n"
-        f"⏰ Время: {time} (МСК)\n"
-        f"📌 Доступно отзывов: {count} шт.\n"
-        f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
-        f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
-    )
-    time_safe = time.replace(':', '-')
-    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-    url_to_bot = "https://t.me/ncjobbot?start"
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", callback_data=callback_data)
-    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
-    builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)
-    sent_msg = await bot.send_message(
-        chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
-    )
-    active_slots_dict[sent_msg.message_id] = {
-        "platform": platform,
-        "count": count,
-        "initial_count": count,
-        "row_ids": row_ids,
-        "date": date,
-        "time": time,
-        "publish_time": datetime.now(moscow_tz),
-        "attempt": attempt
-    }
 
 # ---------- Функция отправки инструкции ----------
 async def send_instruction(user_id: int, bot):
@@ -235,6 +177,14 @@ async def send_instruction(user_id: int, bot):
             await bot.send_message(chat_id=user_id, text="📸 Инструкция: сделайте скриншот отзыва и отправьте.")
         except:
             pass
+
+# ---------- Проверка лимита ----------
+async def check_limit(user_id: int, platform: str) -> bool:
+    limit = get_limit(platform)
+    count = count_review_takes_last_24h(user_id, platform)
+    if count >= limit:
+        return False
+    return True
 
 # ---------- Обработчик кнопки взять слот (из канала) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
@@ -277,6 +227,11 @@ async def take_slot_start(callback: CallbackQuery):
             await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
             return
 
+    if not await check_limit(user_id, platform):
+        limit = get_limit(platform)
+        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа.")
+        return
+
     slot_requests[user_id] = {
         "platform": platform,
         "count": count,
@@ -287,7 +242,8 @@ async def take_slot_start(callback: CallbackQuery):
         "assigned_rows": [],
         "current_index": 0,
         "row_ids": slot_info["row_ids"],
-        "from_menu": False
+        "from_menu": False,
+        "mapping": slot_info.get("mapping", get_column_mapping(platform))
     }
 
     await callback.bot.send_message(
@@ -327,6 +283,11 @@ async def choose_platform(callback: CallbackQuery):
             await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
             return
 
+    if not await check_limit(user_id, platform):
+        limit = get_limit(platform)
+        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа.")
+        return
+
     slot_requests[user_id] = {
         "platform": platform,
         "count": len(all_rows),
@@ -337,7 +298,8 @@ async def choose_platform(callback: CallbackQuery):
         "assigned_rows": [],
         "current_index": 0,
         "row_ids": all_rows,
-        "from_menu": True
+        "from_menu": True,
+        "mapping": get_column_mapping(platform)
     }
 
     await callback.bot.send_message(
@@ -363,11 +325,14 @@ async def handle_quantity_input(message: Message):
         await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
 
+    platform = request["platform"]
+    mapping = request["mapping"]
+
     if request["from_menu"]:
         assigned_rows = request["row_ids"][:quantity]
         remaining_rows = request["row_ids"][quantity:]
         for msg_id, slot in list(active_slots.items()):
-            if slot.get("platform") == request["platform"]:
+            if slot.get("platform") == platform:
                 new_row_ids = [r for r in slot["row_ids"] if r not in assigned_rows]
                 slot["row_ids"] = new_row_ids
                 slot["count"] = len(new_row_ids)
@@ -380,18 +345,27 @@ async def handle_quantity_input(message: Message):
                         )
                     except:
                         pass
-        sheet = get_sheet()
+        # Обновляем строки
         username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        for row_idx in assigned_rows:
-            try:
-                sheet.update_cell(row_idx, 11, username)
-                sheet.update_cell(row_idx, 10, "в работе")
-            except Exception as e:
-                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            for sheet in spreadsheet.worksheets():
+                for row_idx in assigned_rows:
+                    try:
+                        sheet.cell(row_idx, 1)
+                        sheet.update_cell(row_idx, mapping["status_col"], "в работе")
+                        sheet.update_cell(row_idx, mapping["executor_col"], username)
+                        logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
+                    except:
+                        continue
+        for _ in range(quantity):
+            add_review_take(user_id, platform)
         request["assigned_rows"] = assigned_rows
         request["current_index"] = 0
         request["state"] = "sending_reviews"
-        await send_next_review(message, request, sheet)
+        await send_next_review(message, request, sheet=None)
     else:
         slot_msg_id = request["slot_msg_id"]
         slot_info = active_slots.get(slot_msg_id)
@@ -416,18 +390,26 @@ async def handle_quantity_input(message: Message):
                 )
             except:
                 pass
-        sheet = get_sheet()
         username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        for row_idx in assigned_rows:
-            try:
-                sheet.update_cell(row_idx, 11, username)
-                sheet.update_cell(row_idx, 10, "в работе")
-            except Exception as e:
-                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            for sheet in spreadsheet.worksheets():
+                for row_idx in assigned_rows:
+                    try:
+                        sheet.cell(row_idx, 1)
+                        sheet.update_cell(row_idx, mapping["status_col"], "в работе")
+                        sheet.update_cell(row_idx, mapping["executor_col"], username)
+                        logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
+                    except:
+                        continue
+        for _ in range(quantity):
+            add_review_take(user_id, platform)
         request["assigned_rows"] = assigned_rows
         request["current_index"] = 0
         request["state"] = "sending_reviews"
-        await send_next_review(message, request, sheet)
+        await send_next_review(message, request, sheet=None)
 
 # ---------- Команда отказа ----------
 @router.message(Command("cancel"))
@@ -446,27 +428,30 @@ async def cancel_task(message: Message):
     current_index = request["current_index"]
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id) if slot_msg_id != "menu" else None
+    mapping = request["mapping"]
 
     remaining_rows = assigned_rows[current_index:]
 
     if remaining_rows:
-        sheet = get_sheet()
-        if sheet:
-            for row_idx in remaining_rows:
-                try:
-                    sheet.update_cell(row_idx, 10, "")
-                    sheet.update_cell(row_idx, 11, "")
-                except Exception as e:
-                    logger.error(f"Ошибка очистки строки {row_idx} при отказе: {e}")
-            if slot_info:
-                slot_info["row_ids"].extend(remaining_rows)
-                slot_info["count"] += len(remaining_rows)
-                logger.info(f"Возвращено {len(remaining_rows)} отзывов в слот {slot_msg_id}")
-            else:
-                logger.info(f"Слот {slot_msg_id} неактивен, отзывы останутся свободными")
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            for sheet in spreadsheet.worksheets():
+                for row_idx in remaining_rows:
+                    try:
+                        sheet.cell(row_idx, 1)
+                        sheet.update_cell(row_idx, mapping["status_col"], "")
+                        sheet.update_cell(row_idx, mapping["executor_col"], "")
+                        logger.info(f"✅ Строка {row_idx} очищена при отказе")
+                    except:
+                        continue
+        if slot_info:
+            slot_info["row_ids"].extend(remaining_rows)
+            slot_info["count"] += len(remaining_rows)
+            logger.info(f"Возвращено {len(remaining_rows)} отзывов в слот {slot_msg_id}")
         else:
-            await message.answer("❌ Ошибка доступа к таблице. Попробуйте позже.")
-            return
+            logger.info(f"Слот {slot_msg_id} неактивен, отзывы останутся свободными")
 
     del slot_requests[user_id]
     await message.answer(
@@ -485,24 +470,53 @@ async def handle_screenshot(message: Message):
     if request["state"] != "waiting_screenshot":
         return
 
-    sheet = get_sheet()
-    current_row = request["assigned_rows"][request["current_index"]]
+    mapping = request["mapping"]
+    assigned_rows = request["assigned_rows"]
+    current_row = assigned_rows[request["current_index"]]
+
+    creds = get_credentials()
+    if not creds:
+        await message.answer("❌ Ошибка доступа к таблице.")
+        return
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+    sheet = None
     review_id = None
+    for s in spreadsheet.worksheets():
+        try:
+            review_id = s.cell(current_row, mapping["id_col"]).value
+            if review_id:
+                sheet = s
+                break
+        except:
+            continue
+    if not review_id:
+        review_id = secrets.token_hex(4)
+        # ищем лист
+        for s in spreadsheet.worksheets():
+            try:
+                s.cell(current_row, 1)
+                sheet = s
+                sheet.update_cell(current_row, mapping["id_col"], review_id)
+                break
+            except:
+                continue
     if sheet:
         try:
-            review_id = sheet.cell(current_row, 19).value
-            if not review_id:
-                review_id = secrets.token_hex(4)
-                sheet.update_cell(current_row, 19, review_id)
+            sheet.update_cell(current_row, mapping["status_col"], "на модерации")
+            sheet.update_cell(current_row, mapping["flag_final_col"], 333)
+            sheet.format(f"{chr(64+mapping['flag_final_col'])}{current_row}", {
+                "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
+            })
         except Exception as e:
-            logger.error(f"Не удалось получить/сгенерировать ID для строки {current_row}: {e}")
-            review_id = "Unknown"
+            logger.error(f"Ошибка обновления статуса для строки {current_row}: {e}")
 
+    # Пересылаем скриншот
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id}"
+        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id or 'Unknown'}"
         await message.bot.send_photo(
             chat_id=SCREENSHOT_CHANNEL_ID,
             photo=message.photo[-1].file_id,
@@ -510,16 +524,6 @@ async def handle_screenshot(message: Message):
         )
     except Exception as e:
         logger.error(f"Не удалось переслать скриншот в канал: {e}")
-
-    if sheet:
-        try:
-            sheet.update_cell(current_row, 10, "на модерации")
-            sheet.update_cell(current_row, 9, 333)
-            sheet.format(f"I{current_row}", {
-                "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
-            })
-        except Exception as e:
-            logger.error(f"Ошибка обновления статуса для строки {current_row}: {e}")
 
     request["current_index"] += 1
     request["state"] = "sending_reviews"
@@ -529,8 +533,10 @@ async def handle_screenshot(message: Message):
 async def send_next_review(message: Message, request: dict, sheet):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
+    platform = request["platform"]
+    mapping = request["mapping"]
+
     if current_index >= len(assigned_rows):
-        platform = request["platform"]
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
         cooldowns[message.from_user.id][platform] = datetime.now() + timedelta(hours=24)
@@ -541,60 +547,120 @@ async def send_next_review(message: Message, request: dict, sheet):
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
-    row = sheet.row_values(row_idx)
-    if len(row) < 14:
-        await message.answer("❌ Ошибка данных в таблице.")
+    if sheet is None:
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            for s in spreadsheet.worksheets():
+                try:
+                    s.cell(row_idx, 1)
+                    sheet = s
+                    break
+                except:
+                    continue
+    if sheet is None:
+        await message.answer("❌ Ошибка: не удалось найти лист с отзывом.")
         del slot_requests[message.from_user.id]
         return
 
-    link = row[6]
-    text = row[13]
-    stars = row[2].strip() if len(row) > 2 else ""
-    gender = row[12].strip().upper() if len(row) > 12 else ""
-    platform = request["platform"]
+    row = sheet.row_values(row_idx)
 
-    photo_link = row[17].strip() if len(row) > 17 else ""
-    photo_warning = ""
-    if photo_link:
-        photo_warning = (
-            "📸 <b>Фотография к ОБЯЗАТЕЛЬНОМУ прикреплению к отзыву!</b>\n"
-            "Если вы не прикрепите фото, отзыв будет оплачен на 50% ниже.\n\n"
+    if platform == "про докторов":
+        # 1. ТЗ
+        tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
+        if tz_link:
+            await message.answer(f"📄 <b>Техническое задание (ТЗ)</b>\n\n{tz_link}", parse_mode="HTML")
+        else:
+            await message.answer("📄 Техническое задание отсутствует.")
+
+        # 2. Информация по врачу
+        doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
+        doctor_direction = row[mapping["doctor_direction_col"]-1] if len(row) >= mapping["doctor_direction_col"] else ""
+        gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
+        stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
+        platform_name = row[mapping["platform_col"]-1] if len(row) >= mapping["platform_col"] else ""
+        link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
+
+        gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
+        info_msg = (
+            f"👨‍⚕️ <b>Информация по врачу:</b>\n"
+            f"Имя врача: {doctor_name}\n"
+            f"Направление: {doctor_direction}\n\n"
+            f"<b>Информация по отзыву:</b>\n"
+            f"Пол: {gender_text}\n"
+            f"Кол-во звезд: {stars}\n"
+            f"Платформа: {platform_name}\n"
+            f"Ссылка на платформу: {link}"
+        )
+        await message.answer(info_msg, parse_mode="HTML")
+
+        # 3. Документ (H)
+        doc_link = row[mapping["photo_doc_col"]-1] if len(row) >= mapping["photo_doc_col"] else ""
+        if doc_link:
+            await message.answer(f"📎 <b>Документ с информацией для заполнения отзыва по ТЗ</b>\n\n{doc_link}", parse_mode="HTML")
+
+        # 4-9. Части отзыва
+        history = row[mapping["text_history_col"]-1] if len(row) >= mapping["text_history_col"] else ""
+        like = row[mapping["text_like_col"]-1] if len(row) >= mapping["text_like_col"] else ""
+        minus = row[mapping["text_minus_col"]-1] if len(row) >= mapping["text_minus_col"] else ""
+
+        if history:
+            await message.answer(f"1️⃣ <b>История:</b>\n\n{history}", parse_mode="HTML")
+        if like:
+            await message.answer(f"2️⃣ <b>Больше понравилось:</b>\n\n{like}", parse_mode="HTML")
+        if minus:
+            await message.answer(f"3️⃣ <b>Минусы:</b>\n\n{minus}", parse_mode="HTML")
+
+        await message.answer("Ожидаю скриншот и продолжаем работу.")
+        request["state"] = "waiting_screenshot"
+
+    else:
+        # Стандартная логика
+        link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
+        text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
+        stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
+        gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
+
+        template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
+        instruction_text = template["instruction"]
+        extra_text = template["extra_text"]
+        warning = template["warning"]
+
+        gender_text = ""
+        if gender.upper() == "М":
+            gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
+        elif gender.upper() == "Ж":
+            gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
+        else:
+            gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю."
+
+        photo_link = row[17] if len(row) > 17 else ""
+        photo_warning = ""
+        if photo_link:
+            photo_warning = "📸 <b>Фотография к ОБЯЗАТЕЛЬНОМУ прикреплению к отзыву!</b>\nЕсли вы не прикрепите фото, отзыв будет оплачен на 50% ниже.\n\n"
+
+        final_msg = (
+            f"{instruction_text}\n\n"
+            f"{photo_warning}"
+            f"⭐ Количество звезд: {stars}\n"
+            "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
+            "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
+            f"{gender_text}\n"
+        )
+        if extra_text:
+            final_msg += f"{extra_text}\n"
+        final_msg += (
+            "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
+            "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
+            f"{warning}"
         )
 
-    template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
-    instruction_text = template["instruction"]
-    extra_text = template["extra_text"]
-    warning = template["warning"]
-
-    gender_text = ""
-    if gender == "М":
-        gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
-    elif gender == "Ж":
-        gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
-    else:
-        gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю (например, 'купил' → 'купила')."
-
-    final_msg = (
-        f"{instruction_text}\n\n"
-        f"{photo_warning}"
-        f"⭐ Количество звезд: {stars}\n"
-        "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
-        "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
-        f"{gender_text}\n"
-    )
-    if extra_text:
-        final_msg += f"{extra_text}\n"
-    final_msg += (
-        "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
-        "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
-        f"{warning}"
-    )
-
-    await message.answer(final_msg, parse_mode=ParseMode.HTML)
-    await message.answer(link)
-    await message.answer(text)
-    await message.answer("Ожидаю скриншот и продолжаем работу.")
-    request["state"] = "waiting_screenshot"
+        await message.answer(final_msg, parse_mode=ParseMode.HTML)
+        await message.answer(link)
+        await message.answer(text)
+        await message.answer("Ожидаю скриншот и продолжаем работу.")
+        request["state"] = "waiting_screenshot"
 
 # ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
 @router.message(Command("job"))
