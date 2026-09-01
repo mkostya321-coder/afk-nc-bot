@@ -382,7 +382,7 @@ async def handle_quantity_input(message: Message):
         request["assigned_rows"] = assigned_rows
         request["current_index"] = 0
         request["state"] = "sending_reviews"
-        await send_next_review(message, request)
+        await send_next_review(message, request, sheet=None)
     else:
         slot_msg_id = request["slot_msg_id"]
         slot_info = active_slots.get(slot_msg_id)
@@ -438,7 +438,7 @@ async def handle_quantity_input(message: Message):
         request["assigned_rows"] = assigned_rows
         request["current_index"] = 0
         request["state"] = "sending_reviews"
-        await send_next_review(message, request)
+        await send_next_review(message, request, sheet=None)
 
 # ---------- Команда отказа ----------
 @router.message(Command("cancel"))
@@ -502,7 +502,7 @@ async def cancel_task(message: Message):
         "Остальные возвращены в слот и будут переопубликованы."
     )
 
-# ---------- Обработка скриншотов ----------
+# ---------- Обработка скриншотов (улучшенная) ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -514,9 +514,13 @@ async def handle_screenshot(message: Message):
 
     mapping = request["mapping"]
     assigned_rows = request["assigned_rows"]
-    current_row = assigned_rows[request["current_index"]]
+    current_index = request["current_index"]
+    current_row = assigned_rows[current_index]
     sheet_title = request.get("sheet_title")
 
+    logger.info(f"📸 Обработка скриншота для строки {current_row}, пользователь {user_id}")
+
+    # Получаем доступ к таблице и определяем лист
     creds = get_credentials()
     if not creds:
         await message.answer("❌ Ошибка доступа к таблице.")
@@ -525,40 +529,57 @@ async def handle_screenshot(message: Message):
     spreadsheet = client.open_by_key(SHEET_ID)
     sheet = None
     review_id = None
+
+    # Сначала пробуем найти по sheet_title
     if sheet_title:
         try:
             sheet = spreadsheet.worksheet(sheet_title)
-            review_id = sheet.cell(current_row, mapping["id_col"]).value
-        except:
-            pass
-    if not review_id:
-        review_id = secrets.token_hex(4)
-        if sheet:
-            try:
-                sheet.update_cell(current_row, mapping["id_col"], review_id)
-            except:
-                pass
-        else:
-            for s in spreadsheet.worksheets():
-                try:
-                    s.cell(current_row, 1)
-                    sheet = s
-                    sheet.update_cell(current_row, mapping["id_col"], review_id)
-                    break
-                except:
-                    continue
-    if sheet:
-        try:
-            sheet.update_cell(current_row, mapping["status_col"], "на модерации")
-            sheet.update_cell(current_row, mapping["flag_final_col"], 333)
-            sheet.format(f"{chr(64+mapping['flag_final_col'])}{current_row}", {
-                "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
-            })
-            logger.info(f"✅ Строка {current_row} обновлена (статус 'на модерации')")
+            logger.info(f"✅ Найден лист по sheet_title: {sheet_title}")
         except Exception as e:
-            logger.error(f"Ошибка обновления статуса для строки {current_row}: {e}")
+            logger.error(f"❌ Не удалось найти лист {sheet_title}: {e}")
 
-    # Пересылаем скриншот
+    # Если не нашли, перебираем все листы
+    if sheet is None:
+        for s in spreadsheet.worksheets():
+            try:
+                # Пытаемся прочитать ячейку, чтобы проверить существование строки
+                s.cell(current_row, 1)
+                sheet = s
+                logger.info(f"✅ Найден лист для строки {current_row}: {s.title}")
+                break
+            except:
+                continue
+
+    if sheet is None:
+        logger.error(f"❌ Не удалось найти лист для строки {current_row}")
+        await message.answer("❌ Ошибка: не удалось найти строку в таблице.")
+        return
+
+    # Получаем или генерируем ID отзыва
+    try:
+        review_id = sheet.cell(current_row, mapping["id_col"]).value
+        if not review_id:
+            review_id = secrets.token_hex(4)
+            sheet.update_cell(current_row, mapping["id_col"], review_id)
+            logger.info(f"✅ Сгенерирован новый ID для строки {current_row}: {review_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при работе с ID для строки {current_row}: {e}")
+        review_id = "Unknown"
+
+    # Обновляем статус на "на модерации"
+    try:
+        sheet.update_cell(current_row, mapping["status_col"], "на модерации")
+        sheet.update_cell(current_row, mapping["flag_final_col"], 333)
+        sheet.format(f"{chr(64+mapping['flag_final_col'])}{current_row}", {
+            "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
+        })
+        logger.info(f"✅ Строка {current_row} обновлена (статус 'на модерации', I=333)")
+    except Exception as e:
+        logger.error(f"❌ Ошибка обновления статуса для строки {current_row}: {e}")
+        await message.answer("❌ Ошибка при обновлении статуса. Попробуйте позже.")
+        return
+
+    # Пересылаем скриншот в канал
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
@@ -569,15 +590,17 @@ async def handle_screenshot(message: Message):
             photo=message.photo[-1].file_id,
             caption=caption
         )
+        logger.info(f"✅ Скриншот переслан в канал для строки {current_row}")
     except Exception as e:
-        logger.error(f"Не удалось переслать скриншот в канал: {e}")
+        logger.error(f"❌ Не удалось переслать скриншот в канал: {e}")
 
+    # Увеличиваем индекс и переходим к следующему отзыву
     request["current_index"] += 1
     request["state"] = "sending_reviews"
-    await send_next_review(message, request)
+    await send_next_review(message, request, sheet)
 
-# ---------- Отправка следующего отзыва ----------
-async def send_next_review(message: Message, request: dict):
+# ---------- Отправка следующего отзыва (принимает sheet) ----------
+async def send_next_review(message: Message, request: dict, sheet=None):
     assigned_rows = request["assigned_rows"]
     current_index = request["current_index"]
     platform = request["platform"]
@@ -585,6 +608,7 @@ async def send_next_review(message: Message, request: dict):
     sheet_title = request.get("sheet_title")
 
     if current_index >= len(assigned_rows):
+        # Все отзывы выполнены
         if message.from_user.id not in cooldowns:
             cooldowns[message.from_user.id] = {}
         cooldowns[message.from_user.id][platform] = datetime.now() + timedelta(hours=24)
@@ -592,32 +616,35 @@ async def send_next_review(message: Message, request: dict):
         del slot_requests[message.from_user.id]
         return
 
+    # Если sheet не передан, пытаемся найти
+    if sheet is None:
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            row_idx = assigned_rows[current_index]
+            if sheet_title:
+                try:
+                    sheet = spreadsheet.worksheet(sheet_title)
+                except:
+                    pass
+            if sheet is None:
+                for s in spreadsheet.worksheets():
+                    try:
+                        s.cell(row_idx, 1)
+                        sheet = s
+                        break
+                    except:
+                        continue
+        if sheet is None:
+            await message.answer("❌ Ошибка: не удалось найти лист с отзывом.")
+            del slot_requests[message.from_user.id]
+            return
+
+    # Отправляем инструкцию перед каждым отзывом
     await send_instruction(message.from_user.id, message.bot)
 
     row_idx = assigned_rows[current_index]
-    sheet = None
-    creds = get_credentials()
-    if creds:
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(SHEET_ID)
-        if sheet_title:
-            try:
-                sheet = spreadsheet.worksheet(sheet_title)
-            except:
-                pass
-        if sheet is None:
-            for s in spreadsheet.worksheets():
-                try:
-                    s.cell(row_idx, 1)
-                    sheet = s
-                    break
-                except:
-                    continue
-    if sheet is None:
-        await message.answer("❌ Ошибка: не удалось найти лист с отзывом.")
-        del slot_requests[message.from_user.id]
-        return
-
     row = sheet.row_values(row_idx)
 
     if platform == "про докторов":
@@ -729,7 +756,6 @@ async def send_next_review(message: Message, request: dict):
 
         await message.answer(final_msg, parse_mode=ParseMode.HTML)
 
-        # Отправляем ссылку и текст только если они не пустые
         if link:
             await message.answer(link)
         if text:
