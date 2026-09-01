@@ -728,8 +728,13 @@ async def send_next_review(message: Message, request: dict):
         )
 
         await message.answer(final_msg, parse_mode=ParseMode.HTML)
-        await message.answer(link)
-        await message.answer(text)
+
+        # Отправляем ссылку и текст только если они не пустые
+        if link:
+            await message.answer(link)
+        if text:
+            await message.answer(text)
+
         await message.answer("Ожидаю скриншот и продолжаем работу.")
         request["state"] = "waiting_screenshot"
 
