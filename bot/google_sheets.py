@@ -1,4 +1,4 @@
-import os, sqlite3, logging, asyncio, secrets
+import os, sqlite3, logging, asyncio, secrets, time
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -6,7 +6,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
 from bot.database import get_user_by_username, get_user
-import time
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
@@ -136,7 +135,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ---------- Публикация слота (теперь принимает sheet_title) ----------
+# ---------- Публикация слота ----------
 async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1,
                                  mapping=None, sheet_title=None):
@@ -179,7 +178,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
             "publish_time": datetime.now(moscow_tz),
             "attempt": attempt,
             "mapping": mapping,
-            "sheet_title": sheet_title  # сохраняем название листа
+            "sheet_title": sheet_title
         }
         return sent_msg
     except Exception as e:
@@ -242,7 +241,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         continue
                     if now >= slot_time:
                         to_publish.append((row_idx, row))
-                        logger.info(f"✅ Строка {row_idx} готова к публикации!")
 
                 if to_publish:
                     logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
@@ -331,7 +329,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     else:
                         logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
-                # --- Закрытие в 23:30 ---
+                # ---------- ЗАКРЫТИЕ В 23:30 (ПЕРЕПИСАНА ЛОГИКА) ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
@@ -342,60 +340,80 @@ async def monitor_schedule(bot, active_slots: dict):
                             assigned_rows = request.get("assigned_rows", [])
                             if not assigned_rows:
                                 continue
-                            m = request.get("mapping", mapping)
+                            mapping = request.get("mapping", get_column_mapping("яндекс"))
                             sheet_title = request.get("sheet_title")
-                            if sheet_title:
-                                try:
-                                    sheet = spreadsheet.worksheet(sheet_title)
-                                except:
-                                    sheet = None
-                            if sheet is None:
-                                # fallback – перебор всех листов
-                                for s in worksheets:
-                                    try:
-                                        s.cell(assigned_rows[0], 1)
-                                        sheet = s
-                                        break
-                                    except:
-                                        continue
-                            if sheet:
-                                for row_idx in assigned_rows:
-                                    try:
-                                        j_val = sheet.cell(row_idx, m["status_col"]).value or ""
-                                        if j_val.lower() == "на модерации":
-                                            sheet.update_cell(row_idx, m["status_col"], "на модерации с ОПЗ")
-                                            logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
-                                        elif j_val.lower() == "в работе":
-                                            sheet.update_cell(row_idx, m["status_col"], "не принят в работу")
-                                            sheet.update_cell(row_idx, m["executor_col"], "")
-                                            sheet.update_cell(row_idx, m["flag_final_col"], 888)
-                                            sheet.format(f"{chr(64+m['flag_final_col'])}{row_idx}", {
-                                                "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
-                                            })
-                                            logger.info(f"✅ Строка {row_idx} снята (не принят в работу)")
-                                    except Exception as e:
-                                        logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+                            platform = request.get("platform", "неизвестно")
 
+                            logger.info(f"👤 Обработка сессии пользователя {user_id}, платформа {platform}, строк: {assigned_rows}")
+
+                            # Для каждой строки ищем лист и обновляем статус
+                            for row_idx in assigned_rows:
+                                found = False
+                                # Если известен sheet_title – сразу берём его
+                                if sheet_title:
+                                    try:
+                                        sheet = spreadsheet.worksheet(sheet_title)
+                                        found = True
+                                    except Exception as e:
+                                        logger.error(f"Не удалось найти лист {sheet_title}: {e}")
+                                # Если не нашли – перебор всех листов
+                                if not found:
+                                    for s in spreadsheet.worksheets():
+                                        try:
+                                            s.cell(row_idx, 1)
+                                            sheet = s
+                                            found = True
+                                            break
+                                        except:
+                                            continue
+                                if not found:
+                                    logger.error(f"❌ Не найден лист для строки {row_idx}")
+                                    continue
+
+                                try:
+                                    j_val = sheet.cell(row_idx, mapping["status_col"]).value or ""
+                                    logger.info(f"🔍 Строка {row_idx}, статус J = '{j_val}'")
+
+                                    if j_val.lower() == "на модерации":
+                                        # Перевод в ОПЗ
+                                        sheet.update_cell(row_idx, mapping["status_col"], "на модерации с ОПЗ")
+                                        logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
+                                    elif j_val.lower() == "в работе":
+                                        # Снимаем отзыв
+                                        sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
+                                        sheet.update_cell(row_idx, mapping["executor_col"], "")
+                                        sheet.update_cell(row_idx, mapping["flag_final_col"], 888)
+                                        sheet.format(f"{chr(64+mapping['flag_final_col'])}{row_idx}", {
+                                            "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
+                                        })
+                                        logger.info(f"✅ Строка {row_idx} снята (не принят в работу), I=888")
+                                except Exception as e:
+                                    logger.error(f"❌ Ошибка обновления строки {row_idx}: {e}")
+
+                            # Отправляем уведомление пользователю
                             try:
                                 await bot.send_message(
                                     user_id,
-                                    "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК. "
-                                    "Невыполненные отзывы сняты с вас. "
+                                    "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК.\n"
+                                    "Невыполненные отзывы сняты с вас.\n"
                                     "Оплата за выполненные отзывы в этом слоте будет снижена на 30%."
                                 )
+                                logger.info(f"📩 Уведомление отправлено пользователю {user_id}")
                             except Exception as e:
                                 logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
 
+                            # Удаляем сессию пользователя
                             del slot_requests[user_id]
 
+                    # Закрываем все активные слоты
                     for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
                                 chat_id=CHANNEL_ID, message_id=msg_id,
                                 text="Рабочий день завершён. Все слоты закрыты."
                             )
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Не удалось отредактировать сообщение слота {msg_id}: {e}")
                         del active_slots[msg_id]
                     logger.info("✅ Все слоты закрыты в 23:30")
 
@@ -403,7 +421,7 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(60)
 
-# ---------- Обновление статистики (оставляем без изменений) ----------
+# ---------- Обновление статистики ----------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
