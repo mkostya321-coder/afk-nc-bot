@@ -75,7 +75,7 @@ def get_column_mapping(platform: str):
         "flag_third_col": 15,
         "flag_final_col": 9,
         "id_col": 19,
-        "update_col": 5,
+        "update_col": 5,  # столбец E
     }
     if platform == "про докторов":
         return {
@@ -329,7 +329,7 @@ async def monitor_schedule(bot, active_slots: dict):
                     else:
                         logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
-                # ---------- ЗАКРЫТИЕ В 23:30 (ПЕРЕПИСАНА ЛОГИКА) ----------
+                # ---------- Закрытие в 23:30 ----------
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.handlers.slots import slot_requests
@@ -346,17 +346,14 @@ async def monitor_schedule(bot, active_slots: dict):
 
                             logger.info(f"👤 Обработка сессии пользователя {user_id}, платформа {platform}, строк: {assigned_rows}")
 
-                            # Для каждой строки ищем лист и обновляем статус
                             for row_idx in assigned_rows:
                                 found = False
-                                # Если известен sheet_title – сразу берём его
                                 if sheet_title:
                                     try:
                                         sheet = spreadsheet.worksheet(sheet_title)
                                         found = True
                                     except Exception as e:
                                         logger.error(f"Не удалось найти лист {sheet_title}: {e}")
-                                # Если не нашли – перебор всех листов
                                 if not found:
                                     for s in spreadsheet.worksheets():
                                         try:
@@ -375,11 +372,9 @@ async def monitor_schedule(bot, active_slots: dict):
                                     logger.info(f"🔍 Строка {row_idx}, статус J = '{j_val}'")
 
                                     if j_val.lower() == "на модерации":
-                                        # Перевод в ОПЗ
                                         sheet.update_cell(row_idx, mapping["status_col"], "на модерации с ОПЗ")
                                         logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
                                     elif j_val.lower() == "в работе":
-                                        # Снимаем отзыв
                                         sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
                                         sheet.update_cell(row_idx, mapping["executor_col"], "")
                                         sheet.update_cell(row_idx, mapping["flag_final_col"], 888)
@@ -390,7 +385,6 @@ async def monitor_schedule(bot, active_slots: dict):
                                 except Exception as e:
                                     logger.error(f"❌ Ошибка обновления строки {row_idx}: {e}")
 
-                            # Отправляем уведомление пользователю
                             try:
                                 await bot.send_message(
                                     user_id,
@@ -402,10 +396,8 @@ async def monitor_schedule(bot, active_slots: dict):
                             except Exception as e:
                                 logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
 
-                            # Удаляем сессию пользователя
                             del slot_requests[user_id]
 
-                    # Закрываем все активные слоты
                     for msg_id in list(active_slots.keys()):
                         try:
                             await bot.edit_message_text(
@@ -463,9 +455,13 @@ async def update_stats_from_sheet_once():
                 platform_raw = row[mapping["platform_col"]-1].strip() if len(row) >= mapping["platform_col"] else ""
                 status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
                 flag_stat = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
+                e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                if flag_stat not in ("", "0"):
+                # Пропускаем строки, которые уже обработаны (I или E не пустые и не 0)
+                if flag_stat not in ("", "0") or e_flag not in ("", "0"):
+                    if e_flag:
+                        logger.debug(f"ℹ️ Строка {row_idx} на листе {sheet_name} уже обработана (E={e_flag})")
                     continue
 
                 platform = match_platform(platform_raw)
