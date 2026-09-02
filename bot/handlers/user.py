@@ -182,6 +182,7 @@ async def menu_profile(message: Message):
         warn_text = "⚠️ Предупреждений нет."
 
     text = (
+        "🤖 <b>Версия бота 1.0.0</b>\n\n"
         f"📋 Профиль\n\n"
         f"Имя: {user['name']}\n"
         f"Время от МСК: {user['timezone']}\n"
