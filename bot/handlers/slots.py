@@ -377,7 +377,6 @@ async def handle_quantity_input(message: Message):
             del slot_requests[user_id]
             return
 
-        # Записываем статус "в работе" и исполнителя
         username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
         for row_idx in assigned_rows:
             try:
@@ -399,6 +398,7 @@ async def handle_quantity_input(message: Message):
         request["active_review_row"] = None
         request["state"] = "slot_selection"
         request["assigned_rows"] = assigned_rows
+        request["extra_messages"] = []  # список ID дополнительных сообщений
 
         for _ in range(quantity):
             add_review_take(user_id, platform)
@@ -475,6 +475,7 @@ async def handle_quantity_input(message: Message):
         request["active_review_row"] = None
         request["state"] = "slot_selection"
         request["assigned_rows"] = assigned_rows
+        request["extra_messages"] = []
 
         for _ in range(quantity):
             add_review_take(user_id, platform)
@@ -585,6 +586,7 @@ async def select_review(callback: CallbackQuery):
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
     row = sheet.row_values(row_idx)
+    extra_ids = []
 
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
@@ -617,16 +619,23 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         )
         full_msg = info_msg + date_info
         await message.edit_text(full_msg, parse_mode="HTML", reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
+
         if tz_link:
-            await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
+            sent = await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
+            extra_ids.append(sent.message_id)
         if doc_link:
-            await message.answer(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}", parse_mode="HTML")
+            sent = await message.answer(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}", parse_mode="HTML")
+            extra_ids.append(sent.message_id)
         if history:
-            await message.answer(f"1️⃣ <b>История</b>\n\n{history}", parse_mode="HTML")
+            sent = await message.answer(f"1️⃣ <b>История</b>\n\n{history}", parse_mode="HTML")
+            extra_ids.append(sent.message_id)
         if like:
-            await message.answer(f"2️⃣ <b>Больше понравилось</b>\n\n{like}", parse_mode="HTML")
+            sent = await message.answer(f"2️⃣ <b>Больше понравилось</b>\n\n{like}", parse_mode="HTML")
+            extra_ids.append(sent.message_id)
         if minus:
-            await message.answer(f"3️⃣ <b>Минусы</b>\n\n{minus}", parse_mode="HTML")
+            sent = await message.answer(f"3️⃣ <b>Минусы</b>\n\n{minus}", parse_mode="HTML")
+            extra_ids.append(sent.message_id)
+
     else:
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
@@ -667,10 +676,14 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         )
         await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
         if link:
-            await message.answer(link)
+            sent = await message.answer(link)
+            extra_ids.append(sent.message_id)
         if text:
-            await message.answer(text)
+            sent = await message.answer(text)
+            extra_ids.append(sent.message_id)
 
+    # Сохраняем ID дополнительных сообщений
+    request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
 
 # ---------- Обработчик "Вернуться к слоту" ----------
@@ -685,10 +698,18 @@ async def back_to_slot(callback: CallbackQuery):
         await callback.answer("❌ Вы не находитесь в режиме просмотра отзыва.", show_alert=True)
         return
 
+    # Удаляем дополнительные сообщения
+    chat_id = callback.message.chat.id
+    for msg_id in request.get("extra_messages", []):
+        try:
+            await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception as e:
+            logger.error(f"Не удалось удалить сообщение {msg_id}: {e}")
+    request["extra_messages"] = []
+
     request["state"] = "slot_selection"
     request["active_review_row"] = None
     await callback.answer()
-    # Исправлено: не удаляем, а редактируем текущее сообщение
     await show_slot_buttons(callback.message, user_id)
 
 # ---------- Обработка скриншотов ----------
@@ -706,6 +727,15 @@ async def handle_screenshot(message: Message):
     if active_row is None:
         await message.answer("❌ Активный отзыв не найден.")
         return
+
+    # Удаляем дополнительные сообщения (ссылка, текст и т.п.)
+    chat_id = message.chat.id
+    for msg_id in request.get("extra_messages", []):
+        try:
+            await message.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception as e:
+            logger.error(f"Не удалось удалить сообщение {msg_id}: {e}")
+    request["extra_messages"] = []
 
     mapping = request["mapping"]
     sheet_title = request.get("sheet_title")
