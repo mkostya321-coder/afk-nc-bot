@@ -1,7 +1,8 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from .config import DB_PATH, OWNER_ID
+import pytz
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -233,12 +234,24 @@ def add_review_take(user_id: int, platform: str):
         conn.commit()
 
 def count_review_takes_last_24h(user_id: int, platform: str) -> int:
+    """
+    Возвращает количество отзывов, взятых пользователем на указанную платформу
+    с 10:00 текущего дня (МСК). Лимит сбрасывается каждый день в 10:00.
+    """
+    moscow_tz = pytz.timezone("Europe/Moscow")
+    now = datetime.now(moscow_tz)
+    # Вычисляем сегодняшнюю 10:00
+    today_10am = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    # Если сейчас меньше 10:00, берём вчерашнюю 10:00
+    if now < today_10am:
+        today_10am -= timedelta(days=1)
+    
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT COUNT(*) FROM review_takes
-            WHERE user_id = ? AND platform = ? AND taken_at > datetime('now', '-1 day')
-        """, (user_id, platform))
+            WHERE user_id = ? AND platform = ? AND taken_at > ?
+        """, (user_id, platform, today_10am.isoformat()))
         return cur.fetchone()[0]
 
 def get_limit(platform: str) -> int:
@@ -256,7 +269,7 @@ def set_limit(platform: str, limit: int):
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (f"limit_{platform}", str(limit)))
         conn.commit()
 
-# ---------- Получение всех зарегистрированных пользователей для рассылки ----------
+# ---------- Получение всех зарегистрированных пользователей ----------
 def get_all_registered_users():
     """Возвращает список всех зарегистрированных пользователей (user_id, tg_username)."""
     with sqlite3.connect(DB_PATH) as conn:
