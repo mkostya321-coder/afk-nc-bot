@@ -70,12 +70,13 @@ def get_column_mapping(platform: str):
         "executor_col": 11,
         "gender_col": 13,
         "text_col": 14,
-        "flag_first_col": 17,   # Q
-        "flag_second_col": 16,  # P
-        "flag_third_col": 15,   # O
-        "flag_final_col": 9,    # I
-        "id_col": 19,           # S
-        "update_col": 5,        # E
+        "flag_first_col": 17,
+        "flag_second_col": 16,
+        "flag_third_col": 15,
+        "flag_final_col": 9,
+        "id_col": 19,
+        "update_col": 5,
+        "order_col": 20,   # столбец T – номер отзыва в слоте
     }
     if platform == "про докторов":
         return {
@@ -88,12 +89,13 @@ def get_column_mapping(platform: str):
             "executor_col": 15,
             "gender_col": 16,
             "text_col": None,
-            "flag_first_col": 22,  # V (ОБНЛ 1)
-            "flag_second_col": 21, # U (обнл 2)
-            "flag_third_col": 20,  # T (обнд 3)
-            "flag_final_col": 13,  # M (ОТПРАВЛЕН В РАБОТУ)
-            "id_col": 23,          # W (ИНД НОМЕР)
-            "update_col": 5,       # E
+            "flag_first_col": 22,
+            "flag_second_col": 21,
+            "flag_third_col": 20,
+            "flag_final_col": 13,
+            "id_col": 23,
+            "update_col": 5,
+            "order_col": 24,   # столбец X – номер отзыва в слоте
             "text_history_col": 17,
             "text_like_col": 18,
             "text_minus_col": 19,
@@ -185,7 +187,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         logger.error(f"❌ Ошибка при отправке сообщения слота: {e}")
         return None
 
-# ---------- Монитор расписания ----------
+# ---------- Монитор расписания (без изменений, только добавлен order_col в mapping, но в публикации не используется) ----------
 async def monitor_schedule(bot, active_slots: dict):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -217,7 +219,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
@@ -264,7 +265,7 @@ async def monitor_schedule(bot, active_slots: dict):
                             for row_idx in row_ids:
                                 try:
                                     review_id = secrets.token_hex(4)
-                                    sheet.update_cell(row_idx, mapping["flag_first_col"], 1)  # Q
+                                    sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
                                     sheet.update_cell(row_idx, mapping["id_col"], review_id)
                                     logger.info(f"✅ Флаги Q=1 и ID={review_id} установлены для строки {row_idx}")
                                 except Exception as e:
@@ -274,7 +275,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация (попытки 2, 3, 4) ---
+                # --- Перепубликация ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -282,7 +283,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     publish_time = slot.get("publish_time")
                     if publish_time and (now - publish_time).total_seconds() >= 7200:
                         available_rows = []
-                        # Используем mapping из самого слота
                         slot_mapping = slot.get("mapping", mapping)
                         for row_idx in slot["row_ids"]:
                             try:
@@ -306,15 +306,14 @@ async def monitor_schedule(bot, active_slots: dict):
                         pass
                     del active_slots[msg_id]
 
-                    # Определяем столбец для отметки
                     if new_attempt == 2:
-                        col = slot_mapping["flag_second_col"]  # P или U
+                        col = slot_mapping["flag_second_col"]
                         flag_name = "P"
                     elif new_attempt == 3:
-                        col = slot_mapping["flag_third_col"]   # O или T
+                        col = slot_mapping["flag_third_col"]
                         flag_name = "O"
                     elif new_attempt == 4:
-                        col = slot_mapping["flag_final_col"]    # I или M
+                        col = slot_mapping["flag_final_col"]
                         flag_name = "I"
                     else:
                         col = None
@@ -328,7 +327,6 @@ async def monitor_schedule(bot, active_slots: dict):
                             except Exception as e:
                                 logger.error(f"Не удалось обновить столбец {col} для строки {row_idx}: {e}")
 
-                    # Публикуем новый слот с увеличенным attempt
                     sent_msg = await publish_scheduled_slot(
                         bot, active_slots, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows,
@@ -468,7 +466,6 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # Пропускаем уже обработанные строки (E или I уже имеют значение)
                 if flag_stat not in ("", "0") or e_flag not in ("", "0"):
                     continue
 
@@ -581,15 +578,13 @@ async def update_stats_from_sheet_once():
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
-        # Применяем обновления E
         for sheet, row_idx, e_value in updates:
             try:
-                sheet.update_cell(row_idx, 5, e_value)  # столбец E
+                sheet.update_cell(row_idx, 5, e_value)
                 logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
 
-        # Пересчёт выплат (на всякий случай)
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
