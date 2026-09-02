@@ -333,9 +333,23 @@ async def handle_quantity_input(message: Message):
     mapping = request["mapping"]
     sheet_title = request.get("sheet_title")
 
+    # Получаем доступ к таблице
+    creds = get_credentials()
+    if not creds:
+        await message.answer("❌ Ошибка доступа к таблице.")
+        del slot_requests[user_id]
+        return
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+
+    # Определяем, из какого слота берём (если из меню, нужно собрать из всех слотов)
     if request["from_menu"]:
+        # Для меню мы уже собрали все row_ids, нужно распределить их по слотам, но мы не можем обновить active_slots по отдельности.
+        # Проще: мы не будем использовать меню для новой логики? Лучше оставить как есть, но с новым подходом.
+        # Я изменю логику: для меню тоже будем резервировать и нумеровать.
         assigned_rows = request["row_ids"][:quantity]
         remaining_rows = request["row_ids"][quantity:]
+        # Обновляем active_slots, убирая assigned_rows
         for msg_id, slot in list(active_slots.items()):
             if slot.get("platform") == platform:
                 new_row_ids = [r for r in slot["row_ids"] if r not in assigned_rows]
@@ -350,40 +364,55 @@ async def handle_quantity_input(message: Message):
                         )
                     except:
                         pass
-        # Обновляем строки на конкретном листе
-        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        creds = get_credentials()
-        if creds:
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
-            if sheet_title:
+        # нумеруем и записываем order_col
+        sheet = None
+        if sheet_title:
+            try:
+                sheet = spreadsheet.worksheet(sheet_title)
+            except:
+                pass
+        if sheet is None:
+            # перебор всех листов для первого assigned_rows
+            for s in spreadsheet.worksheets():
                 try:
-                    sheet = spreadsheet.worksheet(sheet_title)
-                    for row_idx in assigned_rows:
-                        sheet.update_cell(row_idx, mapping["status_col"], "в работе")
-                        sheet.update_cell(row_idx, mapping["executor_col"], username)
-                        logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
-                        time.sleep(0.1)
-                except Exception as e:
-                    logger.error(f"Ошибка обновления строк на листе {sheet_title}: {e}")
-            else:
-                for sheet in spreadsheet.worksheets():
-                    for row_idx in assigned_rows:
-                        try:
-                            sheet.cell(row_idx, 1)
-                            sheet.update_cell(row_idx, mapping["status_col"], "в работе")
-                            sheet.update_cell(row_idx, mapping["executor_col"], username)
-                            logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
-                            time.sleep(0.1)
-                        except:
-                            continue
+                    s.cell(assigned_rows[0], 1)
+                    sheet = s
+                    break
+                except:
+                    continue
+        if sheet is None:
+            await message.answer("❌ Не удалось найти лист.")
+            del slot_requests[user_id]
+            return
+
+        # Записываем номера
+        for idx, row_idx in enumerate(assigned_rows, start=1):
+            try:
+                sheet.update_cell(row_idx, mapping["order_col"], idx)
+            except Exception as e:
+                logger.error(f"Не удалось записать номер для строки {row_idx}: {e}")
+
+        # Сохраняем в сессии список кортежей (row_idx, номер)
+        ordered_reviews = [(row_idx, idx) for idx, row_idx in enumerate(assigned_rows, start=1)]
+        request["ordered_reviews"] = ordered_reviews
+        request["completed_reviews"] = []  # список номеров уже выполненных
+        request["active_review_idx"] = None
+        request["state"] = "slot_selection"  # новый режим
+
+        # Добавляем записи в review_takes
         for _ in range(quantity):
             add_review_take(user_id, platform)
-        request["assigned_rows"] = assigned_rows
-        request["current_index"] = 0
-        request["state"] = "sending_reviews"
-        await send_next_review(message, request, sheet=None)
+
+        # Отправляем сообщение с кнопкой "Активный слот"
+        await message.answer(
+            f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
+            "Нажмите кнопку «Активный слот», чтобы приступить к работе.",
+            reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+        )
+        return
+
     else:
+        # Обработка из канала (один слот)
         slot_msg_id = request["slot_msg_id"]
         slot_info = active_slots.get(slot_msg_id)
         if not slot_info:
@@ -407,261 +436,185 @@ async def handle_quantity_input(message: Message):
                 )
             except:
                 pass
-        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        creds = get_credentials()
-        if creds:
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
-            if sheet_title:
-                try:
-                    sheet = spreadsheet.worksheet(sheet_title)
-                    for row_idx in assigned_rows:
-                        sheet.update_cell(row_idx, mapping["status_col"], "в работе")
-                        sheet.update_cell(row_idx, mapping["executor_col"], username)
-                        logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
-                        time.sleep(0.1)
-                except Exception as e:
-                    logger.error(f"Ошибка обновления строк на листе {sheet_title}: {e}")
-            else:
-                for sheet in spreadsheet.worksheets():
-                    for row_idx in assigned_rows:
-                        try:
-                            sheet.cell(row_idx, 1)
-                            sheet.update_cell(row_idx, mapping["status_col"], "в работе")
-                            sheet.update_cell(row_idx, mapping["executor_col"], username)
-                            logger.info(f"✅ Строка {row_idx} обновлена (статус 'в работе', исполнитель {username})")
-                            time.sleep(0.1)
-                        except:
-                            continue
-        for _ in range(quantity):
-            add_review_take(user_id, platform)
-        request["assigned_rows"] = assigned_rows
-        request["current_index"] = 0
-        request["state"] = "sending_reviews"
-        await send_next_review(message, request, sheet=None)
 
-# ---------- Команда отказа ----------
-@router.message(Command("cancel"))
-@router.message(Command("отказ"))
-async def cancel_task(message: Message):
-    user_id = message.from_user.id
-    if user_id not in slot_requests:
-        await message.answer("❌ У вас нет активного задания.")
-        return
-    request = slot_requests[user_id]
-    if request["state"] == "waiting_quantity":
-        await message.answer("❌ Вы ещё не взяли отзывы. Сначала выберите количество.")
-        return
-
-    assigned_rows = request["assigned_rows"]
-    current_index = request["current_index"]
-    slot_msg_id = request["slot_msg_id"]
-    slot_info = active_slots.get(slot_msg_id) if slot_msg_id != "menu" else None
-    mapping = request["mapping"]
-    sheet_title = request.get("sheet_title")
-
-    remaining_rows = assigned_rows[current_index:]
-
-    if remaining_rows:
-        creds = get_credentials()
-        if creds:
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
-            if sheet_title:
-                try:
-                    sheet = spreadsheet.worksheet(sheet_title)
-                    for row_idx in remaining_rows:
-                        sheet.update_cell(row_idx, mapping["status_col"], "")
-                        sheet.update_cell(row_idx, mapping["executor_col"], "")
-                        logger.info(f"✅ Строка {row_idx} очищена при отказе")
-                        time.sleep(0.1)
-                except Exception as e:
-                    logger.error(f"Ошибка очистки строк на листе {sheet_title}: {e}")
-            else:
-                for sheet in spreadsheet.worksheets():
-                    for row_idx in remaining_rows:
-                        try:
-                            sheet.cell(row_idx, 1)
-                            sheet.update_cell(row_idx, mapping["status_col"], "")
-                            sheet.update_cell(row_idx, mapping["executor_col"], "")
-                            logger.info(f"✅ Строка {row_idx} очищена при отказе")
-                            time.sleep(0.1)
-                        except:
-                            continue
-        if slot_info:
-            slot_info["row_ids"].extend(remaining_rows)
-            slot_info["count"] += len(remaining_rows)
-            logger.info(f"Возвращено {len(remaining_rows)} отзывов в слот {slot_msg_id}")
-        else:
-            logger.info(f"Слот {slot_msg_id} неактивен, отзывы останутся свободными")
-
-    del slot_requests[user_id]
-    await message.answer(
-        "✅ Отказ принят.\n"
-        "Выполненные отзывы отправлены на модерацию.\n"
-        "Остальные возвращены в слот и будут переопубликованы."
-    )
-
-# ---------- Обработка скриншотов (улучшенная) ----------
-@router.message(F.photo)
-async def handle_screenshot(message: Message):
-    user_id = message.from_user.id
-    if user_id not in slot_requests:
-        return
-    request = slot_requests[user_id]
-    if request["state"] != "waiting_screenshot":
-        return
-
-    mapping = request["mapping"]
-    assigned_rows = request["assigned_rows"]
-    current_index = request["current_index"]
-    current_row = assigned_rows[current_index]
-    sheet_title = request.get("sheet_title")
-
-    logger.info(f"📸 Обработка скриншота для строки {current_row}, пользователь {user_id}")
-
-    # Получаем доступ к таблице и определяем лист
-    creds = get_credentials()
-    if not creds:
-        await message.answer("❌ Ошибка доступа к таблице.")
-        return
-    client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key(SHEET_ID)
-    sheet = None
-    review_id = None
-
-    # Сначала пробуем найти по sheet_title
-    if sheet_title:
-        try:
-            sheet = spreadsheet.worksheet(sheet_title)
-            logger.info(f"✅ Найден лист по sheet_title: {sheet_title}")
-        except Exception as e:
-            logger.error(f"❌ Не удалось найти лист {sheet_title}: {e}")
-
-    # Если не нашли, перебираем все листы
-    if sheet is None:
-        for s in spreadsheet.worksheets():
+        # Определяем лист
+        sheet = None
+        if sheet_title:
             try:
-                # Пытаемся прочитать ячейку, чтобы проверить существование строки
-                s.cell(current_row, 1)
-                sheet = s
-                logger.info(f"✅ Найден лист для строки {current_row}: {s.title}")
-                break
+                sheet = spreadsheet.worksheet(sheet_title)
             except:
-                continue
-
-    if sheet is None:
-        logger.error(f"❌ Не удалось найти лист для строки {current_row}")
-        await message.answer("❌ Ошибка: не удалось найти строку в таблице.")
-        return
-
-    # Получаем или генерируем ID отзыва
-    try:
-        review_id = sheet.cell(current_row, mapping["id_col"]).value
-        if not review_id:
-            review_id = secrets.token_hex(4)
-            sheet.update_cell(current_row, mapping["id_col"], review_id)
-            logger.info(f"✅ Сгенерирован новый ID для строки {current_row}: {review_id}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка при работе с ID для строки {current_row}: {e}")
-        review_id = "Unknown"
-
-    # Обновляем статус на "на модерации"
-    try:
-        sheet.update_cell(current_row, mapping["status_col"], "на модерации")
-        sheet.update_cell(current_row, mapping["flag_final_col"], 333)
-        sheet.format(f"{chr(64+mapping['flag_final_col'])}{current_row}", {
-            "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
-        })
-        logger.info(f"✅ Строка {current_row} обновлена (статус 'на модерации', I=333)")
-    except Exception as e:
-        logger.error(f"❌ Ошибка обновления статуса для строки {current_row}: {e}")
-        await message.answer("❌ Ошибка при обновлении статуса. Попробуйте позже.")
-        return
-
-    # Пересылаем скриншот в канал
-    try:
-        user = get_user(user_id)
-        user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
-        timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id or 'Unknown'}"
-        await message.bot.send_photo(
-            chat_id=SCREENSHOT_CHANNEL_ID,
-            photo=message.photo[-1].file_id,
-            caption=caption
-        )
-        logger.info(f"✅ Скриншот переслан в канал для строки {current_row}")
-    except Exception as e:
-        logger.error(f"❌ Не удалось переслать скриншот в канал: {e}")
-
-    # Увеличиваем индекс и переходим к следующему отзыву
-    request["current_index"] += 1
-    request["state"] = "sending_reviews"
-    await send_next_review(message, request, sheet)
-
-# ---------- Отправка следующего отзыва (принимает sheet) ----------
-async def send_next_review(message: Message, request: dict, sheet=None):
-    assigned_rows = request["assigned_rows"]
-    current_index = request["current_index"]
-    platform = request["platform"]
-    mapping = request["mapping"]
-    sheet_title = request.get("sheet_title")
-
-    if current_index >= len(assigned_rows):
-        # Все отзывы выполнены
-        if message.from_user.id not in cooldowns:
-            cooldowns[message.from_user.id] = {}
-        cooldowns[message.from_user.id][platform] = datetime.now() + timedelta(hours=24)
-        await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
-        del slot_requests[message.from_user.id]
-        return
-
-    # Если sheet не передан, пытаемся найти
-    if sheet is None:
-        creds = get_credentials()
-        if creds:
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
-            row_idx = assigned_rows[current_index]
-            if sheet_title:
-                try:
-                    sheet = spreadsheet.worksheet(sheet_title)
-                except:
-                    pass
-            if sheet is None:
-                for s in spreadsheet.worksheets():
-                    try:
-                        s.cell(row_idx, 1)
-                        sheet = s
-                        break
-                    except:
-                        continue
+                pass
         if sheet is None:
-            await message.answer("❌ Ошибка: не удалось найти лист с отзывом.")
-            del slot_requests[message.from_user.id]
+            for s in spreadsheet.worksheets():
+                try:
+                    s.cell(assigned_rows[0], 1)
+                    sheet = s
+                    break
+                except:
+                    continue
+        if sheet is None:
+            await message.answer("❌ Не удалось найти лист.")
+            del slot_requests[user_id]
             return
 
-    # Отправляем инструкцию перед каждым отзывом
-    await send_instruction(message.from_user.id, message.bot)
+        # Записываем статус "в работе" и исполнителя
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        for row_idx in assigned_rows:
+            try:
+                sheet.update_cell(row_idx, mapping["status_col"], "в работе")
+                sheet.update_cell(row_idx, mapping["executor_col"], username)
+                time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Ошибка обновления строки {row_idx}: {e}")
 
-    row_idx = assigned_rows[current_index]
+        # Нумеруем
+        for idx, row_idx in enumerate(assigned_rows, start=1):
+            try:
+                sheet.update_cell(row_idx, mapping["order_col"], idx)
+            except Exception as e:
+                logger.error(f"Не удалось записать номер для строки {row_idx}: {e}")
+
+        ordered_reviews = [(row_idx, idx) for idx, row_idx in enumerate(assigned_rows, start=1)]
+        request["ordered_reviews"] = ordered_reviews
+        request["completed_reviews"] = []
+        request["active_review_idx"] = None
+        request["state"] = "slot_selection"
+        request["assigned_rows"] = assigned_rows  # сохраняем
+
+        # Добавляем записи review_takes
+        for _ in range(quantity):
+            add_review_take(user_id, platform)
+
+        await message.answer(
+            f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
+            "Нажмите кнопку «Активный слот», чтобы приступить к работе.",
+            reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+        )
+
+# ---------- Обработчик кнопки "Активный слот" ----------
+@router.callback_query(F.data.startswith("active_slot|"))
+async def active_slot(callback: CallbackQuery):
+    user_id = int(callback.data.split("|")[1])
+    if user_id != callback.from_user.id:
+        await callback.answer("Это не ваша сессия.", show_alert=True)
+        return
+    if user_id not in slot_requests:
+        await callback.answer("❌ Активная сессия не найдена.", show_alert=True)
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "slot_selection":
+        await callback.answer("❌ Вы уже в процессе выполнения.", show_alert=True)
+        return
+
+    await callback.answer()
+    await show_slot_buttons(callback.message, user_id)
+
+# ---------- Показать кнопки с номерами ----------
+async def show_slot_buttons(message: Message, user_id: int):
+    request = slot_requests[user_id]
+    ordered_reviews = request.get("ordered_reviews", [])
+    completed = request.get("completed_reviews", [])
+    platform = request["platform"]
+    platform_names = {
+        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
+        "авито": "Авито", "вк": "ВК", "отзовик": "Отзовик",
+        "доктору": "Doctoru", "докдок": "ДокДок",
+        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
+    }
+    platform_name = platform_names.get(platform, platform.capitalize())
+
+    builder = InlineKeyboardBuilder()
+    for row_idx, num in ordered_reviews:
+        if num not in completed:
+            builder.button(text=f"{platform_name} {num}", callback_data=f"select_review|{num}")
+    builder.adjust(3)  # по 3 кнопки в ряд
+    await message.edit_text(
+        f"📋 Выберите номер отзыва, который хотите выполнить:",
+        reply_markup=builder.as_markup()
+    )
+
+# ---------- Обработчик выбора номера отзыва ----------
+@router.callback_query(F.data.startswith("select_review|"))
+async def select_review(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in slot_requests:
+        await callback.answer("❌ Сессия не найдена.", show_alert=True)
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "slot_selection":
+        await callback.answer("❌ Вы уже работаете над отзывом.", show_alert=True)
+        return
+
+    selected_num = int(callback.data.split("|")[1])
+    # Найдём row_idx по номеру
+    ordered_reviews = request.get("ordered_reviews", [])
+    target_row = None
+    for row_idx, num in ordered_reviews:
+        if num == selected_num and num not in request.get("completed_reviews", []):
+            target_row = row_idx
+            break
+    if target_row is None:
+        await callback.answer("❌ Этот отзыв уже выполнен или не найден.", show_alert=True)
+        return
+
+    # Устанавливаем активный отзыв
+    request["active_review_idx"] = target_row
+    request["state"] = "working_on_review"
+
+    # Получаем данные отзыва
+    sheet = None
+    creds = get_credentials()
+    if creds:
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+        sheet_title = request.get("sheet_title")
+        if sheet_title:
+            try:
+                sheet = spreadsheet.worksheet(sheet_title)
+            except:
+                pass
+        if sheet is None:
+            for s in spreadsheet.worksheets():
+                try:
+                    s.cell(target_row, 1)
+                    sheet = s
+                    break
+                except:
+                    continue
+    if sheet is None:
+        await callback.answer("❌ Ошибка доступа к таблице.", show_alert=True)
+        return
+
+    mapping = request["mapping"]
+    row = sheet.row_values(target_row)
+    platform = request["platform"]
+
+    # Формируем информацию об отзыве (используем существующую логику, но без отправки ссылки и текста? Пока оставим как раньше)
+    # Мы можем использовать функцию send_next_review, но она сейчас привязана к пошаговому режиму. Вместо этого мы скопируем её логику.
+    # Чтобы не дублировать код, я создам отдельную функцию show_review_info, которая покажет отзыв с кнопкой "Вернуться к слоту"
+    await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
+
+    await callback.answer()
+
+# ---------- Показать информацию по отзыву ----------
+async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
+    request = slot_requests[user_id]
     row = sheet.row_values(row_idx)
 
+    # Определяем тип платформы
     if platform == "про докторов":
-        # 1. ТЗ
+        # Особый вывод для продокторов
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
-        if tz_link:
-            await message.answer(f"📄 <b>Техническое задание (ТЗ)</b>\n\n{tz_link}", parse_mode="HTML")
-        else:
-            await message.answer("📄 Техническое задание отсутствует.")
-
-        # 2. Информация по врачу
         doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
         doctor_direction = row[mapping["doctor_direction_col"]-1] if len(row) >= mapping["doctor_direction_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         platform_name = row[mapping["platform_col"]-1] if len(row) >= mapping["platform_col"] else ""
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
+        doc_link = row[mapping["photo_doc_col"]-1] if len(row) >= mapping["photo_doc_col"] else ""
+        history = row[mapping["text_history_col"]-1] if len(row) >= mapping["text_history_col"] else ""
+        like = row[mapping["text_like_col"]-1] if len(row) >= mapping["text_like_col"] else ""
+        minus = row[mapping["text_minus_col"]-1] if len(row) >= mapping["text_minus_col"] else ""
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
         info_msg = (
@@ -674,52 +627,31 @@ async def send_next_review(message: Message, request: dict, sheet=None):
             f"Платформа: {platform_name}\n"
             f"Ссылка на платформу: {link}"
         )
-
         date_info = (
             "\n\n<b>❗ Важно!</b>\n"
-            "Если в документе, который вы получили, нет даты рождения пациента, укажите, что возраст пациента от 20 лет.\n"
-            "Если в документе нет даты посещения, укажите, что посещение было в течение последних 7 дней (дата не должна быть сегодняшней)."
+            "Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
+            "Если нет даты посещения, укажите в течение последних 7 дней."
         )
-
-        await message.answer(info_msg + date_info, parse_mode="HTML")
-
-        # 3. Документ (H) – ОБЯЗАТЕЛЬНОЕ ПРИКРЕПЛЕНИЕ
-        doc_link = row[mapping["photo_doc_col"]-1] if len(row) >= mapping["photo_doc_col"] else ""
+        full_msg = info_msg + date_info
+        # Отправляем текстовую часть
+        await message.edit_text(full_msg, parse_mode="HTML", reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
+        # Отправляем остальное отдельными сообщениями
+        if tz_link:
+            await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
         if doc_link:
-            doc_warning = (
-                "📎 <b>Документ с информацией для заполнения отзыва по ТЗ</b> – "
-                "ОБЯЗАТЕЛЬНО прикрепите этот документ к отзыву!\n"
-                "Без прикреплённого документа отзыв НЕ БУДЕТ ОПЛАЧЕН."
-            )
-            await message.answer(f"{doc_warning}\n\n{doc_link}", parse_mode="HTML")
-        else:
-            await message.answer(
-                "⚠️ Документ для прикрепления отсутствует. Пожалуйста, свяжитесь с администратором.",
-                parse_mode="HTML"
-            )
-
-        # 4-9. Части отзыва
-        history = row[mapping["text_history_col"]-1] if len(row) >= mapping["text_history_col"] else ""
-        like = row[mapping["text_like_col"]-1] if len(row) >= mapping["text_like_col"] else ""
-        minus = row[mapping["text_minus_col"]-1] if len(row) >= mapping["text_minus_col"] else ""
-
+            await message.answer(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}", parse_mode="HTML")
         if history:
-            await message.answer(f"1️⃣ <b>История:</b>\n\n{history}", parse_mode="HTML")
+            await message.answer(f"1️⃣ <b>История</b>\n\n{history}", parse_mode="HTML")
         if like:
-            await message.answer(f"2️⃣ <b>Больше понравилось:</b>\n\n{like}", parse_mode="HTML")
+            await message.answer(f"2️⃣ <b>Больше понравилось</b>\n\n{like}", parse_mode="HTML")
         if minus:
-            await message.answer(f"3️⃣ <b>Минусы:</b>\n\n{minus}", parse_mode="HTML")
-
-        await message.answer("Ожидаю скриншот и продолжаем работу.")
-        request["state"] = "waiting_screenshot"
-
+            await message.answer(f"3️⃣ <b>Минусы</b>\n\n{minus}", parse_mode="HTML")
     else:
-        # Стандартная логика
+        # Стандартный вывод
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
-
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
         extra_text = template["extra_text"]
@@ -753,16 +685,208 @@ async def send_next_review(message: Message, request: dict, sheet=None):
             "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
             f"{warning}"
         )
-
-        await message.answer(final_msg, parse_mode=ParseMode.HTML)
-
+        await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
         if link:
             await message.answer(link)
         if text:
             await message.answer(text)
 
-        await message.answer("Ожидаю скриншот и продолжаем работу.")
-        request["state"] = "waiting_screenshot"
+    # Сохраняем активный row_idx в сессии
+    request["active_review_row"] = row_idx
+
+# ---------- Обработчик "Вернуться к слоту" ----------
+@router.callback_query(F.data == "back_to_slot")
+async def back_to_slot(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in slot_requests:
+        await callback.answer("❌ Сессия не найдена.", show_alert=True)
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "working_on_review":
+        await callback.answer("❌ Вы не находитесь в режиме просмотра отзыва.", show_alert=True)
+        return
+
+    # Возвращаемся в режим выбора
+    request["state"] = "slot_selection"
+    request["active_review_row"] = None
+    await callback.answer()
+    # Удаляем сообщение с информацией (мы его редактировали, но теперь нужно показать кнопки)
+    # Удаляем старое сообщение и показываем кнопки
+    await callback.message.delete()
+    await show_slot_buttons(callback.message, user_id)
+
+# ---------- Обработка скриншотов (обновлена) ----------
+@router.message(F.photo)
+async def handle_screenshot(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        return
+    request = slot_requests[user_id]
+    if request["state"] != "working_on_review":
+        await message.answer("❌ Сначала выберите отзыв из списка.")
+        return
+
+    active_row = request.get("active_review_row")
+    if active_row is None:
+        await message.answer("❌ Активный отзыв не найден.")
+        return
+
+    mapping = request["mapping"]
+    sheet_title = request.get("sheet_title")
+
+    # Находим лист
+    creds = get_credentials()
+    if not creds:
+        await message.answer("❌ Ошибка доступа к таблице.")
+        return
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+    sheet = None
+    if sheet_title:
+        try:
+            sheet = spreadsheet.worksheet(sheet_title)
+        except:
+            pass
+    if sheet is None:
+        for s in spreadsheet.worksheets():
+            try:
+                s.cell(active_row, 1)
+                sheet = s
+                break
+            except:
+                continue
+    if sheet is None:
+        await message.answer("❌ Не удалось найти лист.")
+        return
+
+    # Получаем ID отзыва
+    review_id = sheet.cell(active_row, mapping["id_col"]).value
+    if not review_id:
+        review_id = secrets.token_hex(4)
+        sheet.update_cell(active_row, mapping["id_col"], review_id)
+
+    # Обновляем статус на "на модерации"
+    try:
+        sheet.update_cell(active_row, mapping["status_col"], "на модерации")
+        sheet.update_cell(active_row, mapping["flag_final_col"], 333)
+        sheet.format(f"{chr(64+mapping['flag_final_col'])}{active_row}", {
+            "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
+        })
+        logger.info(f"✅ Строка {active_row} обновлена (статус 'на модерации')")
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса: {e}")
+        await message.answer("❌ Ошибка при сохранении скриншота. Попробуйте позже.")
+        return
+
+    # Пересылаем скриншот в канал
+    try:
+        user = get_user(user_id)
+        user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
+        timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id or 'Unknown'}"
+        await message.bot.send_photo(
+            chat_id=SCREENSHOT_CHANNEL_ID,
+            photo=message.photo[-1].file_id,
+            caption=caption
+        )
+    except Exception as e:
+        logger.error(f"Не удалось переслать скриншот: {e}")
+
+    # Отмечаем отзыв как выполненный в сессии
+    # Найдём номер отзыва
+    ordered_reviews = request.get("ordered_reviews", [])
+    completed = request.get("completed_reviews", [])
+    for row_idx, num in ordered_reviews:
+        if row_idx == active_row:
+            completed.append(num)
+            break
+    request["completed_reviews"] = completed
+    request["active_review_row"] = None
+    request["state"] = "slot_selection"
+
+    # Проверяем, все ли отзывы выполнены
+    total = len(ordered_reviews)
+    if len(completed) == total:
+        # Все отзывы выполнены
+        # Удаляем сессию, ставим кулдаун, отправляем финальное сообщение
+        if message.from_user.id not in cooldowns:
+            cooldowns[message.from_user.id] = {}
+        cooldowns[message.from_user.id][request["platform"]] = datetime.now() + timedelta(hours=24)
+        await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
+        # Удаляем сообщение с кнопками (если есть)
+        try:
+            # Мы не храним сообщение с кнопками, но можем попробовать удалить последнее, но проще будет просто очистить сессию.
+            pass
+        except:
+            pass
+        del slot_requests[user_id]
+        return
+
+    # Показываем обновлённые кнопки
+    # Удаляем текущее сообщение (если это возможно) и отправляем новые кнопки
+    # Мы не знаем, какое сообщение сейчас активно. Вместо этого мы отправим новое сообщение с кнопками.
+    await message.answer(
+        f"✅ Отзыв выполнен! Осталось {total - len(completed)} отзывов.",
+        reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+    )
+
+# ---------- Команда отказа ----------
+@router.message(Command("cancel"))
+@router.message(Command("отказ"))
+async def cancel_task(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        await message.answer("❌ У вас нет активного задания.")
+        return
+    request = slot_requests[user_id]
+    # Новая логика отказа: освобождаем все невыполненные отзывы
+    assigned_rows = request.get("assigned_rows", [])
+    completed = request.get("completed_reviews", [])
+    ordered_reviews = request.get("ordered_reviews", [])
+    # Находим невыполненные строки
+    remaining_rows = [row_idx for row_idx, num in ordered_reviews if num not in completed]
+    if remaining_rows:
+        creds = get_credentials()
+        if creds:
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            sheet_title = request.get("sheet_title")
+            mapping = request["mapping"]
+            if sheet_title:
+                try:
+                    sheet = spreadsheet.worksheet(sheet_title)
+                except:
+                    sheet = None
+            if sheet is None:
+                for s in spreadsheet.worksheets():
+                    try:
+                        s.cell(remaining_rows[0], 1)
+                        sheet = s
+                        break
+                    except:
+                        continue
+            if sheet:
+                for row_idx in remaining_rows:
+                    try:
+                        sheet.update_cell(row_idx, mapping["status_col"], "")
+                        sheet.update_cell(row_idx, mapping["executor_col"], "")
+                        sheet.update_cell(row_idx, mapping["order_col"], "")
+                        time.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Ошибка очистки строки {row_idx}: {e}")
+        # Возвращаем отзывы в слот, если слот ещё существует
+        slot_msg_id = request.get("slot_msg_id")
+        if slot_msg_id and slot_msg_id != "menu":
+            slot_info = active_slots.get(slot_msg_id)
+            if slot_info:
+                slot_info["row_ids"].extend(remaining_rows)
+                slot_info["count"] += len(remaining_rows)
+    del slot_requests[user_id]
+    await message.answer(
+        "✅ Отказ принят.\n"
+        "Выполненные отзывы отправлены на модерацию.\n"
+        "Остальные возвращены в слот и будут переопубликованы."
+    )
 
 # ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
 @router.message(Command("job"))
