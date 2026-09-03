@@ -9,7 +9,6 @@ from bot.database import (
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout
 )
-from bot.google_sheets import archive_processed_rows
 import sqlite3
 import asyncio
 import logging
@@ -41,7 +40,6 @@ def calculate_tiktok_payout(views: int) -> int:
         third_part = views - first_part - second_part
         return (first_part // 1000) * 10 + (second_part // 1000) * 5 + (third_part // 1000) * 2
 
-# ---------- Справка ----------
 @router.message(Command("helpadm"))
 async def cmd_helpadm(message: Message):
     user_id = message.from_user.id
@@ -83,7 +81,6 @@ async def cmd_helpadm(message: Message):
         )
     await message.answer(text)
 
-# ---------- /setrole ----------
 @router.message(Command("setrole"))
 async def set_role(message: Message):
     if not is_owner(message.from_user.id):
@@ -113,7 +110,6 @@ async def set_role(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -155,7 +151,6 @@ async def warn_user(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /smsuser ----------
 @router.message(Command("smsuser"))
 async def sms_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -183,7 +178,6 @@ async def sms_user(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /userblock ----------
 @router.message(Command("userblock"))
 async def user_block(message: Message):
     if not is_moderator(message.from_user.id):
@@ -212,7 +206,6 @@ async def user_block(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /info ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
     if not is_moderator(message.from_user.id):
@@ -278,7 +271,6 @@ async def cmd_info(message: Message):
     )
     await message.answer(text)
 
-# ---------- /useredit ----------
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_ga(message.from_user.id):
@@ -338,7 +330,6 @@ async def user_edit(message: Message):
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
-# ---------- /update_stats ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
@@ -352,7 +343,6 @@ async def cmd_update_stats(message: Message):
         logger.error(f"Ошибка в /update_stats: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /resetbalance ----------
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
     if not is_ga(message.from_user.id):
@@ -380,7 +370,6 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /payout_report (с архивацией) ----------
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
     if not is_owner(message.from_user.id):
@@ -421,12 +410,6 @@ async def cmd_payout_report(message: Message):
                 cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
                 conn.commit()
             await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
-            try:
-                await archive_processed_rows()
-                await message.answer("✅ Архивированы обработанные строки (E=1 → E=777).")
-            except Exception as e:
-                logger.error(f"Ошибка архивации: {e}")
-                await message.answer(f"⚠️ Ошибка архивации: {e}")
         else:
             await message.answer("✅ Отчёт отправлен.")
 
@@ -435,7 +418,6 @@ async def cmd_payout_report(message: Message):
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
 
-# ---------- /tiktok_pay ----------
 @router.message(Command("tiktok_pay"))
 async def cmd_tiktok_pay(message: Message):
     if not is_ga(message.from_user.id):
@@ -485,7 +467,6 @@ async def cmd_tiktok_pay(message: Message):
     )
     log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
 
-# ---------- /stop_tiktok ----------
 @router.message(Command("stop_tiktok"))
 async def cmd_stop_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -524,7 +505,6 @@ async def cmd_stop_tiktok(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /start_tiktok ----------
 @router.message(Command("start_tiktok"))
 async def cmd_start_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -560,7 +540,6 @@ async def cmd_start_tiktok(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /set_limit ----------
 @router.message(Command("set_limit"))
 async def cmd_set_limit(message: Message):
     if not is_ga(message.from_user.id):
