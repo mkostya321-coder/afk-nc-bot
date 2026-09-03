@@ -1,19 +1,17 @@
-import asyncio, logging, os, threading, sys
+import asyncio, logging, os, threading
 from datetime import datetime, timedelta
 from flask import Flask, Response
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
-from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID
+from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
 from bot.database import init_db, get_all_users_with_payout
 from bot.google_sheets import monitor_schedule, update_stats_from_sheet
 from bot.handlers import user, admin, slots, referral
 from bot.middlewares import AutoMenuMiddleware
+import sqlite3
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-
-print("🚀 Начинаем запуск бота...")
-print(f"BOT_TOKEN = {BOT_TOKEN[:5]}...")
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 @app.route('/')
@@ -51,7 +49,9 @@ async def weekly_payout_report(bot):
         if days_ahead == 0 and now.hour >= 8:
             days_ahead = 7
         next_thursday = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-        await asyncio.sleep((next_thursday - now).total_seconds())
+        wait_seconds = (next_thursday - now).total_seconds()
+        logging.info(f"⏳ Следующий отчёт по выплатам в четверг 08:00, ждём {wait_seconds/3600:.1f} часов.")
+        await asyncio.sleep(wait_seconds)
 
         try:
             users = get_all_users_with_payout()
@@ -65,6 +65,16 @@ async def weekly_payout_report(bot):
                     line = f"👤 @{username} (ID: {u['user_id']})\n💰 Сумма: {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
                     text_lines.append(line)
                     user_ids.append(u['user_id'])
+
+                # ---- Обнуляем балансы ДО отправки, чтобы даже при ошибке отправки они обнулились ----
+                if user_ids:
+                    with sqlite3.connect(DB_PATH) as conn:
+                        cur = conn.cursor()
+                        placeholders = ','.join(['?'] * len(user_ids))
+                        cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
+                        conn.commit()
+                    logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей перед отправкой отчёта.")
+
                 full_text = "\n".join(text_lines)
                 max_len = 4000
                 for i in range(0, len(full_text), max_len):
@@ -75,15 +85,7 @@ async def weekly_payout_report(bot):
                         message_thread_id=REPORT_THREAD_ID or None,
                         parse_mode="HTML"
                     )
-                if user_ids:
-                    import sqlite3
-                    from bot.config import DB_PATH
-                    with sqlite3.connect(DB_PATH) as conn:
-                        cur = conn.cursor()
-                        placeholders = ','.join(['?'] * len(user_ids))
-                        cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
-                        conn.commit()
-                    logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей")
+                logging.info("✅ Отчёт по выплатам отправлен.")
             else:
                 await bot.send_message(
                     chat_id=REPORT_CHAT_ID,
@@ -94,15 +96,7 @@ async def weekly_payout_report(bot):
             logging.error(f"Ошибка еженедельного отчета: {e}")
 
 async def main():
-    print("🔄 Инициализация базы данных...")
-    try:
-        init_db()
-        print("✅ База данных инициализирована.")
-    except Exception as e:
-        print(f"❌ Ошибка инициализации БД: {e}")
-        return
-
-    print("🔄 Создание бота...")
+    init_db()
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -112,36 +106,18 @@ async def main():
 
     dp.message.middleware(AutoMenuMiddleware())
 
-    print("🔄 Подключение роутеров...")
-    try:
-        dp.include_router(user.router)
-        dp.include_router(admin.router)
-        dp.include_router(slots.router)
-        # dp.include_router(referral.router)
-        print("✅ Роутеры подключены.")
-    except Exception as e:
-        print(f"❌ Ошибка подключения роутеров: {e}")
-        return
+    dp.include_router(user.router)
+    dp.include_router(admin.router)
+    dp.include_router(slots.router)
+    # dp.include_router(referral.router)
 
-    print("🔄 Запуск фоновых задач...")
-    try:
-        asyncio.create_task(scheduler(bot))
-        asyncio.create_task(monitor_schedule(bot, slots.active_slots))
-        asyncio.create_task(update_stats_from_sheet())
-        asyncio.create_task(weekly_payout_report(bot))
-        print("✅ Фоновые задачи запущены.")
-    except Exception as e:
-        print(f"❌ Ошибка запуска фоновых задач: {e}")
-        return
+    asyncio.create_task(scheduler(bot))
+    asyncio.create_task(monitor_schedule(bot, slots.active_slots))
+    asyncio.create_task(update_stats_from_sheet())
+    asyncio.create_task(weekly_payout_report(bot))
 
-    print("🚀 Запуск поллинга...")
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        print(f"❌ Ошибка поллинга: {e}")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    print("🔄 Запуск Flask в отдельном потоке...")
     threading.Thread(target=run_flask, daemon=True).start()
-    print("🔄 Запуск основного цикла...")
     asyncio.run(main())
