@@ -77,9 +77,25 @@ async def weekly_payout_report(bot):
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.cursor()
                         placeholders = ','.join(['?'] * len(user_ids))
-                        cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
+                        # Обнуляем payout и все passed-поля
+                        cur.execute(f"""
+                            UPDATE users SET 
+                                payout = 0,
+                                yandex_passed = 0,
+                                google_passed = 0,
+                                gis_passed = 0,
+                                avito_passed = 0,
+                                vk_passed = 0,
+                                otzovik_passed = 0,
+                                doctoru_passed = 0,
+                                dokdok_passed = 0,
+                                prodoctors_passed = 0,
+                                doctu_passed = 0,
+                                top32_passed = 0
+                            WHERE user_id IN ({placeholders})
+                        """, user_ids)
                         conn.commit()
-                    logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей")
+                    logging.info(f"✅ Обнулены балансы и passed-поля у {len(user_ids)} пользователей")
                     # Отмечаем строки как оплаченные
                     try:
                         await mark_paid_rows(user_ids)
@@ -108,7 +124,7 @@ async def main():
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(slots.router)
-    # dp.include_router(referral.router)  # закомментирован, т.к. функционал в user.py
+    # dp.include_router(referral.router)
 
     asyncio.create_task(scheduler(bot))
     asyncio.create_task(monitor_schedule(bot))
