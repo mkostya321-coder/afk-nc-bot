@@ -9,6 +9,7 @@ from bot.database import (
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout
 )
+from bot.google_sheets import archive_processed_rows
 import sqlite3
 import asyncio
 import logging
@@ -112,7 +113,7 @@ async def set_role(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /warn (с датой снятия) ----------
+# ---------- /warn ----------
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -169,7 +170,7 @@ async def sms_user(message: Message):
         user = get_user_by_username(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
-            return
+        return
         try:
             await message.bot.send_message(
                 user["user_id"],
@@ -379,7 +380,7 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /payout_report (исправлен: обнуление баланса) ----------
+# ---------- /payout_report (с архивацией) ----------
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
     if not is_owner(message.from_user.id):
@@ -413,7 +414,6 @@ async def cmd_payout_report(message: Message):
                 parse_mode="HTML"
             )
 
-        # ---- ОБНУЛЯЕМ БАЛАНС ----
         if user_ids:
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
@@ -421,6 +421,12 @@ async def cmd_payout_report(message: Message):
                 cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
                 conn.commit()
             await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
+            try:
+                await archive_processed_rows()
+                await message.answer("✅ Архивированы обработанные строки (E=1 → E=777).")
+            except Exception as e:
+                logger.error(f"Ошибка архивации: {e}")
+                await message.answer(f"⚠️ Ошибка архивации: {e}")
         else:
             await message.answer("✅ Отчёт отправлен.")
 
@@ -496,7 +502,6 @@ async def cmd_stop_tiktok(message: Message):
             f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
         )
 
-        # Рассылка всем зарегистрированным пользователям
         users = get_all_registered_users()
         if users:
             sent = 0
