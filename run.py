@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
 from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
 from bot.database import init_db, get_all_users_with_payout
-from bot.google_sheets import monitor_schedule, update_stats_from_sheet
+from bot.google_sheets import monitor_schedule, update_stats_from_sheet, archive_processed_rows
 from bot.handlers import user, admin, slots, referral
 from bot.middlewares import AutoMenuMiddleware
 import sqlite3
@@ -49,9 +49,7 @@ async def weekly_payout_report(bot):
         if days_ahead == 0 and now.hour >= 8:
             days_ahead = 7
         next_thursday = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-        wait_seconds = (next_thursday - now).total_seconds()
-        logging.info(f"⏳ Следующий отчёт по выплатам в четверг 08:00, ждём {wait_seconds/3600:.1f} часов.")
-        await asyncio.sleep(wait_seconds)
+        await asyncio.sleep((next_thursday - now).total_seconds())
 
         try:
             users = get_all_users_with_payout()
@@ -65,16 +63,6 @@ async def weekly_payout_report(bot):
                     line = f"👤 @{username} (ID: {u['user_id']})\n💰 Сумма: {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
                     text_lines.append(line)
                     user_ids.append(u['user_id'])
-
-                # ---- Обнуляем балансы ДО отправки, чтобы даже при ошибке отправки они обнулились ----
-                if user_ids:
-                    with sqlite3.connect(DB_PATH) as conn:
-                        cur = conn.cursor()
-                        placeholders = ','.join(['?'] * len(user_ids))
-                        cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
-                        conn.commit()
-                    logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей перед отправкой отчёта.")
-
                 full_text = "\n".join(text_lines)
                 max_len = 4000
                 for i in range(0, len(full_text), max_len):
@@ -85,7 +73,18 @@ async def weekly_payout_report(bot):
                         message_thread_id=REPORT_THREAD_ID or None,
                         parse_mode="HTML"
                     )
-                logging.info("✅ Отчёт по выплатам отправлен.")
+                if user_ids:
+                    with sqlite3.connect(DB_PATH) as conn:
+                        cur = conn.cursor()
+                        placeholders = ','.join(['?'] * len(user_ids))
+                        cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
+                        conn.commit()
+                    logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей")
+                    # Архивируем строки с E=1
+                    try:
+                        await archive_processed_rows()
+                    except Exception as e:
+                        logging.error(f"Ошибка архивации: {e}")
             else:
                 await bot.send_message(
                     chat_id=REPORT_CHAT_ID,
