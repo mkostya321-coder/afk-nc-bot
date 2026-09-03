@@ -587,24 +587,22 @@ async def update_stats_from_sheet_once():
 
         # ---- ОБНОВЛЕНИЕ E С ПОВТОРНЫМИ ПОПЫТКАМИ ----
         for sheet, row_idx, e_value in updates:
-            for attempt in range(3):  # максимум 3 попытки
+            for attempt in range(3):
                 try:
                     sheet.update_cell(row_idx, 5, e_value)
                     logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
-                    await asyncio.sleep(0.5)  # задержка 500 мс
-                    break  # успешно – выходим из цикла попыток
+                    await asyncio.sleep(0.5)
+                    break
                 except Exception as e:
                     if '429' in str(e):
                         logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt+1}/3, ждём 2 сек...")
-                        await asyncio.sleep(2)  # ждём 2 секунды перед повторной попыткой
+                        await asyncio.sleep(2)
                     else:
                         logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
-                        break  # другая ошибка – не повторяем
+                        break
             else:
-                # если все 3 попытки не удались
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx} после 3 попыток")
 
-        # Пересчёт выплат (на всякий случай)
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -635,3 +633,34 @@ async def update_stats_from_sheet_once():
 
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
+
+# ---------- НОВАЯ ФУНКЦИЯ ДЛЯ АРХИВАЦИИ E=1 → E=777 ----------
+async def archive_processed_rows():
+    """Меняет E=1 на E=777 для всех строк во всех листах (архивация после выплат)."""
+    try:
+        logger.info("🔄 Запуск архивации обработанных строк (E=1 → E=777)")
+        creds = get_credentials()
+        if not creds:
+            logger.error("❌ Нет credentials для архивации")
+            return
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+        updated_count = 0
+        for sheet in spreadsheet.worksheets():
+            records = sheet.get_all_values()
+            if len(records) < 2:
+                continue
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < 5:
+                    continue
+                e_val = row[4].strip()
+                if e_val == "1":
+                    try:
+                        sheet.update_cell(row_idx, 5, 777)
+                        updated_count += 1
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Не удалось обновить E в строке {row_idx}: {e}")
+        logger.info(f"✅ Архивировано строк: {updated_count}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка архивации: {e}")
