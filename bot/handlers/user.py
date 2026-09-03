@@ -19,7 +19,6 @@ from bot.database import (
     get_active_warnings, get_setting, set_setting
 )
 from bot.keyboards.reply import main_menu_keyboard
-from bot.handlers.slots import active_slots
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -248,7 +247,6 @@ async def menu_help(message: Message):
         "/start – Главное меню\n"
         "/reg – Регистрация\n"
         "/profile – Ваш профиль\n"
-        "/job – Активные слоты\n"
         "/myotz – Общая статистика за всё время\n"
         "/help – Эта справка\n"
         "/manual – Инструкция по правильной публикации отзывов\n"
