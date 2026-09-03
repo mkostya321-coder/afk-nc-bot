@@ -165,7 +165,7 @@ async def sms_user(message: Message):
         user = get_user_by_username(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
-        return
+            return  # <-- исправлено: return внутри if
         try:
             await message.bot.send_message(
                 user["user_id"],
@@ -410,6 +410,14 @@ async def cmd_payout_report(message: Message):
                 cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
                 conn.commit()
             await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
+            # Отмечаем строки как оплаченные
+            try:
+                from bot.google_sheets import mark_paid_rows
+                await mark_paid_rows(user_ids)
+                await message.answer("✅ Строки в таблице отмечены как оплаченные (E=1, статус 'оплачен').")
+            except Exception as e:
+                logger.error(f"Ошибка отметки строк: {e}")
+                await message.answer(f"⚠️ Ошибка при отметке строк: {e}")
         else:
             await message.answer("✅ Отчёт отправлен.")
 
