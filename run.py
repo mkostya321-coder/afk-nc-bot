@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
 from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
 from bot.database import init_db, get_all_users_with_payout
-from bot.google_sheets import monitor_schedule, update_stats_from_sheet, archive_processed_rows
+from bot.google_sheets import monitor_schedule, update_stats_from_sheet
 from bot.handlers import user, admin, slots, referral
 from bot.middlewares import AutoMenuMiddleware
 import sqlite3
@@ -80,11 +80,6 @@ async def weekly_payout_report(bot):
                         cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
                         conn.commit()
                     logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей")
-                    # Архивируем строки с E=1
-                    try:
-                        await archive_processed_rows()
-                    except Exception as e:
-                        logging.error(f"Ошибка архивации: {e}")
             else:
                 await bot.send_message(
                     chat_id=REPORT_CHAT_ID,
