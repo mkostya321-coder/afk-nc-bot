@@ -6,6 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
 from bot.database import get_user_by_username, get_user
+from bot.state import active_slots, slot_requests, cooldowns  # <-- импорт из state
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
@@ -137,8 +138,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
-# ---------- Публикация слота ----------
-async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: int,
+async def publish_scheduled_slot(bot, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1,
                                  mapping=None, sheet_title=None):
     if mapping is None:
@@ -170,7 +170,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
             chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
         )
         logger.info(f"✅ Слот {platform} опубликован, ID сообщения: {sent_msg.message_id}")
-        active_slots_dict[sent_msg.message_id] = {
+        active_slots[sent_msg.message_id] = {
             "platform": platform,
             "count": count,
             "initial_count": count,
@@ -187,8 +187,7 @@ async def publish_scheduled_slot(bot, active_slots_dict, platform: str, count: i
         logger.error(f"❌ Ошибка при отправке сообщения слота: {e}")
         return None
 
-# ---------- Монитор расписания ----------
-async def monitor_schedule(bot, active_slots: dict):
+async def monitor_schedule(bot):
     logger.info("📅 Планировщик слотов запущен")
     while True:
         try:
@@ -259,7 +258,7 @@ async def monitor_schedule(bot, active_slots: dict):
                         row_ids = [item[0] for item in items]
                         logger.info(f"🚀 Публикуем слот {platform} на {date} {time}, {count_available} шт.")
                         sent_msg = await publish_scheduled_slot(
-                            bot, active_slots, platform, count_available,
+                            bot, platform, count_available,
                             date, time, row_ids, attempt=1, mapping=mapping, sheet_title=sheet_name
                         )
                         if sent_msg:
@@ -332,7 +331,7 @@ async def monitor_schedule(bot, active_slots: dict):
                         logger.warning(f"⚠️ Неизвестный номер попытки {new_attempt}, столбец не определён")
 
                     sent_msg = await publish_scheduled_slot(
-                        bot, active_slots, slot["platform"], len(available_rows),
+                        bot, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows,
                         attempt=new_attempt, mapping=slot_mapping, sheet_title=slot.get("sheet_title")
                     )
@@ -344,7 +343,8 @@ async def monitor_schedule(bot, active_slots: dict):
                 # --- Закрытие в 23:30 ---
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
-                    from bot.handlers.slots import slot_requests
+                    # Импортируем slot_requests из state
+                    from bot.state import slot_requests
 
                     if slot_requests:
                         logger.info(f"👥 Найдено {len(slot_requests)} активных сессий пользователей")
@@ -425,7 +425,6 @@ async def monitor_schedule(bot, active_slots: dict):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(60)
 
-# ---------- Обновление статистики ----------
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
@@ -584,32 +583,32 @@ async def update_stats_from_sheet_once():
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
-        # ---- ОБНОВЛЕНИЕ E С ПРОВЕРКОЙ ----
-        for sheet, row_idx, e_value in updates:
-            success = False
-            for attempt in range(1, 11):
-                try:
-                    sheet.update_cell(row_idx, 5, e_value)
-                    # Проверяем, что записалось
-                    check = sheet.cell(row_idx, 5).value
-                    if str(check).strip() == str(e_value):
-                        logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
-                        success = True
-                        break
-                    else:
-                        logger.warning(f"⚠️ Проверка E строки {row_idx}: ожидалось {e_value}, получено {check}, повторная попытка {attempt}/10")
-                        await asyncio.sleep(2 ** attempt)
-                except Exception as e:
-                    error_msg = str(e)
-                    if '429' in error_msg:
-                        wait = 2 ** attempt
-                        logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt}/10, ждём {wait} сек...")
-                        await asyncio.sleep(wait)
-                    else:
-                        logger.error(f"❌ Не удалось обновить E для строки {row_idx} (попытка {attempt}/10): {e}")
-                        break
-            if not success:
-                logger.error(f"❌ Не удалось обновить E для строки {row_idx} после 10 попыток")
+            # ---- ОБНОВЛЕНИЕ E С ПРОВЕРКОЙ ----
+            for sheet, row_idx, e_value in updates:
+                success = False
+                for attempt in range(1, 11):
+                    try:
+                        sheet.update_cell(row_idx, 5, e_value)
+                        # Проверяем, что записалось
+                        check = sheet.cell(row_idx, 5).value
+                        if str(check).strip() == str(e_value):
+                            logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+                            success = True
+                            break
+                        else:
+                            logger.warning(f"⚠️ Проверка E строки {row_idx}: ожидалось {e_value}, получено {check}, повторная попытка {attempt}/10")
+                            await asyncio.sleep(2 ** attempt)
+                    except Exception as e:
+                        error_msg = str(e)
+                        if '429' in error_msg:
+                            wait = 2 ** attempt
+                            logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt}/10, ждём {wait} сек...")
+                            await asyncio.sleep(wait)
+                        else:
+                            logger.error(f"❌ Не удалось обновить E для строки {row_idx} (попытка {attempt}/10): {e}")
+                            break
+                if not success:
+                    logger.error(f"❌ Не удалось обновить E для строки {row_idx} после 10 попыток")
 
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
@@ -641,3 +640,55 @@ async def update_stats_from_sheet_once():
 
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
+
+# ---------- НОВАЯ ФУНКЦИЯ ДЛЯ ОТМЕТКИ ОПЛАЧЕННЫХ СТРОК ----------
+async def mark_paid_rows(user_ids: list):
+    """
+    Для каждого пользователя из списка user_ids находит строки с J="опубликован" или "опубликован ОПЗ"
+    и устанавливает E=1, а также меняет статус J на "оплачен".
+    """
+    try:
+        logger.info(f"🔄 Отметка строк как оплаченных для {len(user_ids)} пользователей")
+        creds = get_credentials()
+        if not creds:
+            logger.error("❌ Нет credentials для отметки строк")
+            return
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+
+        user_ids_set = set(str(uid) for uid in user_ids)
+        updated_count = 0
+
+        for sheet in spreadsheet.worksheets():
+            records = sheet.get_all_values()
+            if len(records) < 2:
+                continue
+            platform = platform_from_sheet_name(sheet.title)
+            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
+
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
+                    continue
+                status = row[mapping["status_col"]-1].strip().lower()
+                # Проверяем только статусы, которые должны быть оплачены
+                if status not in ("опубликован", "опубликован опз"):
+                    continue
+                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
+                user = get_user_by_username(executor)
+                if not user:
+                    continue
+                if str(user["user_id"]) in user_ids_set:
+                    e_val = row[mapping["update_col"]-1].strip()
+                    if e_val == "0" or e_val == "":
+                        try:
+                            sheet.update_cell(row_idx, mapping["update_col"], 1)
+                            # Также меняем статус на "оплачен"
+                            sheet.update_cell(row_idx, mapping["status_col"], "оплачен")
+                            updated_count += 1
+                            logger.info(f"✅ Отмечена строка {row_idx} (лист {sheet.title}) как оплаченная (E=1, статус='оплачен')")
+                            await asyncio.sleep(0.1)
+                        except Exception as e:
+                            logger.error(f"Не удалось обновить строку {row_idx}: {e}")
+        logger.info(f"✅ Отмечено {updated_count} строк как оплаченные")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в mark_paid_rows: {e}")
