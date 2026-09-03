@@ -276,7 +276,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация (с логированием) ---
+                # --- Перепубликация ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -470,14 +470,13 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # ---- ОСНОВНАЯ ЛОГИКА (исправлена) ----
+                # ---- ПРОВЕРКА ----
                 # Если E уже не 0 – строка уже обработана, пропускаем
                 if e_flag not in ("", "0"):
                     continue
-                # Если I (или M) имеет значения 666, 888, 999 – пропускаем (оплата не производится)
-                if flag_stat in ("666", "888", "999"):
+                # Если I (или M) имеет значения модерации/ошибки/снятия – пропускаем
+                if flag_stat in ("333", "666", "888", "999", "1"):
                     continue
-                # I=333, I=1, I=0, I=пусто – пропускаем, они не блокируют начисление
 
                 platform = match_platform(platform_raw)
                 if not platform:
@@ -588,13 +587,20 @@ async def update_stats_from_sheet_once():
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
+        # ---- ОБНОВЛЕНИЕ E С ЗАДЕРЖКОЙ ----
         for sheet, row_idx, e_value in updates:
             try:
                 sheet.update_cell(row_idx, 5, e_value)
                 logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+                await asyncio.sleep(0.2)  # задержка 200 мс между запросами
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
+                # Если ошибка 429 – прерываем цикл
+                if '429' in str(e):
+                    logger.warning("⚠️ Достигнут лимит запросов к Google Sheets, прерываем обновление E")
+                    break
 
+        # Пересчёт выплат (на всякий случай)
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
