@@ -639,12 +639,10 @@ async def update_stats_from_sheet_once():
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
 
-# ---------- ИСПРАВЛЕННАЯ ФУНКЦИЯ mark_paid_rows ----------
 async def mark_paid_rows(user_ids: list):
     """
     Для каждого пользователя из списка user_ids находит строки с E=0, где исполнитель совпадает,
     и устанавливает E=1, а статус меняет на "оплачен".
-    Это гарантирует, что после отчёта эти строки не будут начислены повторно.
     """
     try:
         logger.info(f"🔄 Отметка строк как оплаченных для {len(user_ids)} пользователей")
@@ -655,7 +653,6 @@ async def mark_paid_rows(user_ids: list):
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
 
-        # Преобразуем user_ids в множество строк для быстрого поиска
         user_ids_set = set(str(uid) for uid in user_ids)
         updated_count = 0
 
@@ -669,7 +666,6 @@ async def mark_paid_rows(user_ids: list):
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
                     continue
-                # Проверяем E – только если 0 или пусто
                 e_val = row[mapping["update_col"]-1].strip()
                 if e_val not in ("", "0"):
                     continue
@@ -678,13 +674,11 @@ async def mark_paid_rows(user_ids: list):
                 if not executor:
                     continue
 
-                # Находим пользователя по executor
                 user = get_user_by_username(executor)
                 if not user:
                     continue
 
                 if str(user["user_id"]) in user_ids_set:
-                    # Устанавливаем E=1 и меняем статус на "оплачен"
                     try:
                         sheet.update_cell(row_idx, mapping["update_col"], 1)
                         sheet.update_cell(row_idx, mapping["status_col"], "оплачен")
@@ -695,7 +689,6 @@ async def mark_paid_rows(user_ids: list):
                         logger.error(f"Не удалось обновить строку {row_idx}: {e}")
 
         logger.info(f"✅ Отмечено {updated_count} строк как оплаченные")
-        # Если не нашлось строк, возможно, они ещё не появились (задержка записи)
         if updated_count == 0:
             logger.warning("⚠️ Не найдено строк для отметки. Возможно, статусы не соответствуют или запись ещё не завершена.")
     except Exception as e:
