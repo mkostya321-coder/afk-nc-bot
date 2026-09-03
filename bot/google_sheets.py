@@ -470,11 +470,9 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # ---- НОВАЯ ПРОВЕРКА (исправлена) ----
-                # Если E уже не 0 – строка уже обработана, пропускаем
+                # ---- ПРОВЕРКА ----
                 if e_flag not in ("", "0"):
-                    continue
-                # Блокируем только 666, 888, 999 – остальные I (включая 333 и 1) не блокируют начисление
+                    continue  # уже обработано
                 if flag_stat in ("666", "888", "999"):
                     continue
 
@@ -587,17 +585,24 @@ async def update_stats_from_sheet_once():
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
-        # ---- ОБНОВЛЕНИЕ E С ЗАДЕРЖКОЙ ----
+        # ---- ОБНОВЛЕНИЕ E С ПОВТОРНЫМИ ПОПЫТКАМИ ----
         for sheet, row_idx, e_value in updates:
-            try:
-                sheet.update_cell(row_idx, 5, e_value)
-                logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
-                await asyncio.sleep(0.2)  # задержка 200 мс между запросами
-            except Exception as e:
-                logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
-                if '429' in str(e):
-                    logger.warning("⚠️ Достигнут лимит запросов к Google Sheets, прерываем обновление E")
-                    break
+            for attempt in range(3):  # максимум 3 попытки
+                try:
+                    sheet.update_cell(row_idx, 5, e_value)
+                    logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+                    await asyncio.sleep(0.5)  # задержка 500 мс
+                    break  # успешно – выходим из цикла попыток
+                except Exception as e:
+                    if '429' in str(e):
+                        logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt+1}/3, ждём 2 сек...")
+                        await asyncio.sleep(2)  # ждём 2 секунды перед повторной попыткой
+                    else:
+                        logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
+                        break  # другая ошибка – не повторяем
+            else:
+                # если все 3 попытки не удались
+                logger.error(f"❌ Не удалось обновить E для строки {row_idx} после 3 попыток")
 
         # Пересчёт выплат (на всякий случай)
         with sqlite3.connect(DB_PATH) as conn:
