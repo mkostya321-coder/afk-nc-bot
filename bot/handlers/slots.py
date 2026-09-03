@@ -202,6 +202,16 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
 
+    # ---- ЗАПРЕТ НА ВЗЯТИЕ НОВОГО СЛОТА ПРИ НАЛИЧИИ АКТИВНОГО ----
+    if user_id in slot_requests:
+        active_platform = slot_requests[user_id]["platform"]
+        await callback.bot.send_message(
+            user_id,
+            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
+            "Закончите его, чтобы взять новый."
+        )
+        return
+
     parts = callback.data.split("|")
     if len(parts) < 5:
         await callback.bot.send_message(user_id, "Некорректный запрос.")
@@ -266,6 +276,16 @@ async def choose_platform(callback: CallbackQuery):
         return
     if is_blocked(user_id):
         await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
+        return
+
+    # ---- ЗАПРЕТ НА ВЗЯТИЕ НОВОГО СЛОТА ПРИ НАЛИЧИИ АКТИВНОГО ----
+    if user_id in slot_requests:
+        active_platform = slot_requests[user_id]["platform"]
+        await callback.bot.send_message(
+            user_id,
+            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
+            "Закончите его, чтобы взять новый."
+        )
         return
 
     platform = callback.data.split("|")[1]
@@ -398,7 +418,7 @@ async def handle_quantity_input(message: Message):
         request["active_review_row"] = None
         request["state"] = "slot_selection"
         request["assigned_rows"] = assigned_rows
-        request["extra_messages"] = []  # список ID дополнительных сообщений
+        request["extra_messages"] = []
 
         for _ in range(quantity):
             add_review_take(user_id, platform)
@@ -682,7 +702,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(text)
             extra_ids.append(sent.message_id)
 
-    # Сохраняем ID дополнительных сообщений
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
 
@@ -698,7 +717,6 @@ async def back_to_slot(callback: CallbackQuery):
         await callback.answer("❌ Вы не находитесь в режиме просмотра отзыва.", show_alert=True)
         return
 
-    # Удаляем дополнительные сообщения
     chat_id = callback.message.chat.id
     for msg_id in request.get("extra_messages", []):
         try:
@@ -728,7 +746,6 @@ async def handle_screenshot(message: Message):
         await message.answer("❌ Активный отзыв не найден.")
         return
 
-    # Удаляем дополнительные сообщения (ссылка, текст и т.п.)
     chat_id = message.chat.id
     for msg_id in request.get("extra_messages", []):
         try:
