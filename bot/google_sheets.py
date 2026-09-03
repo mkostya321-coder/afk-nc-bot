@@ -276,7 +276,7 @@ async def monitor_schedule(bot, active_slots: dict):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация ---
+                # --- Перепубликация (с логированием) ---
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -307,7 +307,6 @@ async def monitor_schedule(bot, active_slots: dict):
                         pass
                     del active_slots[msg_id]
 
-                    # Определяем столбец для отметки
                     if new_attempt == 2:
                         col = slot_mapping["flag_second_col"]
                         flag_name = "P" if platform != "про докторов" else "U"
@@ -332,7 +331,6 @@ async def monitor_schedule(bot, active_slots: dict):
                     else:
                         logger.warning(f"⚠️ Неизвестный номер попытки {new_attempt}, столбец не определён")
 
-                    # Публикуем новый слот с увеличенным attempt
                     sent_msg = await publish_scheduled_slot(
                         bot, active_slots, slot["platform"], len(available_rows),
                         slot["date"], slot["time"], available_rows,
@@ -472,9 +470,14 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # Пропускаем уже обработанные строки (E или I уже имеют значение)
-                if flag_stat not in ("", "0") or e_flag not in ("", "0"):
+                # ---- ОСНОВНАЯ ЛОГИКА (исправлена) ----
+                # Если E уже не 0 – строка уже обработана, пропускаем
+                if e_flag not in ("", "0"):
                     continue
+                # Если I (или M) имеет значения 666, 888, 999 – пропускаем (оплата не производится)
+                if flag_stat in ("666", "888", "999"):
+                    continue
+                # I=333, I=1, I=0, I=пусто – пропускаем, они не блокируют начисление
 
                 platform = match_platform(platform_raw)
                 if not platform:
