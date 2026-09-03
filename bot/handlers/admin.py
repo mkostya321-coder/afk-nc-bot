@@ -7,7 +7,7 @@ from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
-    get_limit, set_limit, get_all_registered_users
+    get_limit, set_limit, get_all_registered_users, get_all_users_with_payout
 )
 import sqlite3
 import asyncio
@@ -21,7 +21,6 @@ def log_action(message: Message, action: str):
         text = f"👤 @{message.from_user.username or message.from_user.id} ({message.from_user.id})\n" \
                f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n" \
                f"⚙️ {action}"
-        # Исправлено: добавляем await и запускаем в фоне, чтобы не блокировать
         asyncio.create_task(message.bot.send_message(LOG_CHANNEL_ID, text))
     except:
         pass
@@ -380,27 +379,31 @@ async def reset_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /payout_report ----------
+# ---------- /payout_report (исправлен: обнуление баланса) ----------
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
     if not is_owner(message.from_user.id):
         return
+
     try:
-        from bot.database import get_all_users_with_payout
         users = get_all_users_with_payout()
         if not users:
             await message.answer("📭 Нет пользователей с балансом >= 150₽.")
             return
+
         text_lines = ["<b>📋 Список на выплату (по запросу)</b>\n"]
+        user_ids = []
         for u in users:
             username = u.get('tg_username') or u.get('username') or str(u['user_id'])
             phone = u.get('phone_card') or '—'
             bank = u.get('bank') or '—'
             line = f"👤 @{username} (ID: {u['user_id']})\n💰 Сумма: {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
             text_lines.append(line)
+            user_ids.append(u['user_id'])
         full_text = "\n".join(text_lines)
         max_len = 4000
         from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
+
         for i in range(0, len(full_text), max_len):
             chunk = full_text[i:i+max_len]
             await message.bot.send_message(
@@ -409,8 +412,19 @@ async def cmd_payout_report(message: Message):
                 message_thread_id=REPORT_THREAD_ID or None,
                 parse_mode="HTML"
             )
-        await message.answer("✅ Отчёт по выплатам отправлен в беседу.")
-        log_action(message, "Запрошен отчёт по выплатам (команда /payout_report)")
+
+        # ---- ОБНУЛЯЕМ БАЛАНС ----
+        if user_ids:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                placeholders = ','.join(['?'] * len(user_ids))
+                cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
+                conn.commit()
+            await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
+        else:
+            await message.answer("✅ Отчёт отправлен.")
+
+        log_action(message, f"Запрошен отчёт по выплатам (команда /payout_report), обнулено {len(user_ids)} пользователей")
     except Exception as e:
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
@@ -465,7 +479,7 @@ async def cmd_tiktok_pay(message: Message):
     )
     log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
 
-# ---------- /stop_tiktok (закрыть с уведомлением) ----------
+# ---------- /stop_tiktok ----------
 @router.message(Command("stop_tiktok"))
 async def cmd_stop_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -496,7 +510,7 @@ async def cmd_stop_tiktok(message: Message):
                         parse_mode="HTML"
                     )
                     sent += 1
-                    await asyncio.sleep(0.1)  # небольшая задержка, чтобы не превысить лимит
+                    await asyncio.sleep(0.1)
                 except:
                     pass
             await message.answer(f"📨 Уведомление отправлено {sent} пользователям.")
@@ -505,13 +519,12 @@ async def cmd_stop_tiktok(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /start_tiktok (открыть с уведомлением) ----------
+# ---------- /start_tiktok ----------
 @router.message(Command("start_tiktok"))
 async def cmd_start_tiktok(message: Message):
     if not is_ga(message.from_user.id):
         return
     try:
-        # Удаляем дату остановки
         set_setting("tiktok_stop_date", "")
         await message.answer("✅ Участие в Tik Tok возобновлено.\nТеперь вы можете публиковать ролики и получать выплаты.")
         log_action(message, "Возобновлено участие в Tik Tok")
@@ -520,7 +533,6 @@ async def cmd_start_tiktok(message: Message):
             "▶️ Tik Tok открыт для публикаций. Все новые ролики оплачиваются."
         )
 
-        # Рассылка всем зарегистрированным пользователям
         users = get_all_registered_users()
         if users:
             sent = 0
