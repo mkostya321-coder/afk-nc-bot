@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 from bot.keyboards.reply import main_menu_keyboard
 from bot.database import add_user, get_admin_role
-from bot.state import slot_requests   # <-- импорт из state
+from bot.state import slot_requests
 from bot.config import (
     REPORT_CHAT_ID,
     REQUIRED_CHANNEL_ID,
@@ -39,8 +39,8 @@ class AutoMenuMiddleware(BaseMiddleware):
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
 
-            # Пропускаем кнопки меню
-            if event.text in ["📋 Профиль", "💼 Слоты", "❓ Помощь", "📝 Регистрация",
+            # Пропускаем кнопки меню (кроме "Слоты" – её больше нет)
+            if event.text in ["📋 Профиль", "❓ Помощь", "📝 Регистрация",
                               "👥 Реферальная система", "👥 Мои рефералы",
                               "🎯 Другие задания", "🤝 Сотрудничество с NC"]:
                 return await handler(event, data)
