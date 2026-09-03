@@ -4,7 +4,6 @@ from aiogram.types import ReplyKeyboardMarkup
 def main_menu_keyboard(is_registered: bool = False) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="📋 Профиль")
-    builder.button(text="💼 Слоты")
     builder.button(text="❓ Помощь")
     if not is_registered:
         builder.button(text="📝 Регистрация")
