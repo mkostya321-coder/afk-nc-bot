@@ -165,7 +165,7 @@ async def sms_user(message: Message):
         user = get_user_by_username(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
-            return  # <-- исправлено: return внутри if
+            return
         try:
             await message.bot.send_message(
                 user["user_id"],
@@ -407,9 +407,25 @@ async def cmd_payout_report(message: Message):
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
                 placeholders = ','.join(['?'] * len(user_ids))
-                cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
+                # Обнуляем payout и все passed-поля
+                cur.execute(f"""
+                    UPDATE users SET 
+                        payout = 0,
+                        yandex_passed = 0,
+                        google_passed = 0,
+                        gis_passed = 0,
+                        avito_passed = 0,
+                        vk_passed = 0,
+                        otzovik_passed = 0,
+                        doctoru_passed = 0,
+                        dokdok_passed = 0,
+                        prodoctors_passed = 0,
+                        doctu_passed = 0,
+                        top32_passed = 0
+                    WHERE user_id IN ({placeholders})
+                """, user_ids)
                 conn.commit()
-            await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
+            await message.answer(f"✅ Отчёт отправлен, балансы и текущая статистика обнулены у {len(user_ids)} пользователей.")
             # Отмечаем строки как оплаченные
             try:
                 from bot.google_sheets import mark_paid_rows
