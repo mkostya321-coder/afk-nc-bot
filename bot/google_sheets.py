@@ -470,12 +470,12 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # ---- ПРОВЕРКА ----
+                # ---- НОВАЯ ПРОВЕРКА (исправлена) ----
                 # Если E уже не 0 – строка уже обработана, пропускаем
                 if e_flag not in ("", "0"):
                     continue
-                # Если I (или M) имеет значения модерации/ошибки/снятия – пропускаем
-                if flag_stat in ("333", "666", "888", "999", "1"):
+                # Блокируем только 666, 888, 999 – остальные I (включая 333 и 1) не блокируют начисление
+                if flag_stat in ("666", "888", "999"):
                     continue
 
                 platform = match_platform(platform_raw)
@@ -595,7 +595,6 @@ async def update_stats_from_sheet_once():
                 await asyncio.sleep(0.2)  # задержка 200 мс между запросами
             except Exception as e:
                 logger.error(f"❌ Не удалось обновить E для строки {row_idx}: {e}")
-                # Если ошибка 429 – прерываем цикл
                 if '429' in str(e):
                     logger.warning("⚠️ Достигнут лимит запросов к Google Sheets, прерываем обновление E")
                     break
