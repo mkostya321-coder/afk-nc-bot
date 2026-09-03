@@ -470,9 +470,8 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # ---- ПРОВЕРКА ----
                 if e_flag not in ("", "0"):
-                    continue  # уже обработано
+                    continue
                 if flag_stat in ("666", "888", "999"):
                     continue
 
@@ -585,19 +584,25 @@ async def update_stats_from_sheet_once():
                 if e_value is not None:
                     updates.append((sheet, row_idx, e_value))
 
-        # ---- ОБНОВЛЕНИЕ E С 10 ПОПЫТКАМИ ----
+        # ---- ОБНОВЛЕНИЕ E С ПРОВЕРКОЙ ----
         for sheet, row_idx, e_value in updates:
             success = False
             for attempt in range(1, 11):
                 try:
                     sheet.update_cell(row_idx, 5, e_value)
-                    logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
-                    success = True
-                    break
+                    # Проверяем, что записалось
+                    check = sheet.cell(row_idx, 5).value
+                    if str(check).strip() == str(e_value):
+                        logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
+                        success = True
+                        break
+                    else:
+                        logger.warning(f"⚠️ Проверка E строки {row_idx}: ожидалось {e_value}, получено {check}, повторная попытка {attempt}/10")
+                        await asyncio.sleep(2 ** attempt)
                 except Exception as e:
                     error_msg = str(e)
                     if '429' in error_msg:
-                        wait = 2 ** attempt  # экспоненциальная задержка
+                        wait = 2 ** attempt
                         logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt}/10, ждём {wait} сек...")
                         await asyncio.sleep(wait)
                     else:
