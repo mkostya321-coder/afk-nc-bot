@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
 from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
 from bot.database import init_db, get_all_users_with_payout
-from bot.google_sheets import monitor_schedule, update_stats_from_sheet
+from bot.google_sheets import monitor_schedule, update_stats_from_sheet, mark_paid_rows
 from bot.handlers import user, admin, slots, referral
 from bot.middlewares import AutoMenuMiddleware
 import sqlite3
@@ -80,6 +80,11 @@ async def weekly_payout_report(bot):
                         cur.execute(f"UPDATE users SET payout = 0 WHERE user_id IN ({placeholders})", user_ids)
                         conn.commit()
                     logging.info(f"✅ Обнулены балансы у {len(user_ids)} пользователей")
+                    # Отмечаем строки как оплаченные
+                    try:
+                        await mark_paid_rows(user_ids)
+                    except Exception as e:
+                        logging.error(f"Ошибка отметки строк: {e}")
             else:
                 await bot.send_message(
                     chat_id=REPORT_CHAT_ID,
@@ -103,10 +108,10 @@ async def main():
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(slots.router)
-    # dp.include_router(referral.router)
+    # dp.include_router(referral.router)  # закомментирован, т.к. функционал в user.py
 
     asyncio.create_task(scheduler(bot))
-    asyncio.create_task(monitor_schedule(bot, slots.active_slots))
+    asyncio.create_task(monitor_schedule(bot))
     asyncio.create_task(update_stats_from_sheet())
     asyncio.create_task(weekly_payout_report(bot))
 
