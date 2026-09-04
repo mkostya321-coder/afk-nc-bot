@@ -422,7 +422,8 @@ async def monitor_schedule(bot):
 
         except Exception as e:
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
-        await asyncio.sleep(60)
+        # Увеличиваем интервал до 120 секунд, чтобы избежать rate limit
+        await asyncio.sleep(120)
 
 async def update_stats_from_sheet():
     """Обновление статистики по расписанию: каждый день в 10:00 и 20:00, кроме среды. В четверг только в 20:00."""
@@ -667,7 +668,7 @@ async def update_stats_from_sheet_once():
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
 
-# ---------- НОВАЯ ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ СТАТУСА ПРИ ОТЧЁТЕ ----------
+# ---------- ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ СТАТУСА ПРИ ОТЧЁТЕ ----------
 async def mark_as_paid_in_table(user_ids: list):
     """
     Для каждого пользователя из списка user_ids находит строки с E=1 и статусом "опубликовано"/"опубликован"
@@ -732,6 +733,9 @@ async def mark_as_paid_in_table(user_ids: list):
                         await asyncio.sleep(0.1)
                     except Exception as e:
                         logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
+            
+            # Задержка между листами, чтобы не превысить лимит API
+            await asyncio.sleep(0.5)
 
         logger.info(f"✅ Отмечено {updated_count} строк как 'оплачено'")
         if updated_count == 0:
