@@ -64,7 +64,6 @@ def init_db():
                 expires_at TIMESTAMP
             )
         """)
-        # Если таблица warnings уже существовала без колонки expires_at – добавляем
         cur.execute("PRAGMA table_info(warnings)")
         columns = [col[1] for col in cur.fetchall()]
         if 'expires_at' not in columns:
@@ -80,7 +79,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS review_takes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                platform TEXT NOT NULL,
+                platform TEXT NOT NULL,   -- платформа, для которой взят отзыв
                 taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -136,7 +135,6 @@ def toggle_block(user_id: int) -> Optional[int]:
     update_user_field(user_id, "blocked", new_status)
     return new_status
 
-# ---------- Роли администраторов ----------
 def get_admin_role(user_id: int) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -165,7 +163,6 @@ def is_comoderator(user_id: int) -> bool:
     role = get_admin_role(user_id)
     return role in ('owner', 'ga', 'moderator', 'comoderator')
 
-# ---------- Предупреждения (с датами истечения) ----------
 def add_warning(user_id: int, reason: str, warned_by: int):
     extend_warnings_expiry(user_id, 45)
     with sqlite3.connect(DB_PATH) as conn:
@@ -204,7 +201,6 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         """, (days, user_id))
         conn.commit()
 
-# ---------- Настройки ----------
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -218,7 +214,6 @@ def set_setting(key: str, value: str):
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
 
-# ---------- Выплаты и рефералы ----------
 def get_all_users_with_payout():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -226,8 +221,12 @@ def get_all_users_with_payout():
         cur.execute("SELECT * FROM users WHERE payout >= 150")
         return [dict(row) for row in cur.fetchall()]
 
-# ---------- Лимиты на взятие отзывов ----------
+# ---------- Лимиты на взятие отзывов (отдельно по платформам) ----------
 def add_review_take(user_id: int, platform: str):
+    """
+    Добавляет запись о том, что пользователь взял один отзыв на указанную платформу.
+    Это используется для подсчёта лимита за день.
+    """
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("INSERT INTO review_takes (user_id, platform) VALUES (?, ?)", (user_id, platform))
@@ -245,7 +244,7 @@ def count_review_takes_last_24h(user_id: int, platform: str) -> int:
     # Если сейчас меньше 10:00, берём вчерашнюю 10:00
     if now < today_10am:
         today_10am -= timedelta(days=1)
-    
+
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -255,21 +254,25 @@ def count_review_takes_last_24h(user_id: int, platform: str) -> int:
         return cur.fetchone()[0]
 
 def get_limit(platform: str) -> int:
+    """
+    Возвращает дневной лимит для указанной платформы.
+    Если лимит не задан, возвращается 10 (значение по умолчанию).
+    """
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (f"limit_{platform}",))
         row = cur.fetchone()
         if row:
             return int(row[0])
-        return 10
+        return 10   # лимит по умолчанию
 
 def set_limit(platform: str, limit: int):
+    """Устанавливает дневной лимит для указанной платформы."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (f"limit_{platform}", str(limit)))
         conn.commit()
 
-# ---------- Получение всех зарегистрированных пользователей ----------
 def get_all_registered_users():
     """Возвращает список всех зарегистрированных пользователей (user_id, tg_username)."""
     with sqlite3.connect(DB_PATH) as conn:
