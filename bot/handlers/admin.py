@@ -80,7 +80,7 @@ async def cmd_helpadm(message: Message):
             "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
         )
     await message.answer(text)
-    log_action(message, "Просмотр списка админ-команд")  # добавил лог
+    log_action(message, "Просмотр списка админ-команд")
 
 @router.message(Command("setrole"))
 async def set_role(message: Message):
@@ -207,7 +207,6 @@ async def user_block(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- /info с добавленным логом ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
     if not is_moderator(message.from_user.id):
@@ -333,7 +332,6 @@ async def user_edit(message: Message):
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
-# ---------- /update_stats с добавленным логом ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
@@ -409,10 +407,19 @@ async def cmd_payout_report(message: Message):
             )
 
         if user_ids:
+            # Меняем статус в таблице для оплаченных строк (E=1, статус "опубликовано" -> "оплачено")
+            try:
+                from bot.google_sheets import mark_as_paid_in_table
+                await mark_as_paid_in_table(user_ids)
+                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' отмечены как 'оплачено'.")
+            except Exception as e:
+                logger.error(f"Ошибка обновления статуса в таблице: {e}")
+                await message.answer(f"⚠️ Ошибка при обновлении статуса: {e}")
+
+            # Обнуляем баланс и passed в БД
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
                 placeholders = ','.join(['?'] * len(user_ids))
-                # Обнуляем payout и все passed-поля
                 cur.execute(f"""
                     UPDATE users SET 
                         payout = 0,
@@ -431,16 +438,6 @@ async def cmd_payout_report(message: Message):
                 """, user_ids)
                 conn.commit()
             await message.answer(f"✅ Отчёт отправлен, балансы и текущая статистика обнулены у {len(user_ids)} пользователей.")
-            # Отмечаем строки как оплаченные
-            try:
-                from bot.google_sheets import mark_paid_rows
-                await mark_paid_rows(user_ids)
-                await message.answer("✅ Строки в таблице отмечены как оплаченные (E=1, статус 'оплачен').")
-            except Exception as e:
-                logger.error(f"Ошибка отметки строк: {e}")
-                await message.answer(f"⚠️ Ошибка при отметке строк: {e}")
-        else:
-            await message.answer("✅ Отчёт отправлен.")
 
         log_action(message, f"Запрошен отчёт по выплатам (команда /payout_report), обнулено {len(user_ids)} пользователей")
     except Exception as e:
