@@ -667,4 +667,74 @@ async def update_stats_from_sheet_once():
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
 
-# ---------- НОВАЯ ФУНКЦИЯ
+# ---------- НОВАЯ ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ СТАТУСА ПРИ ОТЧЁТЕ ----------
+async def mark_as_paid_in_table(user_ids: list):
+    """
+    Для каждого пользователя из списка user_ids находит строки с E=1 и статусом "опубликовано"/"опубликован"
+    и меняет статус на "оплачено". Строки с E=0 не трогает.
+    """
+    try:
+        logger.info(f"🔄 Отметка строк как оплаченных для {len(user_ids)} пользователей (меняем статус на 'оплачено')")
+        creds = get_credentials()
+        if not creds:
+            logger.error("❌ Нет credentials для отметки строк")
+            return
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+
+        # Получаем tg_username для каждого пользователя
+        users_map = {}
+        for uid in user_ids:
+            user = get_user(uid)
+            if user:
+                users_map[uid] = user.get('tg_username', '').lower()
+
+        updated_count = 0
+
+        for sheet in spreadsheet.worksheets():
+            records = sheet.get_all_values()
+            if len(records) < 2:
+                continue
+            platform = platform_from_sheet_name(sheet.title)
+            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
+
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
+                    continue
+
+                # Проверяем E – только если равно 1
+                e_val = row[mapping["update_col"]-1].strip()
+                if e_val != "1":
+                    continue
+
+                # Проверяем статус – только если "опубликовано" или "опубликован"
+                status = row[mapping["status_col"]-1].strip().lower()
+                if status not in ("опубликован", "опубликовано"):
+                    continue
+
+                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
+                if not executor:
+                    continue
+
+                # Проверяем, совпадает ли исполнитель с одним из пользователей
+                matched_user_id = None
+                for uid, username in users_map.items():
+                    if username and executor == username:
+                        matched_user_id = uid
+                        break
+
+                if matched_user_id is not None:
+                    try:
+                        # Меняем статус на "оплачено"
+                        sheet.update_cell(row_idx, mapping["status_col"], "оплачено")
+                        updated_count += 1
+                        logger.info(f"✅ Строка {row_idx} (лист {sheet.title}) для user_id {matched_user_id} помечена как 'оплачено' (E=1, статус был 'опубликовано')")
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
+
+        logger.info(f"✅ Отмечено {updated_count} строк как 'оплачено'")
+        if updated_count == 0:
+            logger.warning("⚠️ Не найдено строк для отметки. Проверьте, что в таблице есть строки с E=1 и статусом 'опубликовано' для этих пользователей.")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в mark_as_paid_in_table: {e}")
