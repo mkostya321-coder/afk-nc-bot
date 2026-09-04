@@ -422,18 +422,17 @@ async def monitor_schedule(bot):
 
         except Exception as e:
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
-        # Увеличиваем интервал до 120 секунд, чтобы избежать rate limit
-        await asyncio.sleep(120)
+        await asyncio.sleep(120)  # 2 минуты между проверками
 
 async def update_stats_from_sheet():
     """Обновление статистики по расписанию: каждый день в 10:00 и 20:00, кроме среды. В четверг только в 20:00."""
     while True:
         now = datetime.now(moscow_tz)
-        weekday = now.weekday()  # 0=понедельник, 2=среда, 3=четверг
+        weekday = now.weekday()
         target_times = []
 
         # Среда - НЕТ обновлений
-        if weekday == 2:  # среда
+        if weekday == 2:
             logger.info("📅 Сегодня среда, обновление статистики отключено")
             next_day = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
             wait_seconds = (next_day - now).total_seconds()
@@ -442,16 +441,14 @@ async def update_stats_from_sheet():
             continue
 
         # Четверг - только в 20:00
-        if weekday == 3:  # четверг
+        if weekday == 3:
             thursday_2000 = now.replace(hour=20, minute=0, second=0, microsecond=0)
             if now < thursday_2000:
                 target_times = [thursday_2000]
             else:
-                # Если уже после 20:00 в четверг, ждём до пятницы 10:00
                 friday_1000 = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 target_times = [friday_1000]
         else:
-            # Остальные дни (пн, вт, пт, сб, вс) - 10:00 и 20:00
             morning = now.replace(hour=10, minute=0, second=0, microsecond=0)
             evening = now.replace(hour=20, minute=0, second=0, microsecond=0)
             target_times = [morning, evening]
@@ -477,7 +474,8 @@ async def update_stats_from_sheet_once():
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
 
-        updates = []
+        # Собираем обновления по листам
+        updates_by_sheet = {}
 
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
@@ -487,6 +485,8 @@ async def update_stats_from_sheet_once():
             platform = platform_from_sheet_name(sheet_name)
             mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
             logger.info(f"📊 Обработка листа '{sheet_name}' для статистики")
+
+            sheet_updates = []
 
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < 10:
@@ -609,34 +609,57 @@ async def update_stats_from_sheet_once():
                     logger.info(f"ℹ️ Строка {row_idx} на листе {sheet_name}: опубликован не по ТХ, пропускаем")
 
                 if e_value is not None:
-                    updates.append((sheet, row_idx, e_value))
+                    sheet_updates.append({
+                        "row_idx": row_idx,
+                        "e_value": e_value
+                    })
 
-            # ---- ОБНОВЛЕНИЕ E С ПРОВЕРКОЙ ----
-            for sheet, row_idx, e_value in updates:
-                success = False
-                for attempt in range(1, 11):
-                    try:
-                        sheet.update_cell(row_idx, 5, e_value)
-                        check = sheet.cell(row_idx, 5).value
-                        if str(check).strip() == str(e_value):
-                            logger.info(f"✅ Обновлён E строки {row_idx} на {e_value} (лист {sheet.title})")
-                            success = True
-                            break
-                        else:
-                            logger.warning(f"⚠️ Проверка E строки {row_idx}: ожидалось {e_value}, получено {check}, повторная попытка {attempt}/10")
-                            await asyncio.sleep(2 ** attempt)
-                    except Exception as e:
-                        error_msg = str(e)
-                        if '429' in error_msg:
-                            wait = 2 ** attempt
-                            logger.warning(f"⚠️ Ошибка 429 для строки {row_idx}, попытка {attempt}/10, ждём {wait} сек...")
-                            await asyncio.sleep(wait)
-                        else:
-                            logger.error(f"❌ Не удалось обновить E для строки {row_idx} (попытка {attempt}/10): {e}")
-                            break
-                if not success:
-                    logger.error(f"❌ Не удалось обновить E для строки {row_idx} после 10 попыток")
+            if sheet_updates:
+                updates_by_sheet[sheet] = sheet_updates
 
+        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ E ----
+        for sheet, updates in updates_by_sheet.items():
+            total = len(updates)
+            logger.info(f"📝 Обновление E для {total} строк на листе {sheet.title}")
+            
+            # Разбиваем на пачки по 50 (чтобы не превысить лимит)
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = updates[i:i+batch_size]
+                batch_data = []
+                for item in batch:
+                    row_idx = item["row_idx"]
+                    e_value = item["e_value"]
+                    batch_data.append({
+                        "range": f"E{row_idx}",
+                        "values": [[e_value]]
+                    })
+                
+                try:
+                    sheet.batch_update(batch_data)
+                    logger.info(f"✅ Пакетно обновлено {len(batch)} строк (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
+                    await asyncio.sleep(0.5)  # небольшая задержка между пачками
+                except Exception as e:
+                    error_msg = str(e)
+                    if '429' in error_msg or 'quota' in error_msg.lower():
+                        logger.warning(f"⚠️ Ошибка 429 при пакетном обновлении, ждём 30 сек...")
+                        await asyncio.sleep(30)
+                        try:
+                            sheet.batch_update(batch_data)
+                            logger.info(f"✅ Пакетно обновлено {len(batch)} строк после повторной попытки")
+                        except Exception as e2:
+                            logger.error(f"❌ Ошибка при повторной попытке: {e2}")
+                            # fallback: по одному
+                            for item in batch:
+                                try:
+                                    sheet.update_cell(item["row_idx"], 5, item["e_value"])
+                                    await asyncio.sleep(0.1)
+                                except:
+                                    pass
+                    else:
+                        logger.error(f"❌ Ошибка пакетного обновления: {e}")
+
+        # Пересчитываем балансы
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -663,7 +686,8 @@ async def update_stats_from_sheet_once():
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
 
-        logger.info(f"✅ Статистика обновлена, обработано строк: {len(updates)}")
+        total_updated = sum(len(updates) for updates in updates_by_sheet.values())
+        logger.info(f"✅ Статистика обновлена, обработано строк: {total_updated}")
 
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
@@ -683,14 +707,14 @@ async def mark_as_paid_in_table(user_ids: list):
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
 
-        # Получаем tg_username для каждого пользователя
         users_map = {}
         for uid in user_ids:
             user = get_user(uid)
             if user:
                 users_map[uid] = user.get('tg_username', '').lower()
 
-        updated_count = 0
+        # Собираем обновления по листам
+        updates_by_sheet = {}
 
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
@@ -699,16 +723,16 @@ async def mark_as_paid_in_table(user_ids: list):
             platform = platform_from_sheet_name(sheet.title)
             mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
 
+            sheet_updates = []
+
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
                     continue
 
-                # Проверяем E – только если равно 1
                 e_val = row[mapping["update_col"]-1].strip()
                 if e_val != "1":
                     continue
 
-                # Проверяем статус – только если "опубликовано" или "опубликован"
                 status = row[mapping["status_col"]-1].strip().lower()
                 if status not in ("опубликован", "опубликовано"):
                     continue
@@ -717,7 +741,6 @@ async def mark_as_paid_in_table(user_ids: list):
                 if not executor:
                     continue
 
-                # Проверяем, совпадает ли исполнитель с одним из пользователей
                 matched_user_id = None
                 for uid, username in users_map.items():
                     if username and executor == username:
@@ -725,20 +748,49 @@ async def mark_as_paid_in_table(user_ids: list):
                         break
 
                 if matched_user_id is not None:
-                    try:
-                        # Меняем статус на "оплачено"
-                        sheet.update_cell(row_idx, mapping["status_col"], "оплачено")
-                        updated_count += 1
-                        logger.info(f"✅ Строка {row_idx} (лист {sheet.title}) для user_id {matched_user_id} помечена как 'оплачено' (E=1, статус был 'опубликовано')")
-                        await asyncio.sleep(0.1)
-                    except Exception as e:
-                        logger.error(f"Не удалось обновить статус для строки {row_idx}: {e}")
-            
-            # Задержка между листами, чтобы не превысить лимит API
-            await asyncio.sleep(0.5)
+                    sheet_updates.append({
+                        "row_idx": row_idx,
+                        "status_col": mapping["status_col"]
+                    })
 
-        logger.info(f"✅ Отмечено {updated_count} строк как 'оплачено'")
-        if updated_count == 0:
+            if sheet_updates:
+                updates_by_sheet[sheet] = sheet_updates
+
+        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ СТАТУСА ----
+        for sheet, updates in updates_by_sheet.items():
+            total = len(updates)
+            logger.info(f"📝 Обновление статуса для {total} строк на листе {sheet.title}")
+            
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = updates[i:i+batch_size]
+                batch_data = []
+                for item in batch:
+                    row_idx = item["row_idx"]
+                    col = item["status_col"]
+                    col_letter = chr(64 + col)  # 10 -> J, 14 -> N
+                    batch_data.append({
+                        "range": f"{col_letter}{row_idx}",
+                        "values": [["оплачено"]]
+                    })
+                
+                try:
+                    sheet.batch_update(batch_data)
+                    logger.info(f"✅ Пакетно обновлено {len(batch)} строк статусом 'оплачено' (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка пакетного обновления статуса: {e}")
+                    # fallback: по одному
+                    for item in batch:
+                        try:
+                            sheet.update_cell(item["row_idx"], item["status_col"], "оплачено")
+                            await asyncio.sleep(0.1)
+                        except:
+                            pass
+
+        total_updated = sum(len(updates) for updates in updates_by_sheet.values())
+        logger.info(f"✅ Отмечено {total_updated} строк как 'оплачено'")
+        if total_updated == 0:
             logger.warning("⚠️ Не найдено строк для отметки. Проверьте, что в таблице есть строки с E=1 и статусом 'опубликовано' для этих пользователей.")
     except Exception as e:
         logger.error(f"❌ Ошибка в mark_as_paid_in_table: {e}")
