@@ -22,8 +22,8 @@ def log_action(message: Message, action: str):
                f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n" \
                f"⚙️ {action}"
         asyncio.create_task(message.bot.send_message(LOG_CHANNEL_ID, text))
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Не удалось отправить лог в LOG_CHANNEL_ID: {e}")
 
 def calculate_tiktok_payout(views: int) -> int:
     if views <= 0:
@@ -80,6 +80,7 @@ async def cmd_helpadm(message: Message):
             "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
         )
     await message.answer(text)
+    log_action(message, "Просмотр списка админ-команд")  # добавил лог
 
 @router.message(Command("setrole"))
 async def set_role(message: Message):
@@ -206,6 +207,7 @@ async def user_block(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+# ---------- /info с добавленным логом ----------
 @router.message(Command("info"))
 async def cmd_info(message: Message):
     if not is_moderator(message.from_user.id):
@@ -270,6 +272,7 @@ async def cmd_info(message: Message):
         f"{warn_text}"
     )
     await message.answer(text)
+    log_action(message, f"Запрошен профиль пользователя {args[1]}")
 
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
@@ -330,11 +333,13 @@ async def user_edit(message: Message):
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
+# ---------- /update_stats с добавленным логом ----------
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
         return
     await message.answer("⏳ Запускаю обновление статистики...")
+    log_action(message, "Запущено обновление статистики")
     try:
         from bot.google_sheets import update_stats_from_sheet_once
         await update_stats_from_sheet_once()
