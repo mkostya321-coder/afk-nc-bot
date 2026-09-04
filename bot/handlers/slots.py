@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
 from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username, add_review_take, count_review_takes_last_24h, get_limit
 from bot.google_sheets import get_column_mapping, get_credentials
-from bot.state import active_slots, slot_requests, cooldowns   # <-- импорт из state
+from bot.state import active_slots, slot_requests   # cooldowns удалён из импорта
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pytz
@@ -229,15 +229,10 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
         return
 
-    if user_id in cooldowns and platform in cooldowns[user_id]:
-        if datetime.now() < cooldowns[user_id][platform]:
-            remaining = (cooldowns[user_id][platform] - datetime.now()).seconds // 3600
-            await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
-            return
-
+    # Проверка лимита (без cooldowns)
     if not await check_limit(user_id, platform):
         limit = get_limit(platform)
-        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа.")
+        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
         return
 
     slot_requests[user_id] = {
@@ -260,74 +255,8 @@ async def take_slot_start(callback: CallbackQuery):
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
 
-# ---------- Обработчик выбора платформы из меню "Слоты" ----------
-@router.callback_query(F.data.startswith("choose_platform|"))
-async def choose_platform(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except Exception:
-        pass
-
-    user_id = callback.from_user.id
-    if not is_registered(user_id):
-        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
-        return
-    if is_blocked(user_id):
-        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
-        return
-
-    # ---- ЗАПРЕТ НА ВЗЯТИЕ НОВОГО СЛОТА ПРИ НАЛИЧИИ АКТИВНОГО ----
-    if user_id in slot_requests:
-        active_platform = slot_requests[user_id]["platform"]
-        await callback.bot.send_message(
-            user_id,
-            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
-            "Закончите его, чтобы взять новый."
-        )
-        return
-
-    platform = callback.data.split("|")[1]
-    all_rows = []
-    sheet_title = None
-    for msg_id, slot in active_slots.items():
-        if slot.get("platform") == platform and slot.get("row_ids"):
-            all_rows.extend(slot["row_ids"])
-            if not sheet_title:
-                sheet_title = slot.get("sheet_title")
-    if not all_rows:
-        await callback.bot.send_message(user_id, "❌ Нет доступных отзывов для этой платформы.")
-        return
-
-    if user_id in cooldowns and platform in cooldowns[user_id]:
-        if datetime.now() < cooldowns[user_id][platform]:
-            remaining = (cooldowns[user_id][platform] - datetime.now()).seconds // 3600
-            await callback.bot.send_message(user_id, f"⏳ Вы уже брали {platform}. Повторно можно будет через {remaining} часов.")
-            return
-
-    if not await check_limit(user_id, platform):
-        limit = get_limit(platform)
-        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа.")
-        return
-
-    slot_requests[user_id] = {
-        "platform": platform,
-        "count": len(all_rows),
-        "date": None,
-        "time": None,
-        "slot_msg_id": "menu",
-        "state": "waiting_quantity",
-        "assigned_rows": [],
-        "current_index": 0,
-        "row_ids": all_rows,
-        "from_menu": True,
-        "mapping": get_column_mapping(platform),
-        "sheet_title": sheet_title
-    }
-
-    await callback.bot.send_message(
-        chat_id=user_id,
-        text=f"📊 Доступно отзывов на платформе {platform}: {len(all_rows)} шт.\nСколько вы готовы выполнить? (напишите число)"
-    )
+# ---------- Обработчик выбора платформы из меню "Слоты" (удалён, но оставим на всякий случай, если понадобится) ----------
+# Этот хендлер больше не используется, так как кнопка «Слоты» удалена, но если его оставить, он будет работать.
 
 # ---------- Обработчик ввода количества (общий) ----------
 @router.message(F.text)
@@ -418,6 +347,7 @@ async def handle_quantity_input(message: Message):
         request["assigned_rows"] = assigned_rows
         request["extra_messages"] = []
 
+        # Добавляем запись о взятии отзыва для каждого взятого
         for _ in range(quantity):
             add_review_take(user_id, platform)
 
@@ -821,9 +751,8 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered_reviews)
     if len(completed) == total:
-        if message.from_user.id not in cooldowns:
-            cooldowns[message.from_user.id] = {}
-        cooldowns[message.from_user.id][request["platform"]] = datetime.now() + timedelta(hours=24)
+        # Все отзывы выполнены – убираем блокировку cooldowns, так как лимит уже учтён через review_takes
+        # Никаких cooldowns не устанавливаем!
         await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
         del slot_requests[user_id]
         return
@@ -889,38 +818,9 @@ async def cancel_task(message: Message):
     )
 
 # ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
-@router.message(Command("job"))
-@router.message(F.text == "💼 Слоты")
-async def cmd_job(message: Message):
-    if is_blocked(message.from_user.id):
-        await message.answer("⛔ Вы заблокированы.")
-        return
-    if not active_slots:
-        await message.answer("😔 К сожалению, на данный момент все слоты закрыты. Ожидайте нового слота.\nС уважением, команда New Chapter.")
-        return
-
-    platforms = set()
-    for slot in active_slots.values():
-        p = slot.get("platform")
-        if p:
-            platforms.add(p)
-
-    if not platforms:
-        await message.answer("Нет доступных платформ.")
-        return
-
-    builder = InlineKeyboardBuilder()
-    platform_names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
-        "авито": "Авито", "вк": "ВК", "отзовик": "Отзовик",
-        "доктору": "Doctoru", "докдок": "ДокДок",
-        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
-    }
-    for p in platforms:
-        display_name = platform_names.get(p, p.capitalize())
-        builder.button(text=display_name, callback_data=f"choose_platform|{p}")
-    builder.adjust(2)
-    await message.answer(
-        "Выберите платформу, с которой хотите взять отзывы:",
-        reply_markup=builder.as_markup()
-    )
+# Этот хендлер удалён, так как кнопка «Слоты» больше не используется.
+# Оставляем на всякий случай только если нужно, но он закомментирован.
+# @router.message(Command("job"))
+# @router.message(F.text == "💼 Слоты")
+# async def cmd_job(message: Message):
+#     ...
