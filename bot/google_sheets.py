@@ -1,4 +1,4 @@
-import os, sqlite3, logging, asyncio, secrets, time
+import os, sqlite3, logging, asyncio, secrets
 from datetime import datetime, timedelta
 import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -6,7 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
 from bot.database import get_user_by_username, get_user
-from bot.state import active_slots, slot_requests, cooldowns
+from bot.state import active_slots, slot_requests
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
@@ -425,16 +425,44 @@ async def monitor_schedule(bot):
         await asyncio.sleep(60)
 
 async def update_stats_from_sheet():
+    """Обновление статистики по расписанию: каждый день в 10:00 и 20:00, кроме среды. В четверг только в 20:00."""
     while True:
         now = datetime.now(moscow_tz)
-        target_times = [
-            now.replace(hour=10, minute=0, second=0, microsecond=0),
-            now.replace(hour=20, minute=0, second=0, microsecond=0)
-        ]
-        future_times = [t if t > now else t + timedelta(days=1) for t in target_times]
+        weekday = now.weekday()  # 0=понедельник, 2=среда, 3=четверг
+        target_times = []
+
+        # Среда - НЕТ обновлений
+        if weekday == 2:  # среда
+            logger.info("📅 Сегодня среда, обновление статистики отключено")
+            next_day = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            wait_seconds = (next_day - now).total_seconds()
+            logger.info(f"⏳ Следующее обновление статистики в {next_day.strftime('%d.%m.%Y %H:%M')}, ждём {wait_seconds/3600:.1f} ч.")
+            await asyncio.sleep(wait_seconds)
+            continue
+
+        # Четверг - только в 20:00
+        if weekday == 3:  # четверг
+            thursday_2000 = now.replace(hour=20, minute=0, second=0, microsecond=0)
+            if now < thursday_2000:
+                target_times = [thursday_2000]
+            else:
+                # Если уже после 20:00 в четверг, ждём до пятницы 10:00
+                friday_1000 = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                target_times = [friday_1000]
+        else:
+            # Остальные дни (пн, вт, пт, сб, вс) - 10:00 и 20:00
+            morning = now.replace(hour=10, minute=0, second=0, microsecond=0)
+            evening = now.replace(hour=20, minute=0, second=0, microsecond=0)
+            target_times = [morning, evening]
+
+        future_times = [t for t in target_times if t > now]
+        if not future_times:
+            tomorrow = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            future_times = [tomorrow]
+
         next_target = min(future_times)
         wait_seconds = (next_target - now).total_seconds()
-        logger.info(f"⏳ Следующее обновление статистики в {next_target.strftime('%H:%M')}, ждём {wait_seconds/60:.1f} мин.")
+        logger.info(f"⏳ Следующее обновление статистики в {next_target.strftime('%d.%m.%Y %H:%M')}, ждём {wait_seconds/60:.1f} мин.")
         await asyncio.sleep(wait_seconds)
         await update_stats_from_sheet_once()
 
@@ -639,57 +667,4 @@ async def update_stats_from_sheet_once():
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
 
-async def mark_paid_rows(user_ids: list):
-    """
-    Для каждого пользователя из списка user_ids находит строки с E=0, где исполнитель совпадает,
-    и устанавливает E=1, а статус меняет на "оплачен".
-    """
-    try:
-        logger.info(f"🔄 Отметка строк как оплаченных для {len(user_ids)} пользователей")
-        creds = get_credentials()
-        if not creds:
-            logger.error("❌ Нет credentials для отметки строк")
-            return
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(SHEET_ID)
-
-        user_ids_set = set(str(uid) for uid in user_ids)
-        updated_count = 0
-
-        for sheet in spreadsheet.worksheets():
-            records = sheet.get_all_values()
-            if len(records) < 2:
-                continue
-            platform = platform_from_sheet_name(sheet.title)
-            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
-
-            for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
-                    continue
-                e_val = row[mapping["update_col"]-1].strip()
-                if e_val not in ("", "0"):
-                    continue
-
-                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
-                if not executor:
-                    continue
-
-                user = get_user_by_username(executor)
-                if not user:
-                    continue
-
-                if str(user["user_id"]) in user_ids_set:
-                    try:
-                        sheet.update_cell(row_idx, mapping["update_col"], 1)
-                        sheet.update_cell(row_idx, mapping["status_col"], "оплачен")
-                        updated_count += 1
-                        logger.info(f"✅ Отмечена строка {row_idx} (лист {sheet.title}) как оплаченная (E=1, статус='оплачен')")
-                        await asyncio.sleep(0.1)
-                    except Exception as e:
-                        logger.error(f"Не удалось обновить строку {row_idx}: {e}")
-
-        logger.info(f"✅ Отмечено {updated_count} строк как оплаченные")
-        if updated_count == 0:
-            logger.warning("⚠️ Не найдено строк для отметки. Возможно, статусы не соответствуют или запись ещё не завершена.")
-    except Exception as e:
-        logger.error(f"❌ Ошибка в mark_paid_rows: {e}")
+# ---------- НОВАЯ ФУНКЦИЯ
