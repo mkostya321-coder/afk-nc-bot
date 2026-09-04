@@ -700,4 +700,90 @@ async def mark_as_paid_in_table(user_ids: list):
             logger.error("❌ Нет credentials для отметки строк")
             return
         client = gspread.authorize(creds)
-        spreadsheet = client.open
+        spreadsheet = client.open_by_key(SHEET_ID)
+
+        users_map = {}
+        for uid in user_ids:
+            user = get_user(uid)
+            if user:
+                users_map[uid] = user.get('tg_username', '').lower()
+
+        updates_by_sheet = {}
+
+        for sheet in spreadsheet.worksheets():
+            records = sheet.get_all_values()
+            if len(records) < 2:
+                continue
+            platform = platform_from_sheet_name(sheet.title)
+            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
+
+            sheet_updates = []
+
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
+                    continue
+
+                e_val = row[mapping["update_col"]-1].strip()
+                if e_val != "1":
+                    continue
+
+                status = row[mapping["status_col"]-1].strip().lower()
+                if status not in ("опубликован", "опубликовано"):
+                    continue
+
+                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
+                if not executor:
+                    continue
+
+                matched_user_id = None
+                for uid, username in users_map.items():
+                    if username and executor == username:
+                        matched_user_id = uid
+                        break
+
+                if matched_user_id is not None:
+                    sheet_updates.append({
+                        "row_idx": row_idx,
+                        "status_col": mapping["status_col"]
+                    })
+
+            if sheet_updates:
+                updates_by_sheet[sheet] = sheet_updates
+
+        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ СТАТУСА НА "В отчете ИСПЛ" ----
+        for sheet, updates in updates_by_sheet.items():
+            total = len(updates)
+            logger.info(f"📝 Обновление статуса для {total} строк на листе {sheet.title} -> 'В отчете ИСПЛ'")
+            
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = updates[i:i+batch_size]
+                batch_data = []
+                for item in batch:
+                    row_idx = item["row_idx"]
+                    col = item["status_col"]
+                    col_letter = chr(64 + col)
+                    batch_data.append({
+                        "range": f"{col_letter}{row_idx}",
+                        "values": [["В отчете ИСПЛ"]]
+                    })
+                
+                try:
+                    sheet.batch_update(batch_data)
+                    logger.info(f"✅ Пакетно обновлено {len(batch)} строк статусом 'В отчете ИСПЛ' (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка пакетного обновления статуса: {e}")
+                    for item in batch:
+                        try:
+                            sheet.update_cell(item["row_idx"], item["status_col"], "В отчете ИСПЛ")
+                            await asyncio.sleep(0.1)
+                        except:
+                            pass
+
+        total_updated = sum(len(updates) for updates in updates_by_sheet.values())
+        logger.info(f"✅ Отмечено {total_updated} строк как 'В отчете ИСПЛ'")
+        if total_updated == 0:
+            logger.warning("⚠️ Не найдено строк для отметки. Проверьте, что в таблице есть строки с E=1 и статусом 'опубликовано' для этих пользователей.")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в mark_as_paid_in_table: {e}")
