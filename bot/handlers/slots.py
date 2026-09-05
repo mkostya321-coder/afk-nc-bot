@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
 from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username, add_review_take, count_review_takes_last_24h, get_limit
 from bot.google_sheets import get_column_mapping, get_credentials
-from bot.state import active_slots, slot_requests   # cooldowns удалён из импорта
+from bot.state import active_slots, slot_requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pytz
@@ -229,7 +229,7 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
         return
 
-    # Проверка лимита (без cooldowns)
+    # Проверка лимита
     if not await check_limit(user_id, platform):
         limit = get_limit(platform)
         await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
@@ -255,10 +255,7 @@ async def take_slot_start(callback: CallbackQuery):
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
 
-# ---------- Обработчик выбора платформы из меню "Слоты" (удалён, но оставим на всякий случай, если понадобится) ----------
-# Этот хендлер больше не используется, так как кнопка «Слоты» удалена, но если его оставить, он будет работать.
-
-# ---------- Обработчик ввода количества (общий) ----------
+# ---------- Обработчик ввода количества ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -347,7 +344,6 @@ async def handle_quantity_input(message: Message):
         request["assigned_rows"] = assigned_rows
         request["extra_messages"] = []
 
-        # Добавляем запись о взятии отзыва для каждого взятого
         for _ in range(quantity):
             add_review_take(user_id, platform)
 
@@ -530,7 +526,7 @@ async def select_review(callback: CallbackQuery):
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
     await callback.answer()
 
-# ---------- Показать информацию по отзыву ----------
+# ---------- ПОКАЗАТЬ ИНФОРМАЦИЮ ПО ОТЗЫВУ (ОСНОВНАЯ ФУНКЦИЯ) ----------
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
     row = sheet.row_values(row_idx)
@@ -589,6 +585,8 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
+        photo_link = row[17] if len(row) > 17 else ""  # столбец R (индекс 17)
+        
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
         extra_text = template["extra_text"]
@@ -602,14 +600,9 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю."
 
-        photo_link = row[17] if len(row) > 17 else ""
-        photo_warning = ""
-        if photo_link:
-            photo_warning = "📸 <b>Фотография к ОБЯЗАТЕЛЬНОМУ прикреплению к отзыву!</b>\nЕсли вы не прикрепите фото, отзыв будет оплачен на 50% ниже.\n\n"
-
+        # Собираем основное сообщение
         final_msg = (
             f"{instruction_text}\n\n"
-            f"{photo_warning}"
             f"⭐ Количество звезд: {stars}\n"
             "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
             "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
@@ -622,13 +615,30 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
             f"{warning}"
         )
+        
+        # Отправляем основное сообщение
         await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
+        
+        # Отправляем ссылку на карточку
         if link:
             sent = await message.answer(link)
             extra_ids.append(sent.message_id)
+        
+        # Отправляем текст отзыва
         if text:
             sent = await message.answer(text)
             extra_ids.append(sent.message_id)
+        
+        # ---- ОТПРАВКА ССЫЛКИ НА ФОТО ИЗ СТОЛБЦА R С ПРЕДУПРЕЖДЕНИЕМ О ШТРАФЕ ----
+        if photo_link:
+            sent = await message.answer(
+                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n"
+                f"{photo_link}\n\n"
+                f"<b>⚠️ ШТРАФ: если вы не прикрепите это фото к отзыву, оплата будет снижена на 50%!</b>",
+                parse_mode="HTML"
+            )
+            extra_ids.append(sent.message_id)
+            logger.info(f"✅ Ссылка на фото из столбца R отправлена: {photo_link}")
 
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
@@ -751,8 +761,6 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered_reviews)
     if len(completed) == total:
-        # Все отзывы выполнены – убираем блокировку cooldowns, так как лимит уже учтён через review_takes
-        # Никаких cooldowns не устанавливаем!
         await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
         del slot_requests[user_id]
         return
@@ -816,11 +824,3 @@ async def cancel_task(message: Message):
         "Выполненные отзывы отправлены на модерацию.\n"
         "Остальные возвращены в слот и будут переопубликованы."
     )
-
-# ---------- Команда для пользователя "Слоты" (кнопка в меню) ----------
-# Этот хендлер удалён, так как кнопка «Слоты» больше не используется.
-# Оставляем на всякий случай только если нужно, но он закомментирован.
-# @router.message(Command("job"))
-# @router.message(F.text == "💼 Слоты")
-# async def cmd_job(message: Message):
-#     ...
