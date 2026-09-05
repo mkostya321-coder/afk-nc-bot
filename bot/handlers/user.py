@@ -52,7 +52,7 @@ class CollaborationForm(StatesGroup):
 class SupportForm(StatesGroup):
     problem = State()
 
-# ============= ПРАВИЛА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) =============
+# ============= ПРАВИЛА =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -98,24 +98,40 @@ async def show_intro(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "intro_next")
 async def process_intro_next(callback: CallbackQuery, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == IntroState.first.state:
-        await state.set_state(IntroState.second)
-        kb = InlineKeyboardBuilder()
-        kb.button(text="Далее", callback_data="intro_next")
-        await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
-    elif current_state == IntroState.second.state:
-        await state.clear()
-        kb = InlineKeyboardBuilder()
-        kb.button(text="Регистрация", callback_data="menu_reg")
-        await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
-    await callback.answer()
+    try:
+        current_state = await state.get_state()
+        if current_state == IntroState.first.state:
+            await state.set_state(IntroState.second)
+            kb = InlineKeyboardBuilder()
+            kb.button(text="Далее", callback_data="intro_next")
+            try:
+                await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
+            except Exception as e:
+                logger.warning(f"Не удалось отредактировать сообщение: {e}")
+                await callback.message.answer(RULES_2, reply_markup=kb.as_markup())
+        elif current_state == IntroState.second.state:
+            await state.clear()
+            kb = InlineKeyboardBuilder()
+            kb.button(text="Регистрация", callback_data="menu_reg")
+            try:
+                await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
+            except Exception as e:
+                logger.warning(f"Не удалось отредактировать сообщение: {e}")
+                await callback.message.answer("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка в process_intro_next: {e}")
+        await callback.answer("Произошла ошибка, попробуйте снова /start", show_alert=True)
 
 @router.callback_query(F.data == "menu_reg")
 async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.delete()
-    await start_registration(callback.message, state)
+    try:
+        await callback.answer()
+        await callback.message.delete()
+        await start_registration(callback.message, state)
+    except Exception as e:
+        logger.error(f"Ошибка в menu_reg_callback: {e}")
+        await callback.message.answer("Произошла ошибка, попробуйте позже.")
 
 # ---------- Старт ----------
 @router.message(Command("start"))
@@ -168,7 +184,6 @@ async def menu_profile(message: Message):
             else:
                 ref_status = "🚀 в процессе"
 
-    # ---- Предупреждения ----
     active_warnings = get_active_warnings(user_id)
     warn_text = ""
     if active_warnings:
@@ -590,278 +605,4 @@ def build_page_text(data, page, page_size):
     return "\n".join(lines)
 
 @router.callback_query(F.data.startswith("ref_nav:"))
-async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
-    page = int(callback.data.split(":")[1]) - 1
-    data_state = await state.get_data()
-    ref_data = data_state.get("ref_data", [])
-    total_pages = data_state.get("ref_total_pages", 1)
-
-    if not ref_data:
-        await callback.answer("Нет данных.", show_alert=True)
-        return
-
-    buttons = []
-    if page > 0:
-        buttons.append(InlineKeyboardButton(text=f"← Страница {page}", callback_data=f"ref_nav:{page}"))
-    buttons.append(InlineKeyboardButton(text=f"Страница {page+1}", callback_data="ignore"))
-    if page < total_pages - 1:
-        buttons.append(InlineKeyboardButton(text=f"Страница {page+2} →", callback_data=f"ref_nav:{page+2}"))
-
-    keyboard = InlineKeyboardBuilder()
-    keyboard.row(*buttons)
-
-    text = build_page_text(ref_data, page, 10)
-    await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
-    await callback.answer()
-
-# ============ ДРУГИЕ ЗАДАНИЯ ============
-
-@router.message(F.text == "🎯 Другие задания")
-async def other_tasks(message: Message):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🎬 Tik Tok", callback_data="task_tiktok")
-    kb.button(text="📊 Отчет Tik Tok", callback_data="report_tiktok")
-    kb.adjust(1)
-    await message.answer("Выберите задание:", reply_markup=kb.as_markup())
-
-# ---------- Tik Tok: показ видео и правил (с проверкой остановки) ----------
-@router.callback_query(F.data == "task_tiktok")
-async def tiktok_task(callback: CallbackQuery):
-    await callback.answer()
-    user_id = callback.from_user.id
-    if not is_registered(user_id):
-        await callback.message.answer("❌ Сначала зарегистрируйтесь.")
-        return
-
-    # Проверка на остановку Tik Tok
-    stop_date = get_setting("tiktok_stop_date")
-    if stop_date:
-        await callback.message.answer(
-            f"⛔ <b>Внимание!</b> Участие в Tik Tok приостановлено с <b>{stop_date}</b>.\n"
-            "Все ролики, опубликованные после этой даты, <b>не оплачиваются</b>.\n"
-            "Пожалуйста, будьте внимательны! Это правило прописано в справке /tiktok.",
-            parse_mode="HTML"
-        )
-        return
-
-    rules = (
-        "🎬 <b>Задание Tik Tok</b>\n\n"
-        "📌 Над данным текстом находится рекламный ролик New Chapter, который вы должны будете вставить в свое видео.\n"
-        "Видео вы можете делать на любую тему, кроме тех, что входят в запрещающий список.\n\n"
-        "<b>🚫 В ролике ЗАПРЕЩАЕТСЯ:</b>\n"
-        "❌ Содержание порнографического контента\n"
-        "❌ Пропаганда запрещенных веществ\n"
-        "❌ <b>Содержание другой ЛЮБОЙ рекламы</b>\n"
-        "❌ Видео на политические темы\n"
-        "❌ Оскорбительный контент\n"
-        "❌ Содержание запрещенного контента в РФ\n\n"
-        "<b>💰 Ваш доход:</b>\n"
-        "📊 За 1000 просмотров вы получаете <b>10 рублей</b>.\n"
-        "🔥 1.000.000 просмотров → <b>10.000 рублей</b>\n"
-        "📉 После 1 млн просмотров, последующие 1000 просмотров оплачиваются по <b>5 рублей</b> (до 500.000 просмотров).\n"
-        "📉 Далее <b>2 рубля</b> за 1000 просмотров.\n"
-        "💰 Максимальная выплата в неделю за ролик в Tik Tok — <b>10.000 рублей</b>.\n"
-        "💳 Выплата через кошелек в @ncjobbot.\n\n"
-        "Удачи! 🚀"
-    )
-
-    try:
-        if TIKTOK_VIDEO_ID:
-            await callback.message.answer_video(video=TIKTOK_VIDEO_ID, caption=rules, parse_mode="HTML")
-        elif TIKTOK_VIDEO_PATH and os.path.exists(TIKTOK_VIDEO_PATH):
-            video_file = FSInputFile(TIKTOK_VIDEO_PATH)
-            await callback.message.answer_video(video=video_file, caption=rules, parse_mode="HTML")
-        else:
-            await callback.message.answer(rules, parse_mode="HTML")
-    except Exception as e:
-        logger.error(f"Ошибка отправки видео Tik Tok: {e}")
-        await callback.message.answer(rules, parse_mode="HTML")
-
-# ---------- Отчет Tik Tok (сначала описание и кнопка) ----------
-@router.callback_query(F.data == "report_tiktok")
-async def report_tiktok_intro(callback: CallbackQuery):
-    await callback.answer()
-    user_id = callback.from_user.id
-    if not is_registered(user_id):
-        await callback.message.answer("❌ Сначала зарегистрируйтесь.")
-        return
-
-    text = (
-        "📊 <b>Отчет по Tik Tok</b>\n\n"
-        "Для предоставления отчета вам необходимо ответить на несколько вопросов и приложить скриншоты.\n\n"
-        "Вам нужно будет указать:\n"
-        "• Название вашего аккаунта Tik Tok\n"
-        "• Скриншот профиля (с последними роликами и возможностью редактирования)\n"
-        "• Ссылку на ролик\n"
-        "• Скриншот с количеством просмотров\n\n"
-        "Нажмите кнопку ниже, чтобы начать заполнение отчета."
-    )
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📝 Перейти к заполнению формы", callback_data="report_tiktok_form")
-    await callback.message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
-
-@router.callback_query(F.data == "report_tiktok_form")
-async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(TikTokReport.account_name)
-    await callback.message.answer(
-        "1. Название вашего аккаунта Tik Tok:"
-    )
-
-@router.message(TikTokReport.account_name)
-async def process_tiktok_account(message: Message, state: FSMContext):
-    await state.update_data(account_name=message.text.strip())
-    await state.set_state(TikTokReport.screenshot_profile)
-    await message.answer(
-        "2. Отправьте скриншот внутри профиля, где видно:\n"
-        "• Ваши последние ролики\n"
-        "• Возможность изменять профиль\n"
-        "• Что-то добавлять и т.д.\n"
-        "На скриншоте ничего нельзя замазывать."
-    )
-
-@router.message(TikTokReport.screenshot_profile, F.photo)
-async def process_tiktok_screenshot_profile(message: Message, state: FSMContext):
-    await state.update_data(screenshot_profile=message.photo[-1].file_id)
-    await state.set_state(TikTokReport.video_link)
-    await message.answer("3. Отправьте ссылку на ролик, за который хотите получить выплату:")
-
-@router.message(TikTokReport.screenshot_profile)
-async def process_tiktok_screenshot_profile_invalid(message: Message):
-    await message.answer("Пожалуйста, отправьте фото скриншота профиля.")
-
-@router.message(TikTokReport.video_link)
-async def process_tiktok_video_link(message: Message, state: FSMContext):
-    await state.update_data(video_link=message.text.strip())
-    await state.set_state(TikTokReport.screenshot_views)
-    await message.answer("4. Отправьте скриншот ролика, где видно количество просмотров.")
-
-@router.message(TikTokReport.screenshot_views, F.photo)
-async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
-    await state.update_data(screenshot_views=message.photo[-1].file_id)
-    data = await state.get_data()
-    await state.clear()
-
-    report = (
-        f"📊 <b>Новый отчет Tik Tok</b>\n"
-        f"👤 Пользователь: @{message.from_user.username} (ID: {message.from_user.id})\n"
-        f"📱 Аккаунт: {data.get('account_name')}\n"
-        f"🔗 Ссылка на ролик: {data.get('video_link')}\n"
-        f"📸 Скриншот профиля: (см. ниже)\n"
-        f"📸 Скриншот просмотров: (см. ниже)"
-    )
-
-    try:
-        await message.bot.send_message(
-            chat_id=TIKTOK_REPORT_CHAT_ID,
-            text=report,
-            message_thread_id=TIKTOK_REPORT_THREAD_ID or None,
-            parse_mode="HTML"
-        )
-        if data.get('screenshot_profile'):
-            await message.bot.send_photo(
-                chat_id=TIKTOK_REPORT_CHAT_ID,
-                photo=data['screenshot_profile'],
-                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
-            )
-        if data.get('screenshot_views'):
-            await message.bot.send_photo(
-                chat_id=TIKTOK_REPORT_CHAT_ID,
-                photo=data['screenshot_views'],
-                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
-            )
-        logger.info(f"✅ Отчет Tik Tok отправлен в беседу {TIKTOK_REPORT_CHAT_ID}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
-
-    await message.answer("✅ Отчет отправлен! Менеджер проверит его в ближайшее время.")
-
-@router.message(TikTokReport.screenshot_views)
-async def process_tiktok_screenshot_views_invalid(message: Message):
-    await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
-
-# ---------- СОТРУДНИЧЕСТВО ----------
-@router.message(F.text == "🤝 Сотрудничество с NC")
-async def collaboration_start(message: Message):
-    if is_blocked(message.from_user.id):
-        await message.answer("⛔ Вы заблокированы.")
-        return
-    text = (
-        "🤝 <b>Сотрудничество с NC</b>\n\n"
-        "Вы хотите передать свои отзывы под работу нашей команде.\n"
-        "Мы берём на себя организацию выполнения отзывов, выплаты исполнителям и контроль качества.\n\n"
-        "<b>Условия сотрудничества:</b>\n"
-        "• Вы выплачиваете <b>60%</b> от зарплаты исполнителей (по нашим ставкам).\n"
-        "• За использование сервиса NC берёт <b>20%</b> от чистой прибыли (минимум 60₽ за отзыв).\n"
-        "• Если вы заказываете текста для отзывов у нас – стоимость составляет <b>35₽</b> за один отзыв.\n\n"
-        "Заполните форму, и мы свяжемся с вами для деталей."
-    )
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📝 Перейти к заполнению формы", callback_data="collaboration_form")
-    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
-
-@router.callback_query(F.data == "collaboration_form")
-async def collaboration_form_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(CollaborationForm.platforms)
-    await callback.message.answer(
-        "📝 <b>Форма сотрудничества</b>\n\n"
-        "Ответьте на вопросы для отправки заявки.\n"
-        "1. Какие платформы вы хотите передать к нам в работу? (Яндекс, Google, 2ГИС, Авито, и т.д.)",
-        parse_mode="HTML"
-    )
-
-@router.message(CollaborationForm.platforms)
-async def collaboration_platforms(message: Message, state: FSMContext):
-    await state.update_data(platforms=message.text.strip())
-    await state.set_state(CollaborationForm.counts)
-    await message.answer(
-        "2. Какое количество отзывов требуется на каждую платформу?\n"
-        "Укажите в формате: Яндекс – 50, Google – 30, и т.д."
-    )
-
-@router.message(CollaborationForm.counts)
-async def collaboration_counts(message: Message, state: FSMContext):
-    await state.update_data(counts=message.text.strip())
-    await state.set_state(CollaborationForm.description)
-    await message.answer(
-        "3. Подробно распишите каждый заказ:\n"
-        "Например: какие именно объекты, какие требования, есть ли фото для прикрепления, и т.д."
-    )
-
-@router.message(CollaborationForm.description)
-async def collaboration_description(message: Message, state: FSMContext):
-    await state.update_data(description=message.text.strip())
-    await state.set_state(CollaborationForm.texts)
-    await message.answer(
-        "4. Текста на отзывы вы заказываете у нас или отправляете сами?\n"
-        "Если заказываете у нас – стоимость 35₽ за отзыв.\n"
-        "Напишите: 'Заказываем у NC' или 'Отправляем сами'."
-    )
-
-@router.message(CollaborationForm.texts)
-async def collaboration_texts(message: Message, state: FSMContext):
-    data = await state.get_data()
-    await state.clear()
-
-    report = (
-        f"🤝 <b>Новая заявка на сотрудничество</b>\n"
-        f"👤 От: @{message.from_user.username} (ID: {message.from_user.id})\n"
-        f"📌 Платформы: {data.get('platforms')}\n"
-        f"📊 Количество по платформам:\n{data.get('counts')}\n"
-        f"📝 Описание заказов:\n{data.get('description')}\n"
-        f"✍️ Текста: {message.text.strip()}"
-    )
-
-    try:
-        await message.bot.send_message(
-            chat_id=COLLABORATION_CHAT_ID,
-            text=report,
-            message_thread_id=COLLABORATION_THREAD_ID or None,
-            parse_mode="HTML"
-        )
-        logger.info(f"✅ Заявка на сотрудничество отправлена в беседу {COLLABORATION_CHAT_ID}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки заявки на сотрудничество: {e}")
-
-    await message.answer("✅ Ваша заявка отправлена! Менеджер свяжется с вами в ближайшее время.")
+async def ref_page_navigate(callback: CallbackQuery, state: FSM
