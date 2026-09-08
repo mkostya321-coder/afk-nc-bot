@@ -21,8 +21,9 @@ PRICES = {
     "доктору": 100,
     "докдок": 100,
     "про докторов": 200,
-    "докту": 110,
-    "32топ": 100,
+    "докту": 100,
+    "32топ": 125,
+    "zoon": 40,
 }
 
 PLATFORM_ALIASES = {
@@ -37,6 +38,7 @@ PLATFORM_ALIASES = {
     "про докторов": ["про докторов", "продокторов", "pro doctors"],
     "докту": ["докту", "doctu"],
     "32топ": ["32топ", "32top", "32 топ"],
+    "zoon": ["zoon", "зун", "z"],
 }
 
 SHEET_NAME_TO_PLATFORM = {
@@ -49,6 +51,7 @@ SHEET_NAME_TO_PLATFORM = {
     "ДокДок (ДД)": "докдок",
     "32Топ (Т)": "32топ",
     "Докту (ДК)": "докту",
+    "ZOON (Z)": "zoon",
     "ЯНДЕКС": "яндекс", "Яндекс": "яндекс", "yandex": "яндекс",
     "2ГИС": "2гис", "2гис": "2гис",
     "google": "google", "Google": "google", "GOOGLE": "google",
@@ -58,6 +61,7 @@ SHEET_NAME_TO_PLATFORM = {
     "ДокДок": "докдок", "докдок": "докдок",
     "32Топ": "32топ", "32топ": "32топ", "32top": "32топ",
     "Докту": "докту", "докту": "докту", "doctu": "докту",
+    "ZOON": "zoon", "ЗУН": "zoon", "zoon": "zoon",
 }
 
 def get_column_mapping(platform: str):
@@ -146,7 +150,8 @@ async def publish_scheduled_slot(bot, platform: str, count: int,
     platform_names = {
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
-        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
+        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", 
+        "32топ": "32ТОП", "zoon": "ZOON"
     }
     pretty_name = platform_names.get(platform, platform)
     post_text = (
@@ -218,7 +223,6 @@ async def monitor_schedule(bot):
                     logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
                     continue
 
-                # --- Первичная публикация ---
                 to_publish = []
                 for row_idx, row in enumerate(records[1:], start=2):
                     if len(row) < 8:
@@ -231,10 +235,10 @@ async def monitor_schedule(bot):
                     flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
                     flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
                     flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
-                    if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888"):
+                    if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888", "7"):
                         continue
                     status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
-                    if status in ("в работе", "на модерации", "на модерации с опз"):
+                    if status in ("в работе", "на модерации", "на модерации с опз", "оплачено", "в отчете испол"):
                         continue
                     try:
                         slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
@@ -275,7 +279,7 @@ async def monitor_schedule(bot):
                 else:
                     logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
 
-                # --- Перепубликация ---
+                # Перепубликация
                 expired_slots = []
                 for msg_id, slot in list(active_slots.items()):
                     if slot.get("attempt", 1) >= 4:
@@ -340,7 +344,7 @@ async def monitor_schedule(bot):
                     else:
                         logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
-                # --- Закрытие в 23:30 ---
+                # Закрытие в 23:30
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.state import slot_requests
@@ -495,6 +499,7 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
+                # Пропускаем уже обработанные (E=1 или 7)
                 if e_flag not in ("", "0"):
                     continue
                 if flag_stat in ("666", "888", "999"):
@@ -524,6 +529,7 @@ async def update_stats_from_sheet_once():
                             "про докторов": "prodoctors",
                             "докту": "doctu",
                             "32топ": "top32",
+                            "zoon": "zoon",
                         }
                         field_prefix = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -556,6 +562,7 @@ async def update_stats_from_sheet_once():
                             "про докторов": "prodoctors",
                             "докту": "doctu",
                             "32топ": "top32",
+                            "zoon": "zoon",
                         }
                         field_prefix = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -572,13 +579,14 @@ async def update_stats_from_sheet_once():
                         e_value = 2
 
                 elif status == "удален":
+                    # Обработка удаленных отзывов - снимаем деньги даже если E=1
                     if user:
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
+                            # Отнимаем деньги, уходим в минус если нужно
                             cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
-                            cur.execute("UPDATE users SET payout = MAX(payout, 0), total_earned = MAX(total_earned, 0) WHERE user_id = ?", (uid,))
                             field_map = {
                                 "яндекс": "yandex",
                                 "google": "google",
@@ -591,13 +599,15 @@ async def update_stats_from_sheet_once():
                                 "про докторов": "prodoctors",
                                 "докту": "doctu",
                                 "32топ": "top32",
+                                "zoon": "zoon",
                             }
                             field_prefix = field_map.get(platform)
                             if field_prefix:
                                 total_field = f"{field_prefix}_total"
-                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
+                                passed_field = f"{field_prefix}_passed"
+                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1, {passed_field} = {passed_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
                             conn.commit()
-                        e_value = 3
+                        e_value = 7  # Ставим E=7 для удаленных
                         logger.info(f"✅ Вычтено {price}₽ у пользователя {uid} за удалённый отзыв ({platform})")
                     else:
                         e_value = 2
@@ -660,7 +670,7 @@ async def update_stats_from_sheet_once():
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
-                       doctu_passed, top32_passed
+                       doctu_passed, top32_passed, zoon_passed
                 FROM users
             """)
             for user_row in cur.fetchall():
@@ -676,7 +686,8 @@ async def update_stats_from_sheet_once():
                     user_row[8] * PRICES.get("докдок", 0) +
                     user_row[9] * PRICES.get("про докторов", 0) +
                     user_row[10] * PRICES.get("докту", 0) +
-                    user_row[11] * PRICES.get("32топ", 0)
+                    user_row[11] * PRICES.get("32топ", 0) +
+                    user_row[12] * PRICES.get("zoon", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
             conn.commit()
@@ -687,7 +698,6 @@ async def update_stats_from_sheet_once():
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
 
-# ---------- ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ СТАТУСА ПРИ ОТЧЁТЕ (СТАВИТ "В отчете ИСПЛ") ----------
 async def mark_as_paid_in_table(user_ids: list):
     """
     Для каждого пользователя из списка user_ids находит строки с E=1 и статусом "опубликовано"/"опубликован"
@@ -750,7 +760,6 @@ async def mark_as_paid_in_table(user_ids: list):
             if sheet_updates:
                 updates_by_sheet[sheet] = sheet_updates
 
-        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ СТАТУСА НА "В отчете ИСПЛ" ----
         for sheet, updates in updates_by_sheet.items():
             total = len(updates)
             logger.info(f"📝 Обновление статуса для {total} строк на листе {sheet.title} -> 'В отчете ИСПЛ'")
