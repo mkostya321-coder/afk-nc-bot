@@ -11,12 +11,17 @@ from bot.google_sheets import platform_from_sheet_name, get_column_mapping
 
 logger = logging.getLogger(__name__)
 
+# Дни недели для проверки: вторник (1), пятница (4), воскресенье (6)
+CHECK_DAYS = [1, 4, 6]  # 0=пн, 1=вт, 2=ср, 3=чт, 4=пт, 5=сб, 6=вс
+
 async def username_checker(bot):
-    """Проверка username каждую среду с 2:30 до 6:00 МСК"""
+    """Проверка username каждый вторник, пятницу, воскресенье с 2:30 до 6:00 МСК"""
     while True:
         now = datetime.now()
-        # Проверяем, среда ли сегодня
-        if now.weekday() == 2:  # 2 = среда
+        current_weekday = now.weekday()
+        
+        # Проверяем, есть ли сегодня день проверки
+        if current_weekday in CHECK_DAYS:
             # Ждём до 2:30
             target = now.replace(hour=2, minute=30, second=0, microsecond=0)
             if now < target:
@@ -31,19 +36,25 @@ async def username_checker(bot):
             while datetime.now() < end_time:
                 try:
                     await check_all_usernames(bot)
-                    logger.info("✅ Проверка username завершена, ждём следующую среду")
+                    logger.info("✅ Проверка username завершена, ждём следующий день проверки")
                     break
                 except Exception as e:
                     logger.error(f"❌ Ошибка при проверке username: {e}")
                     await asyncio.sleep(60)
         else:
-            # Если не среда, ждём до следующей среды 2:30
-            days_until_wednesday = (2 - now.weekday() + 7) % 7
-            if days_until_wednesday == 0:
-                days_until_wednesday = 7
-            next_wednesday = now.replace(hour=2, minute=30, second=0, microsecond=0) + timedelta(days=days_until_wednesday)
-            wait_seconds = (next_wednesday - now).total_seconds()
-            logger.info(f"⏳ Следующая проверка username в среду 2:30 МСК, ждём {wait_seconds/3600:.1f} ч.")
+            # Если сегодня не день проверки, ждём до следующего дня проверки
+            days_until_check = 7
+            for day in CHECK_DAYS:
+                if day > current_weekday:
+                    days_until_check = day - current_weekday
+                    break
+            # Если не нашли день вперёд, считаем до следующей недели
+            if days_until_check == 7:
+                days_until_check = CHECK_DAYS[0] + (7 - current_weekday)
+            
+            next_check = now.replace(hour=2, minute=30, second=0, microsecond=0) + timedelta(days=days_until_check)
+            wait_seconds = (next_check - now).total_seconds()
+            logger.info(f"⏳ Следующая проверка username в {next_check.strftime('%A %d.%m.%Y %H:%M')} МСК, ждём {wait_seconds/3600:.1f} ч.")
             await asyncio.sleep(wait_seconds)
 
 async def check_all_usernames(bot):
@@ -62,10 +73,12 @@ async def check_all_usernames(bot):
         
         updated_count = 0
         error_count = 0
+        checked_count = 0
         
         for user in users:
             user_id = user['user_id']
             old_username = user['tg_username']
+            checked_count += 1
             
             try:
                 # Получаем текущий username из Telegram
@@ -92,7 +105,7 @@ async def check_all_usernames(bot):
                 logger.error(f"❌ Ошибка при проверке пользователя {user_id}: {e}")
                 error_count += 1
         
-        logger.info(f"✅ Проверка username завершена: обновлено {updated_count} пользователей, ошибок {error_count}")
+        logger.info(f"✅ Проверка username завершена: проверено {checked_count} пользователей, обновлено {updated_count}, ошибок {error_count}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка в check_all_usernames: {e}")
