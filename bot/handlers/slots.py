@@ -138,9 +138,19 @@ PLATFORM_TEMPLATES = {
             "все вами выполненное будет оплачено на 30% ниже!</i>"
         )
     },
+    "zoon": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
 }
 
-# ---------- Функция отправки инструкции ----------
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -176,7 +186,6 @@ async def send_instruction(user_id: int, bot):
         except:
             pass
 
-# ---------- Проверка лимита ----------
 async def check_limit(user_id: int, platform: str) -> bool:
     limit = get_limit(platform)
     count = count_review_takes_last_24h(user_id, platform)
@@ -184,7 +193,6 @@ async def check_limit(user_id: int, platform: str) -> bool:
         return False
     return True
 
-# ---------- Обработчик кнопки взять слот (из канала) ----------
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     try:
@@ -200,7 +208,6 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
 
-    # ---- ЗАПРЕТ НА ВЗЯТИЕ НОВОГО СЛОТА ПРИ НАЛИЧИИ АКТИВНОГО ----
     if user_id in slot_requests:
         active_platform = slot_requests[user_id]["platform"]
         await callback.bot.send_message(
@@ -229,7 +236,6 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
         return
 
-    # Проверка лимита
     if not await check_limit(user_id, platform):
         limit = get_limit(platform)
         await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
@@ -255,7 +261,6 @@ async def take_slot_start(callback: CallbackQuery):
         text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
 
-# ---------- Обработчик ввода количества ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -430,7 +435,6 @@ async def handle_quantity_input(message: Message):
             reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
         )
 
-# ---------- Обработчик кнопки "Активный слот" ----------
 @router.callback_query(F.data.startswith("active_slot|"))
 async def active_slot(callback: CallbackQuery):
     user_id = int(callback.data.split("|")[1])
@@ -448,7 +452,6 @@ async def active_slot(callback: CallbackQuery):
     await callback.answer()
     await show_slot_buttons(callback.message, user_id)
 
-# ---------- Показать кнопки с номерами ----------
 async def show_slot_buttons(message: Message, user_id: int):
     request = slot_requests[user_id]
     ordered_reviews = request.get("ordered_reviews", [])
@@ -458,7 +461,8 @@ async def show_slot_buttons(message: Message, user_id: int):
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Отзовик",
         "доктору": "Doctoru", "докдок": "ДокДок",
-        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП"
+        "про докторов": "Про Докторов", "докту": "ДокТу", 
+        "32топ": "32ТОП", "zoon": "ZOON"
     }
     platform_name = platform_names.get(platform, platform.capitalize())
 
@@ -472,7 +476,6 @@ async def show_slot_buttons(message: Message, user_id: int):
         reply_markup=builder.as_markup()
     )
 
-# ---------- Обработчик выбора номера отзыва ----------
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -526,7 +529,6 @@ async def select_review(callback: CallbackQuery):
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
     await callback.answer()
 
-# ---------- ПОКАЗАТЬ ИНФОРМАЦИЮ ПО ОТЗЫВУ (ОСНОВНАЯ ФУНКЦИЯ) ----------
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
     row = sheet.row_values(row_idx)
@@ -585,7 +587,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
-        photo_link = row[17] if len(row) > 17 else ""  # столбец R (индекс 17)
+        photo_link = row[17] if len(row) > 17 else ""
         
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
@@ -600,7 +602,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю."
 
-        # Собираем основное сообщение
         final_msg = (
             f"{instruction_text}\n\n"
             f"⭐ Количество звезд: {stars}\n"
@@ -616,20 +617,16 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"{warning}"
         )
         
-        # Отправляем основное сообщение
         await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
         
-        # Отправляем ссылку на карточку
         if link:
             sent = await message.answer(link)
             extra_ids.append(sent.message_id)
         
-        # Отправляем текст отзыва
         if text:
             sent = await message.answer(text)
             extra_ids.append(sent.message_id)
         
-        # ---- ОТПРАВКА ССЫЛКИ НА ФОТО ИЗ СТОЛБЦА R С ПРЕДУПРЕЖДЕНИЕМ О ШТРАФЕ ----
         if photo_link:
             sent = await message.answer(
                 f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n"
@@ -643,7 +640,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
 
-# ---------- Обработчик "Вернуться к слоту" ----------
 @router.callback_query(F.data == "back_to_slot")
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -668,7 +664,6 @@ async def back_to_slot(callback: CallbackQuery):
     await callback.answer()
     await show_slot_buttons(callback.message, user_id)
 
-# ---------- Обработка скриншотов ----------
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
@@ -770,7 +765,6 @@ async def handle_screenshot(message: Message):
         reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
     )
 
-# ---------- Команда отказа ----------
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
