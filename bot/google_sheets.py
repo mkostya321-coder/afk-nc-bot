@@ -1,798 +1,173 @@
-import os, sqlite3, logging, asyncio, secrets
+# bot/username_checker.py
+import asyncio
+import logging
+import gspread
+import sqlite3
 from datetime import datetime, timedelta
-import pytz, gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.enums import ParseMode
-from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
-from bot.database import get_user_by_username, get_user
-from bot.state import active_slots, slot_requests
+from bot.config import SHEET_ID, DB_PATH, get_credentials_path
+from bot.database import get_user_by_username, update_user_field, get_user
+from bot.google_sheets import platform_from_sheet_name, get_column_mapping
 
 logger = logging.getLogger(__name__)
-moscow_tz = pytz.timezone("Europe/Moscow")
 
-PRICES = {
-    "яндекс": 150,
-    "google": 50,
-    "2гис": 50,
-    "авито": 700,
-    "вк": 50,
-    "отзовик": 100,
-    "доктору": 100,
-    "докдок": 100,
-    "про докторов": 200,
-    "докту": 100,
-    "32топ": 125,
-    "zoon": 40,
-}
+# Дни недели для проверки: вторник (1), пятница (4), воскресенье (6)
+CHECK_DAYS = [1, 4, 6]  # 0=пн, 1=вт, 2=ср, 3=чт, 4=пт, 5=сб, 6=вс
 
-PLATFORM_ALIASES = {
-    "яндекс": ["яндекс", "ян", "yandex"],
-    "google": ["google", "гугл"],
-    "2гис": ["2гис", "гис", "2 гис"],
-    "авито": ["авито", "avito"],
-    "вк": ["вк", "vk"],
-    "отзовик": ["отзовик", "otzovik"],
-    "доктору": ["доктору", "docto", "doctoru", "докто ру"],
-    "докдок": ["докдок", "doc doc", "doc"],
-    "про докторов": ["про докторов", "продокторов", "pro doctors"],
-    "докту": ["докту", "doctu"],
-    "32топ": ["32топ", "32top", "32 топ"],
-    "zoon": ["zoon", "зун", "z"],
-}
-
-SHEET_NAME_TO_PLATFORM = {
-    "ЯНДЕКС (К)": "яндекс",
-    "2ГИС (Г)": "2гис",
-    "google (С)": "google",
-    "АВИТО (А)": "авито",
-    "Продокторов (ПР)": "про докторов",
-    "ВК (ВК)": "вк",
-    "ДокДок (ДД)": "докдок",
-    "32Топ (Т)": "32топ",
-    "Докту (ДК)": "докту",
-    "ZOON (Z)": "zoon",
-    "ЯНДЕКС": "яндекс", "Яндекс": "яндекс", "yandex": "яндекс",
-    "2ГИС": "2гис", "2гис": "2гис",
-    "google": "google", "Google": "google", "GOOGLE": "google",
-    "АВИТО": "авито", "Авито": "авито", "avito": "авито",
-    "Продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
-    "ВК": "вк", "вк": "вк", "vk": "вк",
-    "ДокДок": "докдок", "докдок": "докдок",
-    "32Топ": "32топ", "32топ": "32топ", "32top": "32топ",
-    "Докту": "докту", "докту": "докту", "doctu": "докту",
-    "ZOON": "zoon", "ЗУН": "zoon", "zoon": "zoon",
-}
-
-def get_column_mapping(platform: str):
-    standard = {
-        "date_col": 1,
-        "time_col": 2,
-        "stars_col": 3,
-        "platform_col": 4,
-        "link_col": 7,
-        "status_col": 10,
-        "executor_col": 11,
-        "gender_col": 13,
-        "text_col": 14,
-        "flag_first_col": 17,
-        "flag_second_col": 16,
-        "flag_third_col": 15,
-        "flag_final_col": 9,
-        "id_col": 19,
-        "update_col": 5,
-        "order_col": 20,
-    }
-    if platform == "про докторов":
-        return {
-            "date_col": 1,
-            "time_col": 2,
-            "stars_col": 3,
-            "platform_col": 4,
-            "link_col": 11,
-            "status_col": 14,
-            "executor_col": 15,
-            "gender_col": 16,
-            "text_col": None,
-            "flag_first_col": 22,
-            "flag_second_col": 21,
-            "flag_third_col": 20,
-            "flag_final_col": 13,
-            "id_col": 23,
-            "update_col": 5,
-            "order_col": 24,
-            "text_history_col": 17,
-            "text_like_col": 18,
-            "text_minus_col": 19,
-            "tz_col": 10,
-            "doctor_name_col": 12,
-            "doctor_direction_col": 9,
-            "photo_doc_col": 8,
-        }
-    return standard
-
-def match_platform(raw_name: str) -> str | None:
-    name = raw_name.strip().lower()
-    for std, aliases in PLATFORM_ALIASES.items():
-        for a in aliases:
-            if a in name:
-                return std
-    return None
-
-def platform_from_sheet_name(sheet_name: str) -> str | None:
-    key = sheet_name.strip()
-    if key in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[key]
-    key_lower = key.lower()
-    if key_lower in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[key_lower]
-    first_word = key.split()[0] if key.split() else key
-    if first_word in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[first_word]
-    first_word_lower = first_word.lower()
-    if first_word_lower in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[first_word_lower]
-    return None
-
-def get_credentials():
-    path = get_credentials_path()
-    if not os.path.exists(path):
-        logger.error(f"Файл ключа не найден: {path}")
-        return None
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
-
-async def publish_scheduled_slot(bot, platform: str, count: int,
-                                 date: str, time: str, row_ids: list, attempt: int = 1,
-                                 mapping=None, sheet_title=None):
-    if mapping is None:
-        mapping = get_column_mapping(platform)
-    platform_names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
-        "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
-        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", 
-        "32топ": "32ТОП", "zoon": "ZOON"
-    }
-    pretty_name = platform_names.get(platform, platform)
-    post_text = (
-        f"🔥 Слот: {pretty_name}\n"
-        f"📅 Дата: {date}\n"
-        f"⏰ Время: {time} (МСК)\n"
-        f"📌 Доступно отзывов: {count} шт.\n"
-        f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
-        f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
-    )
-    time_safe = time.replace(':', '-')
-    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-    url_to_bot = "https://t.me/ncjobbot?start"
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✋ Взять слот", callback_data=callback_data)
-    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
-    builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
-    builder.adjust(1)
-    try:
-        sent_msg = await bot.send_message(
-            chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
-        )
-        logger.info(f"✅ Слот {platform} опубликован, ID сообщения: {sent_msg.message_id}")
-        active_slots[sent_msg.message_id] = {
-            "platform": platform,
-            "count": count,
-            "initial_count": count,
-            "row_ids": row_ids,
-            "date": date,
-            "time": time,
-            "publish_time": datetime.now(moscow_tz),
-            "attempt": attempt,
-            "mapping": mapping,
-            "sheet_title": sheet_title
-        }
-        return sent_msg
-    except Exception as e:
-        logger.error(f"❌ Ошибка при отправке сообщения слота: {e}")
-        return None
-
-async def monitor_schedule(bot):
-    logger.info("📅 Планировщик слотов запущен")
+async def username_checker(bot):
+    """Проверка username каждый вторник, пятницу, воскресенье с 2:30 до 6:00 МСК"""
+    logger.info("🔄 Запущен модуль проверки username")
+    
     while True:
-        try:
-            creds = get_credentials()
-            if not creds:
-                logger.error("❌ Не удалось получить credentials для Google Sheets")
-                await asyncio.sleep(60)
-                continue
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
-            worksheets = spreadsheet.worksheets()
-            now = datetime.now(moscow_tz)
-            logger.info(f"🔍 Проверка таблицы в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
-            sheet_names = [ws.title for ws in worksheets]
-            logger.info(f"📋 Названия листов: {sheet_names}")
-
-            for sheet in worksheets:
-                sheet_name = sheet.title
-                platform = platform_from_sheet_name(sheet_name)
-                if not platform:
-                    logger.info(f"⏭️ Пропускаем лист '{sheet_name}' (неизвестная платформа)")
-                    continue
-                logger.info(f"📋 Обработка листа '{sheet_name}' (платформа: {platform})")
-                mapping = get_column_mapping(platform)
-
-                records = sheet.get_all_values()
-                if not records or len(records) < 2:
-                    logger.info(f"ℹ️ Лист '{sheet_name}' пуст или только заголовки")
-                    continue
-
-                to_publish = []
-                for row_idx, row in enumerate(records[1:], start=2):
-                    if len(row) < 8:
-                        continue
-                    date_str = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
-                    time_str = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
-                    if not date_str or not time_str:
-                        continue
-                    flag_first = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
-                    flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
-                    flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
-                    flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
-                    if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888", "7"):
-                        continue
-                    status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
-                    if status in ("в работе", "на модерации", "на модерации с опз", "оплачено", "в отчете испол"):
-                        continue
-                    try:
-                        slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
-                        slot_time = moscow_tz.localize(slot_time)
-                    except:
-                        continue
-                    if now >= slot_time:
-                        to_publish.append((row_idx, row))
-
-                if to_publish:
-                    logger.info(f"📢 Найдено {len(to_publish)} строк для публикации на листе '{sheet_name}'")
-                    from collections import defaultdict
-                    groups = defaultdict(list)
-                    for row_idx, row in to_publish:
-                        date_str = row[mapping["date_col"]-1].strip()
-                        time_str = row[mapping["time_col"]-1].strip()
-                        groups[(date_str, time_str)].append((row_idx, row))
-
-                    for (date, time), items in groups.items():
-                        count_available = len(items)
-                        row_ids = [item[0] for item in items]
-                        logger.info(f"🚀 Публикуем слот {platform} на {date} {time}, {count_available} шт.")
-                        sent_msg = await publish_scheduled_slot(
-                            bot, platform, count_available,
-                            date, time, row_ids, attempt=1, mapping=mapping, sheet_title=sheet_name
-                        )
-                        if sent_msg:
-                            for row_idx in row_ids:
-                                try:
-                                    review_id = secrets.token_hex(4)
-                                    sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
-                                    sheet.update_cell(row_idx, mapping["id_col"], review_id)
-                                    logger.info(f"✅ Флаги Q=1 и ID={review_id} установлены для строки {row_idx}")
-                                except Exception as e:
-                                    logger.error(f"Не удалось обновить флаг/ID для строки {row_idx}: {e}")
-                        else:
-                            logger.error(f"❌ Не удалось опубликовать слот {platform} – сообщение не отправлено")
-                else:
-                    logger.info(f"ℹ️ Нет строк для публикации на листе '{sheet_name}'")
-
-                # Перепубликация
-                expired_slots = []
-                for msg_id, slot in list(active_slots.items()):
-                    if slot.get("attempt", 1) >= 4:
-                        continue
-                    publish_time = slot.get("publish_time")
-                    if publish_time and (now - publish_time).total_seconds() >= 7200:
-                        available_rows = []
-                        slot_mapping = slot.get("mapping", mapping)
-                        for row_idx in slot["row_ids"]:
-                            try:
-                                status_val = sheet.cell(row_idx, slot_mapping["status_col"]).value or ""
-                                if status_val.lower() not in ("в работе", "на модерации", "на модерации с опз"):
-                                    available_rows.append(row_idx)
-                            except:
-                                continue
-                        if available_rows:
-                            expired_slots.append((msg_id, slot, available_rows, slot_mapping))
-
-                for msg_id, slot, available_rows, slot_mapping in expired_slots:
-                    new_attempt = slot["attempt"] + 1
-                    logger.info(f"🔄 Перепубликация слота {slot['platform']} (попытка {new_attempt})")
-                    try:
-                        await bot.edit_message_text(
-                            chat_id=CHANNEL_ID, message_id=msg_id,
-                            text="Срок размещения истёк. Неразобранные отзывы будут переопубликованы."
-                        )
-                    except:
-                        pass
-                    del active_slots[msg_id]
-
-                    if new_attempt == 2:
-                        col = slot_mapping["flag_second_col"]
-                        flag_name = "P" if platform != "про докторов" else "U"
-                    elif new_attempt == 3:
-                        col = slot_mapping["flag_third_col"]
-                        flag_name = "O" if platform != "про докторов" else "T"
-                    elif new_attempt == 4:
-                        col = slot_mapping["flag_final_col"]
-                        flag_name = "I" if platform != "про докторов" else "M"
-                    else:
-                        col = None
-                        flag_name = "?"
-
-                    if col:
-                        logger.info(f"📌 Обновляем столбец {flag_name} (col={col}) для {len(available_rows)} строк")
-                        for row_idx in available_rows:
-                            try:
-                                sheet.update_cell(row_idx, col, 1)
-                                logger.info(f"✅ Обновлён столбец {flag_name} (col={col}) для строки {row_idx}")
-                            except Exception as e:
-                                logger.error(f"Не удалось обновить столбец {col} для строки {row_idx}: {e}")
-                    else:
-                        logger.warning(f"⚠️ Неизвестный номер попытки {new_attempt}, столбец не определён")
-
-                    sent_msg = await publish_scheduled_slot(
-                        bot, slot["platform"], len(available_rows),
-                        slot["date"], slot["time"], available_rows,
-                        attempt=new_attempt, mapping=slot_mapping, sheet_title=slot.get("sheet_title")
-                    )
-                    if sent_msg:
-                        logger.info(f"✅ Слот {slot['platform']} переопубликован (попытка {new_attempt})")
-                    else:
-                        logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
-
-                # Закрытие в 23:30
-                if now.hour == 23 and now.minute >= 30:
-                    logger.info("🕒 Начинаем закрытие слотов в 23:30")
-                    from bot.state import slot_requests
-
-                    if slot_requests:
-                        logger.info(f"👥 Найдено {len(slot_requests)} активных сессий пользователей")
-                        for user_id, request in list(slot_requests.items()):
-                            assigned_rows = request.get("assigned_rows", [])
-                            if not assigned_rows:
-                                continue
-                            mapping = request.get("mapping", get_column_mapping("яндекс"))
-                            sheet_title = request.get("sheet_title")
-                            platform = request.get("platform", "неизвестно")
-
-                            logger.info(f"👤 Обработка сессии пользователя {user_id}, платформа {platform}, строк: {assigned_rows}")
-
-                            for row_idx in assigned_rows:
-                                found = False
-                                if sheet_title:
-                                    try:
-                                        sheet = spreadsheet.worksheet(sheet_title)
-                                        found = True
-                                    except Exception as e:
-                                        logger.error(f"Не удалось найти лист {sheet_title}: {e}")
-                                if not found:
-                                    for s in spreadsheet.worksheets():
-                                        try:
-                                            s.cell(row_idx, 1)
-                                            sheet = s
-                                            found = True
-                                            break
-                                        except:
-                                            continue
-                                if not found:
-                                    logger.error(f"❌ Не найден лист для строки {row_idx}")
-                                    continue
-
-                                try:
-                                    j_val = sheet.cell(row_idx, mapping["status_col"]).value or ""
-                                    logger.info(f"🔍 Строка {row_idx}, статус J = '{j_val}'")
-
-                                    if j_val.lower() == "на модерации":
-                                        sheet.update_cell(row_idx, mapping["status_col"], "на модерации с ОПЗ")
-                                        logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
-                                    elif j_val.lower() == "в работе":
-                                        sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
-                                        sheet.update_cell(row_idx, mapping["executor_col"], "")
-                                        sheet.update_cell(row_idx, mapping["flag_final_col"], 888)
-                                        sheet.format(f"{chr(64+mapping['flag_final_col'])}{row_idx}", {
-                                            "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
-                                        })
-                                        logger.info(f"✅ Строка {row_idx} снята (не принят в работу), I=888")
-                                except Exception as e:
-                                    logger.error(f"❌ Ошибка обновления строки {row_idx}: {e}")
-
-                            try:
-                                await bot.send_message(
-                                    user_id,
-                                    "⚠️ Вы не успели выполнить все отзывы до 23:59 МСК.\n"
-                                    "Невыполненные отзывы сняты с вас.\n"
-                                    "Оплата за выполненные отзывы в этом слоте будет снижена на 30%."
-                                )
-                                logger.info(f"📩 Уведомление отправлено пользователю {user_id}")
-                            except Exception as e:
-                                logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
-
-                            del slot_requests[user_id]
-
-                    for msg_id in list(active_slots.keys()):
-                        try:
-                            await bot.edit_message_text(
-                                chat_id=CHANNEL_ID, message_id=msg_id,
-                                text="Рабочий день завершён. Все слоты закрыты."
-                            )
-                        except Exception as e:
-                            logger.error(f"Не удалось отредактировать сообщение слота {msg_id}: {e}")
-                        del active_slots[msg_id]
-                    logger.info("✅ Все слоты закрыты в 23:30")
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
-        await asyncio.sleep(120)
-
-async def update_stats_from_sheet():
-    while True:
-        now = datetime.now(moscow_tz)
-        weekday = now.weekday()
-        target_times = []
-
-        # Среда - НЕТ обновлений
-        if weekday == 2:
-            logger.info("📅 Сегодня среда, обновление статистики отключено")
-            next_day = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            wait_seconds = (next_day - now).total_seconds()
-            logger.info(f"⏳ Следующее обновление статистики в {next_day.strftime('%d.%m.%Y %H:%M')}, ждём {wait_seconds/3600:.1f} ч.")
-            await asyncio.sleep(wait_seconds)
-            continue
-
-        # Четверг - только в 20:00
-        if weekday == 3:
-            thursday_2000 = now.replace(hour=20, minute=0, second=0, microsecond=0)
-            if now < thursday_2000:
-                target_times = [thursday_2000]
-            else:
-                friday_1000 = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                target_times = [friday_1000]
-        else:
-            morning = now.replace(hour=10, minute=0, second=0, microsecond=0)
-            evening = now.replace(hour=20, minute=0, second=0, microsecond=0)
-            target_times = [morning, evening]
-
-        future_times = [t for t in target_times if t > now]
-        if not future_times:
-            tomorrow = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            future_times = [tomorrow]
-
-        next_target = min(future_times)
-        wait_seconds = (next_target - now).total_seconds()
-        logger.info(f"⏳ Следующее обновление статистики в {next_target.strftime('%d.%m.%Y %H:%M')}, ждём {wait_seconds/60:.1f} мин.")
-        await asyncio.sleep(wait_seconds)
-        await update_stats_from_sheet_once()
-
-async def update_stats_from_sheet_once():
-    try:
-        logger.info("🔄 Запуск обновления статистики")
-        creds = get_credentials()
-        if not creds:
-            logger.error("❌ Нет credentials для обновления статистики")
-            return
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(SHEET_ID)
-
-        updates_by_sheet = {}
-
-        for sheet in spreadsheet.worksheets():
-            records = sheet.get_all_values()
-            if len(records) < 2:
-                continue
-            sheet_name = sheet.title
-            platform = platform_from_sheet_name(sheet_name)
-            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
-            logger.info(f"📊 Обработка листа '{sheet_name}' для статистики")
-
-            sheet_updates = []
-
-            for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < 10:
-                    continue
-                platform_raw = row[mapping["platform_col"]-1].strip() if len(row) >= mapping["platform_col"] else ""
-                status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
-                flag_stat = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
-                e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
-                executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
-
-                # Пропускаем уже обработанные (E=1 или 7)
-                if e_flag not in ("", "0"):
-                    continue
-                if flag_stat in ("666", "888", "999"):
-                    continue
-
-                platform = match_platform(platform_raw)
-                if not platform:
-                    continue
-
-                executor_clean = executor.lstrip("@").lower()
-                user = get_user_by_username(executor_clean)
-                e_value = None
-
-                if status == "опубликован":
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                            "zoon": "zoon",
-                        }
-                        field_prefix = field_map.get(platform)
-                        with sqlite3.connect(DB_PATH) as conn:
-                            cur = conn.cursor()
-                            if field_prefix:
-                                passed_field = f"{field_prefix}_passed"
-                                total_field = f"{field_prefix}_total"
-                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
-                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price, price, uid))
-                            conn.commit()
-                        e_value = 1
-                        logger.info(f"✅ Начислено {price}₽ пользователю {uid} за {platform}")
-                    else:
-                        e_value = 2
-
-                elif status == "опубликован опз":
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        price_opz = int(price * 0.7)
-                        field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                            "zoon": "zoon",
-                        }
-                        field_prefix = field_map.get(platform)
-                        with sqlite3.connect(DB_PATH) as conn:
-                            cur = conn.cursor()
-                            if field_prefix:
-                                passed_field = f"{field_prefix}_passed"
-                                total_field = f"{field_prefix}_total"
-                                cur.execute(f"UPDATE users SET {passed_field} = {passed_field} + 1, {total_field} = {total_field} + 1 WHERE user_id = ?", (uid,))
-                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
-                            conn.commit()
-                        e_value = 1
-                        logger.info(f"✅ Начислено {price_opz}₽ (ОПЗ) пользователю {uid} за {platform}")
-                    else:
-                        e_value = 2
-
-                elif status == "удален":
-                    # Обработка удаленных отзывов - снимаем деньги даже если E=1
-                    if user:
-                        uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
-                        with sqlite3.connect(DB_PATH) as conn:
-                            cur = conn.cursor()
-                            # Отнимаем деньги, уходим в минус если нужно
-                            cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
-                            field_map = {
-                                "яндекс": "yandex",
-                                "google": "google",
-                                "2гис": "gis",
-                                "авито": "avito",
-                                "вк": "vk",
-                                "отзовик": "otzovik",
-                                "доктору": "doctoru",
-                                "докдок": "dokdok",
-                                "про докторов": "prodoctors",
-                                "докту": "doctu",
-                                "32топ": "top32",
-                                "zoon": "zoon",
-                            }
-                            field_prefix = field_map.get(platform)
-                            if field_prefix:
-                                total_field = f"{field_prefix}_total"
-                                passed_field = f"{field_prefix}_passed"
-                                cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1, {passed_field} = {passed_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
-                            conn.commit()
-                        e_value = 7  # Ставим E=7 для удаленных
-                        logger.info(f"✅ Вычтено {price}₽ у пользователя {uid} за удалённый отзыв ({platform})")
-                    else:
-                        e_value = 2
-
-                elif status == "опубликован не по тх":
-                    e_value = 4
-                    logger.info(f"ℹ️ Строка {row_idx} на листе {sheet_name}: опубликован не по ТХ, пропускаем")
-
-                if e_value is not None:
-                    sheet_updates.append({
-                        "row_idx": row_idx,
-                        "e_value": e_value
-                    })
-
-            if sheet_updates:
-                updates_by_sheet[sheet] = sheet_updates
-
-        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ E ----
-        for sheet, updates in updates_by_sheet.items():
-            total = len(updates)
-            logger.info(f"📝 Обновление E для {total} строк на листе {sheet.title}")
+        now = datetime.now()
+        current_weekday = now.weekday()
+        current_hour = now.hour
+        current_minute = now.minute
+        
+        # Проверяем, есть ли сегодня день проверки
+        if current_weekday in CHECK_DAYS:
+            # Проверяем, в окне ли мы 2:30-6:00
+            is_in_window = (current_hour == 2 and current_minute >= 30) or (3 <= current_hour < 6)
             
-            batch_size = 50
-            for i in range(0, total, batch_size):
-                batch = updates[i:i+batch_size]
-                batch_data = []
-                for item in batch:
-                    row_idx = item["row_idx"]
-                    e_value = item["e_value"]
-                    batch_data.append({
-                        "range": f"E{row_idx}",
-                        "values": [[e_value]]
-                    })
-                
+            if is_in_window:
+                logger.info(f"🔄 Начинаем проверку username пользователей (текущее время: {now.strftime('%H:%M')})")
                 try:
-                    sheet.batch_update(batch_data)
-                    logger.info(f"✅ Пакетно обновлено {len(batch)} строк (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
-                    await asyncio.sleep(0.5)
+                    await check_all_usernames(bot)
+                    logger.info("✅ Проверка username завершена")
                 except Exception as e:
-                    error_msg = str(e)
-                    if '429' in error_msg or 'quota' in error_msg.lower():
-                        logger.warning(f"⚠️ Ошибка 429 при пакетном обновлении, ждём 30 сек...")
-                        await asyncio.sleep(30)
-                        try:
-                            sheet.batch_update(batch_data)
-                            logger.info(f"✅ Пакетно обновлено {len(batch)} строк после повторной попытки")
-                        except Exception as e2:
-                            logger.error(f"❌ Ошибка при повторной попытке: {e2}")
-                            for item in batch:
-                                try:
-                                    sheet.update_cell(item["row_idx"], 5, item["e_value"])
-                                    await asyncio.sleep(0.1)
-                                except:
-                                    pass
-                    else:
-                        logger.error(f"❌ Ошибка пакетного обновления: {e}")
+                    logger.error(f"❌ Ошибка при проверке username: {e}")
+                
+                # Ждём 1 час перед следующей проверкой, чтобы не спамить
+                await asyncio.sleep(3600)
+                continue
+            
+            # Если день проверки, но ещё не наступило 2:30 – ждём до 2:30
+            if current_hour < 2 or (current_hour == 2 and current_minute < 30):
+                target = now.replace(hour=2, minute=30, second=0, microsecond=0)
+                wait_seconds = (target - now).total_seconds()
+                if wait_seconds > 0:
+                    logger.info(f"⏳ Ждём до 2:30 МСК для проверки username ({wait_seconds/60:.1f} мин.)")
+                    await asyncio.sleep(wait_seconds)
+                continue
+            
+            # Если уже после 6:00 – ждём до следующего дня проверки
+            if current_hour >= 6:
+                logger.info(f"⏳ Время проверки (2:30-6:00) прошло, ждём следующий день")
+                # Переходим к поиску следующего дня
+                pass
+        
+        # Если сегодня не день проверки или время вышло – ищем следующий день
+        days_until_check = 7
+        for day in CHECK_DAYS:
+            if day > current_weekday:
+                days_until_check = day - current_weekday
+                break
+        
+        if days_until_check == 7:
+            # Если не нашли день вперёд, берём первый день из списка на следующей неделе
+            days_until_check = CHECK_DAYS[0] + (7 - current_weekday)
+        
+        next_check = datetime.now().replace(hour=2, minute=30, second=0, microsecond=0) + timedelta(days=days_until_check)
+        wait_seconds = (next_check - datetime.now()).total_seconds()
+        
+        if wait_seconds > 0:
+            logger.info(f"⏳ Следующая проверка username в {next_check.strftime('%A %d.%m.%Y %H:%M')} МСК, ждём {wait_seconds/3600:.1f} ч.")
+            await asyncio.sleep(wait_seconds)
 
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
-                       otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
-                       doctu_passed, top32_passed, zoon_passed
-                FROM users
-            """)
-            for user_row in cur.fetchall():
-                uid = user_row[0]
-                period_total = (
-                    user_row[1] * PRICES.get("яндекс", 0) +
-                    user_row[2] * PRICES.get("google", 0) +
-                    user_row[3] * PRICES.get("2гис", 0) +
-                    user_row[4] * PRICES.get("авито", 0) +
-                    user_row[5] * PRICES.get("вк", 0) +
-                    user_row[6] * PRICES.get("отзовик", 0) +
-                    user_row[7] * PRICES.get("доктору", 0) +
-                    user_row[8] * PRICES.get("докдок", 0) +
-                    user_row[9] * PRICES.get("про докторов", 0) +
-                    user_row[10] * PRICES.get("докту", 0) +
-                    user_row[11] * PRICES.get("32топ", 0) +
-                    user_row[12] * PRICES.get("zoon", 0)
-                )
-                cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (period_total, uid))
-            conn.commit()
-
-        total_updated = sum(len(updates) for updates in updates_by_sheet.values())
-        logger.info(f"✅ Статистика обновлена, обработано строк: {total_updated}")
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
-
-async def mark_as_paid_in_table(user_ids: list):
-    """
-    Для каждого пользователя из списка user_ids находит строки с E=1 и статусом "опубликовано"/"опубликован"
-    и меняет статус на "В отчете ИСПЛ". Строки с E=0 не трогает.
-    """
+async def check_all_usernames(bot):
+    """Проверяет всех пользователей и обновляет username в таблице"""
     try:
-        logger.info(f"🔄 Отметка строк для отчёта для {len(user_ids)} пользователей (меняем статус на 'В отчете ИСПЛ')")
+        logger.info("🔍 Получаем всех зарегистрированных пользователей")
+        
+        # Получаем всех пользователей из БД
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, tg_username FROM users WHERE tg_username IS NOT NULL")
+            users = cur.fetchall()
+        
+        logger.info(f"👥 Найдено {len(users)} пользователей для проверки")
+        
+        updated_count = 0
+        error_count = 0
+        checked_count = 0
+        
+        for user in users:
+            user_id = user['user_id']
+            old_username = user['tg_username']
+            checked_count += 1
+            
+            try:
+                # Получаем текущий username из Telegram
+                chat = await bot.get_chat(user_id)
+                new_username = chat.username.lower() if chat.username else None
+                
+                if new_username and new_username != old_username:
+                    logger.info(f"🔄 У пользователя {user_id} изменился username: {old_username} -> {new_username}")
+                    
+                    # Обновляем в БД
+                    update_user_field(user_id, "tg_username", new_username)
+                    
+                    # Обновляем в Google Sheets
+                    await update_username_in_sheets(old_username, new_username)
+                    
+                    updated_count += 1
+                elif not new_username and old_username:
+                    logger.warning(f"⚠️ У пользователя {user_id} удалён username (был @{old_username})")
+                
+                # Небольшая задержка, чтобы не спамить API
+                await asyncio.sleep(0.2)
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка при проверке пользователя {user_id}: {e}")
+                error_count += 1
+        
+        logger.info(f"✅ Проверка username завершена: проверено {checked_count} пользователей, обновлено {updated_count}, ошибок {error_count}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в check_all_usernames: {e}")
+
+async def update_username_in_sheets(old_username: str, new_username: str):
+    """Обновляет username во всех строках Google Sheets"""
+    try:
         creds = get_credentials()
         if not creds:
-            logger.error("❌ Нет credentials для отметки строк")
+            logger.error("❌ Нет credentials для обновления username")
             return
+        
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
-
-        users_map = {}
-        for uid in user_ids:
-            user = get_user(uid)
-            if user:
-                users_map[uid] = user.get('tg_username', '').lower()
-
-        updates_by_sheet = {}
-
+        
+        updated_rows = 0
+        
         for sheet in spreadsheet.worksheets():
             records = sheet.get_all_values()
             if len(records) < 2:
                 continue
+            
             platform = platform_from_sheet_name(sheet.title)
             mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
-
-            sheet_updates = []
-
-            for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
-                    continue
-
-                e_val = row[mapping["update_col"]-1].strip()
-                if e_val != "1":
-                    continue
-
-                status = row[mapping["status_col"]-1].strip().lower()
-                if status not in ("опубликован", "опубликовано"):
-                    continue
-
-                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
-                if not executor:
-                    continue
-
-                matched_user_id = None
-                for uid, username in users_map.items():
-                    if username and executor == username:
-                        matched_user_id = uid
-                        break
-
-                if matched_user_id is not None:
-                    sheet_updates.append({
-                        "row_idx": row_idx,
-                        "status_col": mapping["status_col"]
-                    })
-
-            if sheet_updates:
-                updates_by_sheet[sheet] = sheet_updates
-
-        for sheet, updates in updates_by_sheet.items():
-            total = len(updates)
-            logger.info(f"📝 Обновление статуса для {total} строк на листе {sheet.title} -> 'В отчете ИСПЛ'")
             
-            batch_size = 50
-            for i in range(0, total, batch_size):
-                batch = updates[i:i+batch_size]
-                batch_data = []
-                for item in batch:
-                    row_idx = item["row_idx"]
-                    col = item["status_col"]
-                    col_letter = chr(64 + col)
-                    batch_data.append({
-                        "range": f"{col_letter}{row_idx}",
-                        "values": [["В отчете ИСПЛ"]]
-                    })
+            old_username_lower = old_username.lower()
+            new_username_lower = new_username.lower()
+            
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < mapping["executor_col"]:
+                    continue
                 
-                try:
-                    sheet.batch_update(batch_data)
-                    logger.info(f"✅ Пакетно обновлено {len(batch)} строк статусом 'В отчете ИСПЛ' (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"❌ Ошибка пакетного обновления статуса: {e}")
-                    for item in batch:
-                        try:
-                            sheet.update_cell(item["row_idx"], item["status_col"], "В отчете ИСПЛ")
-                            await asyncio.sleep(0.1)
-                        except:
-                            pass
-
-        total_updated = sum(len(updates) for updates in updates_by_sheet.values())
-        logger.info(f"✅ Отмечено {total_updated} строк как 'В отчете ИСПЛ'")
-        if total_updated == 0:
-            logger.warning("⚠️ Не найдено строк для отметки. Проверьте, что в таблице есть строки с E=1 и статусом 'опубликовано' для этих пользователей.")
+                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
+                
+                if executor == old_username_lower:
+                    try:
+                        # Обновляем username в столбце K (исполнитель)
+                        sheet.update_cell(row_idx, mapping["executor_col"], f"@{new_username_lower}")
+                        updated_rows += 1
+                        await asyncio.sleep(0.05)
+                        logger.info(f"✅ Обновлён username в строке {row_idx} (лист {sheet.title})")
+                    except Exception as e:
+                        logger.error(f"❌ Не удалось обновить строку {row_idx}: {e}")
+        
+        logger.info(f"✅ Обновлено {updated_rows} строк с username {old_username} -> {new_username}")
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка в mark_as_paid_in_table: {e}")
+        logger.error(f"❌ Ошибка в update_username_in_sheets: {e}")
