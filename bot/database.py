@@ -35,6 +35,7 @@ def init_db():
                 prodoctors_passed INTEGER DEFAULT 0,
                 doctu_passed INTEGER DEFAULT 0,
                 top32_passed INTEGER DEFAULT 0,
+                zoon_passed INTEGER DEFAULT 0,
                 yandex_total INTEGER DEFAULT 0,
                 google_total INTEGER DEFAULT 0,
                 gis_total INTEGER DEFAULT 0,
@@ -45,7 +46,8 @@ def init_db():
                 dokdok_total INTEGER DEFAULT 0,
                 prodoctors_total INTEGER DEFAULT 0,
                 doctu_total INTEGER DEFAULT 0,
-                top32_total INTEGER DEFAULT 0
+                top32_total INTEGER DEFAULT 0,
+                zoon_total INTEGER DEFAULT 0
             )
         """)
         cur.execute("""
@@ -79,7 +81,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS review_takes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                platform TEXT NOT NULL,   -- платформа, для которой взят отзыв
+                platform TEXT NOT NULL,
                 taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -221,30 +223,18 @@ def get_all_users_with_payout():
         cur.execute("SELECT * FROM users WHERE payout >= 150")
         return [dict(row) for row in cur.fetchall()]
 
-# ---------- Лимиты на взятие отзывов (отдельно по платформам) ----------
 def add_review_take(user_id: int, platform: str):
-    """
-    Добавляет запись о том, что пользователь взял один отзыв на указанную платформу.
-    Это используется для подсчёта лимита за день.
-    """
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("INSERT INTO review_takes (user_id, platform) VALUES (?, ?)", (user_id, platform))
         conn.commit()
 
 def count_review_takes_last_24h(user_id: int, platform: str) -> int:
-    """
-    Возвращает количество отзывов, взятых пользователем на указанную платформу
-    с 10:00 текущего дня (МСК). Лимит сбрасывается каждый день в 10:00.
-    """
     moscow_tz = pytz.timezone("Europe/Moscow")
     now = datetime.now(moscow_tz)
-    # Вычисляем сегодняшнюю 10:00
     today_10am = now.replace(hour=10, minute=0, second=0, microsecond=0)
-    # Если сейчас меньше 10:00, берём вчерашнюю 10:00
     if now < today_10am:
         today_10am -= timedelta(days=1)
-
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -254,27 +244,21 @@ def count_review_takes_last_24h(user_id: int, platform: str) -> int:
         return cur.fetchone()[0]
 
 def get_limit(platform: str) -> int:
-    """
-    Возвращает дневной лимит для указанной платформы.
-    Если лимит не задан, возвращается 10 (значение по умолчанию).
-    """
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (f"limit_{platform}",))
         row = cur.fetchone()
         if row:
             return int(row[0])
-        return 10   # лимит по умолчанию
+        return 10
 
 def set_limit(platform: str, limit: int):
-    """Устанавливает дневной лимит для указанной платформы."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (f"limit_{platform}", str(limit)))
         conn.commit()
 
 def get_all_registered_users():
-    """Возвращает список всех зарегистрированных пользователей (user_id, tg_username)."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
