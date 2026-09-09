@@ -229,7 +229,7 @@ async def monitor_schedule(bot):
                     else:
                         logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
-                # Закрытие в 23:30
+                # --- Закрытие в 23:30 (ИСПРАВЛЕНО) ---
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.state import slot_requests
@@ -240,9 +240,11 @@ async def monitor_schedule(bot):
                             assigned_rows = request.get("assigned_rows", [])
                             if not assigned_rows:
                                 continue
-                            mapping = request.get("mapping", get_column_mapping("яндекс"))
-                            sheet_title = request.get("sheet_title")
+                            
+                            # Получаем правильный mapping для платформы
                             platform = request.get("platform", "неизвестно")
+                            mapping = request.get("mapping", get_column_mapping(platform))
+                            sheet_title = request.get("sheet_title")
 
                             logger.info(f"👤 Обработка сессии пользователя {user_id}, платформа {platform}, строк: {assigned_rows}")
 
@@ -274,11 +276,11 @@ async def monitor_schedule(bot):
                                     if j_val.lower() == "на модерации":
                                         sheet.update_cell(row_idx, mapping["status_col"], "на модерации с ОПЗ")
                                         logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
-                                    elif j_val.lower() == "в работе":
+                                    elif j_val.lower() == "в работе" or j_val == "":
                                         sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
                                         sheet.update_cell(row_idx, mapping["executor_col"], "")
                                         sheet.update_cell(row_idx, mapping["flag_final_col"], 888)
-                                        sheet.format(f"{chr(64+mapping['flag_final_col'])}{row_idx}", {
+                                        sheet.format(f"{chr(64 + mapping['flag_final_col'])}{row_idx}", {
                                             "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                         })
                                         logger.info(f"✅ Строка {row_idx} снята (не принят в работу), I=888")
@@ -470,7 +472,6 @@ async def update_stats_from_sheet_once():
                         price = PRICES.get(platform, 0)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
-                            # Отнимаем деньги, уходим в минус если нужно
                             cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
                             field_map = {
                                 "яндекс": "yandex",
