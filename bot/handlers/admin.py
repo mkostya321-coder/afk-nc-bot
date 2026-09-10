@@ -52,11 +52,13 @@ async def cmd_helpadm(message: Message):
     if is_owner(user_id):
         text += "👑 /setrole <user_id или username> <owner|ga|moderator|comoderator> — назначить роль\n"
         text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
+        text += "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
     if is_ga(user_id):
         text += (
             "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
             "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
-            "ℹ️ /info <username> — профиль пользователя\n"
+            "ℹ️ /info <username> — краткий профиль пользователя\n"
+            "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
@@ -364,7 +366,7 @@ async def reset_balance(message: Message):
                 UPDATE users SET payout = 0,
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
-                doctu_passed=0, top32_passed=0
+                doctu_passed=0, top32_passed=0, zoon_passed=0
                 WHERE user_id IN ({placeholders})
             """, user_ids)
             conn.commit()
@@ -407,11 +409,11 @@ async def cmd_payout_report(message: Message):
             )
 
         if user_ids:
-            # Меняем статус в таблице для оплаченных строк (E=1, статус "опубликовано" -> "оплачено")
+            # Меняем статус в таблице для оплаченных строк
             try:
                 from bot.google_sheets import mark_as_paid_in_table
                 await mark_as_paid_in_table(user_ids)
-                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' отмечены как 'оплачено'.")
+                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' отмечены как 'В отчете ИСПЛ'.")
             except Exception as e:
                 logger.error(f"Ошибка обновления статуса в таблице: {e}")
                 await message.answer(f"⚠️ Ошибка при обновлении статуса: {e}")
@@ -433,7 +435,8 @@ async def cmd_payout_report(message: Message):
                         dokdok_passed = 0,
                         prodoctors_passed = 0,
                         doctu_passed = 0,
-                        top32_passed = 0
+                        top32_passed = 0,
+                        zoon_passed = 0
                     WHERE user_id IN ({placeholders})
                 """, user_ids)
                 conn.commit()
