@@ -158,14 +158,36 @@ async def monitor_schedule(bot):
                             date, time, row_ids, attempt=1, mapping=mapping, sheet_title=sheet_name
                         )
                         if sent_msg:
+                            # === ПАКЕТНОЕ ОБНОВЛЕНИЕ Q=1 И S=ID ===
+                            batch_data = []
                             for row_idx in row_ids:
-                                try:
-                                    review_id = secrets.token_hex(4)
-                                    sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
-                                    sheet.update_cell(row_idx, mapping["id_col"], review_id)
-                                    logger.info(f"✅ Флаги Q=1 и ID={review_id} установлены для строки {row_idx}")
-                                except Exception as e:
-                                    logger.error(f"Не удалось обновить флаг/ID для строки {row_idx}: {e}")
+                                review_id = secrets.token_hex(4)
+                                col_q = chr(64 + mapping["flag_first_col"])
+                                batch_data.append({
+                                    "range": f"{col_q}{row_idx}",
+                                    "values": [[1]]
+                                })
+                                col_s = chr(64 + mapping["id_col"])
+                                batch_data.append({
+                                    "range": f"{col_s}{row_idx}",
+                                    "values": [[review_id]]
+                                })
+                            try:
+                                for i in range(0, len(batch_data), 50):
+                                    chunk = batch_data[i:i+50]
+                                    sheet.batch_update(chunk)
+                                    logger.info(f"✅ Пакетно обновлено {len(chunk)} ячеек Q/S (пачка {i//50 + 1}/{(len(batch_data)+49)//50}) на листе '{sheet_name}'")
+                                    await asyncio.sleep(0.5)
+                            except Exception as e:
+                                logger.error(f"❌ Ошибка пакетного обновления Q/S: {e}")
+                                for row_idx in row_ids:
+                                    try:
+                                        review_id = secrets.token_hex(4)
+                                        sheet.update_cell(row_idx, mapping["flag_first_col"], 1)
+                                        sheet.update_cell(row_idx, mapping["id_col"], review_id)
+                                        await asyncio.sleep(0.2)
+                                    except Exception as e2:
+                                        logger.error(f"❌ Fallback ошибка для строки {row_idx}: {e2}")
                         else:
                             logger.error(f"❌ Не удалось опубликовать слот {platform} – сообщение не отправлено")
                 else:
@@ -567,10 +589,6 @@ async def update_stats_from_sheet_once():
 
 
 async def mark_as_paid_in_table(user_ids: list):
-    """
-    Для каждого пользователя из списка user_ids находит строки с E=1 и статусом "опубликовано"/"опубликован"
-    и меняет статус на "В отчете ИСПЛ". Строки с E=0 не трогает.
-    """
     try:
         logger.info(f"🔄 Отметка строк для отчёта для {len(user_ids)} пользователей (меняем статус на 'В отчете ИСПЛ')")
         creds = get_credentials()
@@ -668,7 +686,6 @@ async def mark_as_paid_in_table(user_ids: list):
 
 # ============ АВТООЧИСТКА КАНАЛА В 4:30 МСК ============
 async def cleanup_channel(bot):
-    """Каждый день в 4:30 МСК удаляет старые сообщения из канала (старше 12 часов)."""
     logger.info("🧹 Модуль автоочистки канала запущен (4:30 МСК)")
     while True:
         try:
@@ -697,8 +714,6 @@ async def cleanup_channel(bot):
                     failed += 1
 
             logger.info(f"✅ Очистка канала завершена: удалено {deleted}, не удалось {failed}")
-
-            # Очищаем active_slots (это только в памяти)
             active_slots.clear()
             logger.info("✅ active_slots очищен")
 
