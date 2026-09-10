@@ -15,11 +15,15 @@ from bot.config import (
 
 class AutoMenuMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
+        # === CallbackQuery пропускаем сразу ===
+        if isinstance(event, CallbackQuery):
+            return await handler(event, data)
+
         if isinstance(event, Message):
             chat_id = event.chat.id
             thread_id = event.message_thread_id or 0
 
-            # Пропускаем сообщения из служебных чатов
+            # === Пропускаем сообщения из служебных чатов ===
             if chat_id == REPORT_CHAT_ID:
                 return
 
@@ -31,30 +35,28 @@ class AutoMenuMiddleware(BaseMiddleware):
                 if COLLABORATION_THREAD_ID == 0 or thread_id == COLLABORATION_THREAD_ID:
                     return
 
-        if isinstance(event, CallbackQuery):
-            return await handler(event, data)
-
-        if isinstance(event, Message):
-            # Пропускаем команды
+            # === КОМАНДЫ ПРОПУСКАЕМ СРАЗУ — они должны идти в роутеры ===
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
 
-            # Пропускаем кнопки меню (кроме "Слоты" – её больше нет)
-            if event.text in ["📋 Профиль", "❓ Помощь", "📝 Регистрация",
-                              "👥 Реферальная система", "👥 Мои рефералы",
-                              "🎯 Другие задания", "🤝 Сотрудничество с NC"]:
+            # === Кнопки меню пропускаем ===
+            if event.text in [
+                "📋 Профиль", "❓ Помощь", "📝 Регистрация",
+                "👥 Реферальная система", "👥 Мои рефералы",
+                "🎯 Другие задания", "🤝 Сотрудничество с NC"
+            ]:
                 return await handler(event, data)
 
-            # Если у пользователя активная сессия слота – пропускаем
+            # === Активная сессия слота — пропускаем ===
             if event.from_user.id in slot_requests:
                 return await handler(event, data)
 
-            # Если есть состояние FSM – пропускаем
+            # === FSM-состояние — пропускаем ===
             state = data.get("state")
             if state and await state.get_state():
                 return await handler(event, data)
 
-            # В остальных случаях – проверяем подписку и показываем меню
+            # === Для всех остальных — проверяем подписку и показываем меню ===
             user_id = event.from_user.id
             role = get_admin_role(user_id)
             if not role:
@@ -72,6 +74,7 @@ class AutoMenuMiddleware(BaseMiddleware):
             return
 
         return await handler(event, data)
+
 
 async def is_subscribed(user_id: int, bot) -> bool:
     try:
