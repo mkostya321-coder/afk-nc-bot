@@ -5,8 +5,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
 from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
-from bot.database import init_db, get_all_users_with_payout
-from bot.google_sheets import monitor_schedule, update_stats_from_sheet, mark_as_paid_in_table
+from bot.database import init_db, get_all_users_with_payout, save_channel_message
+from bot.google_sheets import (
+    monitor_schedule, update_stats_from_sheet,
+    mark_as_paid_in_table, cleanup_channel
+)
 from bot.handlers import user, admin, slots, referral
 from bot.handlers.admin_advanced import router as admin_advanced_router
 from bot.middlewares import AutoMenuMiddleware
@@ -25,6 +28,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 80))
     app.run(host='0.0.0.0', port=port)
 
+
 async def scheduler(bot):
     moscow_tz = pytz.timezone("Europe/Moscow")
     while True:
@@ -39,9 +43,12 @@ async def scheduler(bot):
         await asyncio.sleep((next_time - now).total_seconds())
         now_after = datetime.now(moscow_tz)
         if now_after.hour == 8:
-            await bot.send_message(CHANNEL_ID, "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. Всем хорошего дня! Ожидайте сегодняшние слоты. С уважением, команда NC 🤝")
+            msg = await bot.send_message(CHANNEL_ID, "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. Всем хорошего дня! Ожидайте сегодняшние слоты. С уважением, команда NC 🤝")
+            save_channel_message(msg.message_id, CHANNEL_ID)
         elif now_after.hour == 22 and now_after.minute == 30:
-            await bot.send_message(CHANNEL_ID, "🌙 Сегодняшний рабочий день подошёл к концу. Всем спасибо за работу! Кто ещё не отправил скриншоты — успевайте до 23:59 МСК. Всем доброй ночи! С уважением, команда NC 😴🌟")
+            msg = await bot.send_message(CHANNEL_ID, "🌙 Сегодняшний рабочий день подошёл к концу. Всем спасибо за работу! Кто ещё не отправил скриншоты — успевайте до 23:59 МСК. Всем доброй ночи! С уважением, команда NC 😴🌟")
+            save_channel_message(msg.message_id, CHANNEL_ID)
+
 
 async def weekly_payout_report(bot):
     moscow_tz = pytz.timezone("Europe/Moscow")
@@ -112,6 +119,7 @@ async def weekly_payout_report(bot):
         except Exception as e:
             logging.error(f"Ошибка еженедельного отчета: {e}")
 
+
 async def main():
     init_db()
     bot = Bot(token=BOT_TOKEN)
@@ -126,7 +134,7 @@ async def main():
     # === ПОРЯДОК ВАЖЕН! admin_advanced ДО slots ===
     dp.include_router(user.router)
     dp.include_router(admin.router)
-    dp.include_router(admin_advanced_router)   # <-- /infoga
+    dp.include_router(admin_advanced_router)
     dp.include_router(slots.router)
 
     asyncio.create_task(scheduler(bot))
@@ -134,8 +142,10 @@ async def main():
     asyncio.create_task(update_stats_from_sheet())
     asyncio.create_task(weekly_payout_report(bot))
     asyncio.create_task(username_checker(bot))
+    asyncio.create_task(cleanup_channel(bot))  # <-- Автоочистка в 4:30 МСК
 
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
