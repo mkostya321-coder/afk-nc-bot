@@ -16,6 +16,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = Router()
 
+
 def log_action(message: Message, action: str):
     try:
         text = f"👤 @{message.from_user.username or message.from_user.id} ({message.from_user.id})\n" \
@@ -24,6 +25,7 @@ def log_action(message: Message, action: str):
         asyncio.create_task(message.bot.send_message(LOG_CHANNEL_ID, text))
     except Exception as e:
         logger.warning(f"Не удалось отправить лог в LOG_CHANNEL_ID: {e}")
+
 
 def calculate_tiktok_payout(views: int) -> int:
     if views <= 0:
@@ -39,6 +41,7 @@ def calculate_tiktok_payout(views: int) -> int:
         second_part = 500_000
         third_part = views - first_part - second_part
         return (first_part // 1000) * 10 + (second_part // 1000) * 5 + (third_part // 1000) * 2
+
 
 @router.message(Command("helpadm"))
 async def cmd_helpadm(message: Message):
@@ -84,6 +87,7 @@ async def cmd_helpadm(message: Message):
     await message.answer(text)
     log_action(message, "Просмотр списка админ-команд")
 
+
 @router.message(Command("setrole"))
 async def set_role(message: Message):
     if not is_owner(message.from_user.id):
@@ -112,6 +116,7 @@ async def set_role(message: Message):
         log_action(message, f"Назначена роль {role} пользователю {user_id}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("warn"))
 async def warn_user(message: Message):
@@ -154,6 +159,7 @@ async def warn_user(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+
 @router.message(Command("smsuser"))
 async def sms_user(message: Message):
     if not is_moderator(message.from_user.id):
@@ -180,6 +186,7 @@ async def sms_user(message: Message):
             await message.answer(f"❌ Не удалось отправить сообщение: {e}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("userblock"))
 async def user_block(message: Message):
@@ -208,6 +215,7 @@ async def user_block(message: Message):
             log_action(message, f"Пользователь {user_id} {status_text}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("info"))
 async def cmd_info(message: Message):
@@ -275,6 +283,7 @@ async def cmd_info(message: Message):
     await message.answer(text)
     log_action(message, f"Запрошен профиль пользователя {args[1]}")
 
+
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
     if not is_ga(message.from_user.id):
@@ -310,17 +319,9 @@ async def user_edit(message: Message):
         platform_num = int(parts[3])
         new_value = int(parts[4])
         platform_map = {
-            1: "yandex_total",
-            2: "google_total",
-            3: "gis_total",
-            4: "avito_total",
-            5: "vk_total",
-            6: "otzovik_total",
-            7: "doctoru_total",
-            8: "dokdok_total",
-            9: "prodoctors_total",
-            10: "doctu_total",
-            11: "top32_total"
+            1: "yandex_total", 2: "google_total", 3: "gis_total", 4: "avito_total",
+            5: "vk_total", 6: "otzovik_total", 7: "doctoru_total", 8: "dokdok_total",
+            9: "prodoctors_total", 10: "doctu_total", 11: "top32_total"
         }
         if platform_num not in platform_map:
             await message.answer("❌ Номер платформы от 1 до 11.")
@@ -333,6 +334,7 @@ async def user_edit(message: Message):
         return
     await message.answer(f"✅ Данные пользователя {user_id} обновлены.")
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
+
 
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
@@ -347,6 +349,7 @@ async def cmd_update_stats(message: Message):
     except Exception as e:
         logger.error(f"Ошибка в /update_stats: {e}")
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("resetbalance"))
 async def reset_balance(message: Message):
@@ -374,6 +377,7 @@ async def reset_balance(message: Message):
         log_action(message, f"Сброшены балансы у {len(user_ids)} пользователей (>=150₽)")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
@@ -409,7 +413,6 @@ async def cmd_payout_report(message: Message):
             )
 
         if user_ids:
-            # Меняем статус в таблице для оплаченных строк
             try:
                 from bot.google_sheets import mark_as_paid_in_table
                 await mark_as_paid_in_table(user_ids)
@@ -418,7 +421,6 @@ async def cmd_payout_report(message: Message):
                 logger.error(f"Ошибка обновления статуса в таблице: {e}")
                 await message.answer(f"⚠️ Ошибка при обновлении статуса: {e}")
 
-            # Обнуляем баланс и passed в БД
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
                 placeholders = ','.join(['?'] * len(user_ids))
@@ -446,6 +448,7 @@ async def cmd_payout_report(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
+
 
 @router.message(Command("tiktok_pay"))
 async def cmd_tiktok_pay(message: Message):
@@ -496,6 +499,7 @@ async def cmd_tiktok_pay(message: Message):
     )
     log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
 
+
 @router.message(Command("stop_tiktok"))
 async def cmd_stop_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -534,6 +538,7 @@ async def cmd_stop_tiktok(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+
 @router.message(Command("start_tiktok"))
 async def cmd_start_tiktok(message: Message):
     if not is_ga(message.from_user.id):
@@ -568,6 +573,7 @@ async def cmd_start_tiktok(message: Message):
             await message.answer("Нет зарегистрированных пользователей для уведомления.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("set_limit"))
 async def cmd_set_limit(message: Message):
