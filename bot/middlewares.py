@@ -15,7 +15,6 @@ from bot.config import (
 
 class AutoMenuMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        # === CallbackQuery пропускаем сразу ===
         if isinstance(event, CallbackQuery):
             return await handler(event, data)
 
@@ -23,7 +22,6 @@ class AutoMenuMiddleware(BaseMiddleware):
             chat_id = event.chat.id
             thread_id = event.message_thread_id or 0
 
-            # === Пропускаем сообщения из служебных чатов ===
             if chat_id == REPORT_CHAT_ID:
                 return
 
@@ -35,11 +33,11 @@ class AutoMenuMiddleware(BaseMiddleware):
                 if COLLABORATION_THREAD_ID == 0 or thread_id == COLLABORATION_THREAD_ID:
                     return
 
-            # === КОМАНДЫ ПРОПУСКАЕМ СРАЗУ — они должны идти в роутеры ===
+            # КОМАНДЫ ПРОПУСКАЕМ В РОУТЕРЫ
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
 
-            # === Кнопки меню пропускаем ===
+            # Кнопки меню
             if event.text in [
                 "📋 Профиль", "❓ Помощь", "📝 Регистрация",
                 "👥 Реферальная система", "👥 Мои рефералы",
@@ -47,16 +45,16 @@ class AutoMenuMiddleware(BaseMiddleware):
             ]:
                 return await handler(event, data)
 
-            # === Активная сессия слота — пропускаем ===
+            # Активная сессия слота
             if event.from_user.id in slot_requests:
                 return await handler(event, data)
 
-            # === FSM-состояние — пропускаем ===
+            # FSM
             state = data.get("state")
             if state and await state.get_state():
                 return await handler(event, data)
 
-            # === Для всех остальных — проверяем подписку и показываем меню ===
+            # Остальное — меню
             user_id = event.from_user.id
             role = get_admin_role(user_id)
             if not role:
@@ -74,7 +72,6 @@ class AutoMenuMiddleware(BaseMiddleware):
             return
 
         return await handler(event, data)
-
 
 async def is_subscribed(user_id: int, bot) -> bool:
     try:
