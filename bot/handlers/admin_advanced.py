@@ -27,7 +27,6 @@ selected_user = {}
 @router.message(Command("infoga"))
 async def cmd_infoga(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    # ТОЛЬКО GA и владелец (не модератор)
     if not is_ga(user_id):
         await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
         return
