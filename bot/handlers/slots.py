@@ -183,76 +183,96 @@ async def check_limit(user_id: int, platform: str) -> bool:
         return False
     return True
 
-@router.callback_query(F.data.startswith("take_slot|"))
-async def take_slot_start(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except Exception:
-        pass
+# ============ ВАЖНО: cancel_task СТОИТ ВЫШЕ handle_quantity_input ============
 
-    user_id = callback.from_user.id
-    if not is_registered(user_id):
-        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
+# ---------- КОМАНДА ОТКАЗА ----------
+@router.message(Command("cancel"))
+@router.message(Command("отказ"))
+async def cancel_task(message: Message):
+    user_id = message.from_user.id
+    if user_id not in slot_requests:
+        await message.answer("❌ У вас нет активного задания.")
         return
-    if is_blocked(user_id):
-        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
+    
+    request = slot_requests[user_id]
+    assigned_rows = request.get("assigned_rows", [])
+    completed = request.get("completed_reviews", [])
+    ordered_reviews = request.get("ordered_reviews", [])
+    
+    remaining_rows = [row_idx for row_idx, num in ordered_reviews if num not in completed]
+    
+    if not remaining_rows:
+        await message.answer("✅ У вас нет невыполненных отзывов для отмены.")
+        del slot_requests[user_id]
         return
-
-    if user_id in slot_requests:
-        active_platform = slot_requests[user_id]["platform"]
-        await callback.bot.send_message(
-            user_id,
-            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
-            "Закончите его, чтобы взять новый."
-        )
-        return
-
-    parts = callback.data.split("|")
-    if len(parts) < 5:
-        await callback.bot.send_message(user_id, "Некорректный запрос.")
-        return
-
-    _, platform, count_str, date, time_safe = parts
-    try:
-        count = int(count_str)
-    except:
-        await callback.bot.send_message(user_id, "Некорректное количество.")
-        return
-
-    time = time_safe.replace('-', ':')
-    slot_msg_id = callback.message.message_id
-    slot_info = active_slots.get(slot_msg_id)
-    if not slot_info:
-        await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
-        return
-
-    if not await check_limit(user_id, platform):
-        limit = get_limit(platform)
-        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
-        return
-
-    slot_requests[user_id] = {
-        "platform": platform,
-        "count": count,
-        "date": date,
-        "time": time,
-        "slot_msg_id": slot_msg_id,
-        "state": "waiting_quantity",
-        "assigned_rows": [],
-        "current_index": 0,
-        "row_ids": slot_info["row_ids"],
-        "from_menu": False,
-        "mapping": slot_info.get("mapping", get_column_mapping(platform)),
-        "sheet_title": slot_info.get("sheet_title")
-    }
-
-    await callback.bot.send_message(
-        chat_id=user_id,
-        text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
+    
+    platform = request.get("platform", "неизвестно")
+    mapping = request.get("mapping", get_column_mapping(platform))
+    sheet_title = request.get("sheet_title")
+    
+    logger.info(f"🔄 Отмена: пользователь {user_id}, платформа {platform}, невыполненных: {len(remaining_rows)}")
+    
+    creds = get_credentials()
+    if creds:
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
+        
+        sheet = None
+        if sheet_title:
+            try:
+                sheet = spreadsheet.worksheet(sheet_title)
+            except:
+                pass
+        if sheet is None:
+            for s in spreadsheet.worksheets():
+                try:
+                    s.cell(remaining_rows[0], 1)
+                    sheet = s
+                    break
+                except:
+                    continue
+        
+        if sheet:
+            for row_idx in remaining_rows:
+                try:
+                    sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
+                    sheet.update_cell(row_idx, mapping["executor_col"], "")
+                    sheet.update_cell(row_idx, mapping["flag_third_col"], 0)
+                    sheet.update_cell(row_idx, mapping["flag_second_col"], 0)
+                    sheet.update_cell(row_idx, mapping["flag_first_col"], 0)
+                    sheet.update_cell(row_idx, mapping["id_col"], "")
+                    sheet.update_cell(row_idx, mapping["order_col"], "")
+                    time.sleep(0.1)
+                    logger.info(f"✅ Строка {row_idx} очищена для переопубликации")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка очистки строки {row_idx}: {e}")
+    
+    slot_msg_id = request.get("slot_msg_id")
+    if slot_msg_id and slot_msg_id != "menu":
+        slot_info = active_slots.get(slot_msg_id)
+        if slot_info:
+            for row in remaining_rows:
+                if row not in slot_info["row_ids"]:
+                    slot_info["row_ids"].append(row)
+            slot_info["count"] += len(remaining_rows)
+            logger.info(f"✅ Отзывы возвращены в слот {slot_msg_id}, теперь доступно: {slot_info['count']}")
+    
+    del slot_requests[user_id]
+    
+    await message.answer(
+        f"✅ Отказ принят.\n\n"
+        f"• Выполненные отзывы: {len(completed)} – отправлены на модерацию\n"
+        f"• Невыполненные отзывы: {len(remaining_rows)} – сняты с вас и будут переопубликованы\n\n"
+        f"За невыполненные отзывы ничего не списывается."
     )
 
+# ---------- Обработчик ввода количества (ПОСЛЕ cancel) ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
+    # Пропускаем команды
+    if message.text and message.text.startswith('/'):
+        return
+    
     user_id = message.from_user.id
     if user_id not in slot_requests:
         return
@@ -353,6 +373,74 @@ async def handle_quantity_input(message: Message):
         f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
         "Нажмите кнопку «Активный слот», чтобы приступить к работе.",
         reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+    )
+
+@router.callback_query(F.data.startswith("take_slot|"))
+async def take_slot_start(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+    user_id = callback.from_user.id
+    if not is_registered(user_id):
+        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
+        return
+    if is_blocked(user_id):
+        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
+        return
+
+    if user_id in slot_requests:
+        active_platform = slot_requests[user_id]["platform"]
+        await callback.bot.send_message(
+            user_id,
+            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
+            "Закончите его, чтобы взять новый."
+        )
+        return
+
+    parts = callback.data.split("|")
+    if len(parts) < 5:
+        await callback.bot.send_message(user_id, "Некорректный запрос.")
+        return
+
+    _, platform, count_str, date, time_safe = parts
+    try:
+        count = int(count_str)
+    except:
+        await callback.bot.send_message(user_id, "Некорректное количество.")
+        return
+
+    time = time_safe.replace('-', ':')
+    slot_msg_id = callback.message.message_id
+    slot_info = active_slots.get(slot_msg_id)
+    if not slot_info:
+        await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
+        return
+
+    if not await check_limit(user_id, platform):
+        limit = get_limit(platform)
+        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
+        return
+
+    slot_requests[user_id] = {
+        "platform": platform,
+        "count": count,
+        "date": date,
+        "time": time,
+        "slot_msg_id": slot_msg_id,
+        "state": "waiting_quantity",
+        "assigned_rows": [],
+        "current_index": 0,
+        "row_ids": slot_info["row_ids"],
+        "from_menu": False,
+        "mapping": slot_info.get("mapping", get_column_mapping(platform)),
+        "sheet_title": slot_info.get("sheet_title")
+    }
+
+    await callback.bot.send_message(
+        chat_id=user_id,
+        text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
 
 @router.callback_query(F.data.startswith("active_slot|"))
@@ -683,89 +771,4 @@ async def handle_screenshot(message: Message):
     await message.answer(
         f"✅ Отзыв выполнен! Осталось {total - len(completed)} отзывов.",
         reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
-    )
-
-# ---------- ИСПРАВЛЕННАЯ КОМАНДА ОТКАЗА ----------
-@router.message(Command("cancel"))
-@router.message(Command("отказ"))
-async def cancel_task(message: Message):
-    user_id = message.from_user.id
-    if user_id not in slot_requests:
-        await message.answer("❌ У вас нет активного задания.")
-        return
-    
-    request = slot_requests[user_id]
-    assigned_rows = request.get("assigned_rows", [])
-    completed = request.get("completed_reviews", [])
-    ordered_reviews = request.get("ordered_reviews", [])
-    
-    # Определяем, какие отзывы остались невыполненными
-    remaining_rows = [row_idx for row_idx, num in ordered_reviews if num not in completed]
-    
-    if not remaining_rows:
-        await message.answer("✅ У вас нет невыполненных отзывов для отмены.")
-        del slot_requests[user_id]
-        return
-    
-    platform = request.get("platform", "неизвестно")
-    mapping = request.get("mapping", get_column_mapping(platform))
-    sheet_title = request.get("sheet_title")
-    
-    logger.info(f"🔄 Отмена: пользователь {user_id}, платформа {platform}, невыполненных: {len(remaining_rows)}")
-    
-    # Обрабатываем отзывы в таблице
-    creds = get_credentials()
-    if creds:
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(SHEET_ID)
-        
-        sheet = None
-        if sheet_title:
-            try:
-                sheet = spreadsheet.worksheet(sheet_title)
-            except:
-                pass
-        if sheet is None:
-            for s in spreadsheet.worksheets():
-                try:
-                    s.cell(remaining_rows[0], 1)
-                    sheet = s
-                    break
-                except:
-                    continue
-        
-        if sheet:
-            for row_idx in remaining_rows:
-                try:
-                    # Очищаем столбцы:
-                    sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
-                    sheet.update_cell(row_idx, mapping["executor_col"], "")
-                    sheet.update_cell(row_idx, mapping["flag_third_col"], 0)
-                    sheet.update_cell(row_idx, mapping["flag_second_col"], 0)
-                    sheet.update_cell(row_idx, mapping["flag_first_col"], 0)
-                    sheet.update_cell(row_idx, mapping["id_col"], "")
-                    sheet.update_cell(row_idx, mapping["order_col"], "")
-                    time.sleep(0.1)
-                    logger.info(f"✅ Строка {row_idx} очищена для переопубликации")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка очистки строки {row_idx}: {e}")
-    
-    # Возвращаем отзывы в активный слот для переопубликации
-    slot_msg_id = request.get("slot_msg_id")
-    if slot_msg_id and slot_msg_id != "menu":
-        slot_info = active_slots.get(slot_msg_id)
-        if slot_info:
-            for row in remaining_rows:
-                if row not in slot_info["row_ids"]:
-                    slot_info["row_ids"].append(row)
-            slot_info["count"] += len(remaining_rows)
-            logger.info(f"✅ Отзывы возвращены в слот {slot_msg_id}, теперь доступно: {slot_info['count']}")
-    
-    del slot_requests[user_id]
-    
-    await message.answer(
-        f"✅ Отказ принят.\n\n"
-        f"• Выполненные отзывы: {len(completed)} – отправлены на модерацию\n"
-        f"• Невыполненные отзывы: {len(remaining_rows)} – сняты с вас и будут переопубликованы\n\n"
-        f"За невыполненные отзывы ничего не списывается."
     )
