@@ -126,7 +126,7 @@ async def main():
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(slots.router)
-    dp.include_router(admin_advanced_router)  # <-- /infoga
+    dp.include_router(admin_advanced_router)  # <-- команда /infoga
 
     asyncio.create_task(scheduler(bot))
     asyncio.create_task(monitor_schedule(bot))
