@@ -5,19 +5,23 @@ from oauth2client.service_account import ServiceAccountCredentials
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import SHEET_ID, DB_PATH, get_credentials_path, CHANNEL_ID, OTHER_JOBS_CHANNEL
-from bot.database import get_user_by_username, get_user
+from bot.database import (
+    get_user_by_username, get_user,
+    save_channel_message, get_old_channel_messages, delete_channel_message
+)
 from bot.state import active_slots, slot_requests
 from bot.helpers import (
-    platform_from_sheet_name, 
-    get_column_mapping, 
-    match_platform, 
-    PRICES, 
-    PLATFORM_ALIASES, 
+    platform_from_sheet_name,
+    get_column_mapping,
+    match_platform,
+    PRICES,
+    PLATFORM_ALIASES,
     SHEET_NAME_TO_PLATFORM
 )
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
+
 
 def get_credentials():
     path = get_credentials_path()
@@ -27,6 +31,7 @@ def get_credentials():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     return ServiceAccountCredentials.from_json_keyfile_name(path, scope)
 
+
 async def publish_scheduled_slot(bot, platform: str, count: int,
                                  date: str, time: str, row_ids: list, attempt: int = 1,
                                  mapping=None, sheet_title=None):
@@ -35,7 +40,7 @@ async def publish_scheduled_slot(bot, platform: str, count: int,
     platform_names = {
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
-        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу", 
+        "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу",
         "32топ": "32ТОП", "zoon": "ZOON"
     }
     pretty_name = platform_names.get(platform, platform)
@@ -59,6 +64,7 @@ async def publish_scheduled_slot(bot, platform: str, count: int,
         sent_msg = await bot.send_message(
             chat_id=CHANNEL_ID, text=post_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML
         )
+        save_channel_message(sent_msg.message_id, CHANNEL_ID)
         logger.info(f"✅ Слот {platform} опубликован, ID сообщения: {sent_msg.message_id}")
         active_slots[sent_msg.message_id] = {
             "platform": platform,
@@ -76,6 +82,7 @@ async def publish_scheduled_slot(bot, platform: str, count: int,
     except Exception as e:
         logger.error(f"❌ Ошибка при отправке сообщения слота: {e}")
         return None
+
 
 async def monitor_schedule(bot):
     logger.info("📅 Планировщик слотов запущен")
@@ -229,7 +236,7 @@ async def monitor_schedule(bot):
                     else:
                         logger.error(f"❌ Не удалось переопубликовать слот {slot['platform']}")
 
-                # --- Закрытие в 23:30 (ИСПРАВЛЕНО) ---
+                # Закрытие в 23:30
                 if now.hour == 23 and now.minute >= 30:
                     logger.info("🕒 Начинаем закрытие слотов в 23:30")
                     from bot.state import slot_requests
@@ -240,11 +247,9 @@ async def monitor_schedule(bot):
                             assigned_rows = request.get("assigned_rows", [])
                             if not assigned_rows:
                                 continue
-                            
-                            # Получаем правильный mapping для платформы
-                            platform = request.get("platform", "неизвестно")
-                            mapping = request.get("mapping", get_column_mapping(platform))
+                            mapping = request.get("mapping", get_column_mapping("яндекс"))
                             sheet_title = request.get("sheet_title")
+                            platform = request.get("platform", "неизвестно")
 
                             logger.info(f"👤 Обработка сессии пользователя {user_id}, платформа {platform}, строк: {assigned_rows}")
 
@@ -276,11 +281,11 @@ async def monitor_schedule(bot):
                                     if j_val.lower() == "на модерации":
                                         sheet.update_cell(row_idx, mapping["status_col"], "на модерации с ОПЗ")
                                         logger.info(f"✅ Строка {row_idx} переведена в 'на модерации с ОПЗ'")
-                                    elif j_val.lower() == "в работе" or j_val == "":
+                                    elif j_val.lower() == "в работе":
                                         sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
                                         sheet.update_cell(row_idx, mapping["executor_col"], "")
                                         sheet.update_cell(row_idx, mapping["flag_final_col"], 888)
-                                        sheet.format(f"{chr(64 + mapping['flag_final_col'])}{row_idx}", {
+                                        sheet.format(f"{chr(64+mapping['flag_final_col'])}{row_idx}", {
                                             "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
                                         })
                                         logger.info(f"✅ Строка {row_idx} снята (не принят в работу), I=888")
@@ -315,14 +320,14 @@ async def monitor_schedule(bot):
             logger.error(f"❌ Ошибка в планировщике слотов: {e}", exc_info=True)
         await asyncio.sleep(120)
 
+
 async def update_stats_from_sheet():
     while True:
         now = datetime.now(moscow_tz)
         weekday = now.weekday()
         target_times = []
 
-        # Среда - НЕТ обновлений
-        if weekday == 2:
+        if weekday == 2:  # Среда — нет обновлений
             logger.info("📅 Сегодня среда, обновление статистики отключено")
             next_day = now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
             wait_seconds = (next_day - now).total_seconds()
@@ -330,8 +335,7 @@ async def update_stats_from_sheet():
             await asyncio.sleep(wait_seconds)
             continue
 
-        # Четверг - только в 20:00
-        if weekday == 3:
+        if weekday == 3:  # Четверг — только в 20:00
             thursday_2000 = now.replace(hour=20, minute=0, second=0, microsecond=0)
             if now < thursday_2000:
                 target_times = [thursday_2000]
@@ -353,6 +357,7 @@ async def update_stats_from_sheet():
         logger.info(f"⏳ Следующее обновление статистики в {next_target.strftime('%d.%m.%Y %H:%M')}, ждём {wait_seconds/60:.1f} мин.")
         await asyncio.sleep(wait_seconds)
         await update_stats_from_sheet_once()
+
 
 async def update_stats_from_sheet_once():
     try:
@@ -386,7 +391,6 @@ async def update_stats_from_sheet_once():
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                # Пропускаем уже обработанные (E=1 или 7)
                 if e_flag not in ("", "0"):
                     continue
                 if flag_stat in ("666", "888", "999"):
@@ -405,18 +409,11 @@ async def update_stats_from_sheet_once():
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
                         field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                            "zoon": "zoon",
+                            "яндекс": "yandex", "google": "google", "2гис": "gis",
+                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
+                            "доктору": "doctoru", "докдок": "dokdok",
+                            "про докторов": "prodoctors", "докту": "doctu",
+                            "32топ": "top32", "zoon": "zoon",
                         }
                         field_prefix = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -438,18 +435,11 @@ async def update_stats_from_sheet_once():
                         price = PRICES.get(platform, 0)
                         price_opz = int(price * 0.7)
                         field_map = {
-                            "яндекс": "yandex",
-                            "google": "google",
-                            "2гис": "gis",
-                            "авито": "avito",
-                            "вк": "vk",
-                            "отзовик": "otzovik",
-                            "доктору": "doctoru",
-                            "докдок": "dokdok",
-                            "про докторов": "prodoctors",
-                            "докту": "doctu",
-                            "32топ": "top32",
-                            "zoon": "zoon",
+                            "яндекс": "yandex", "google": "google", "2гис": "gis",
+                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
+                            "доктору": "doctoru", "докдок": "dokdok",
+                            "про докторов": "prodoctors", "докту": "doctu",
+                            "32топ": "top32", "zoon": "zoon",
                         }
                         field_prefix = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -466,7 +456,6 @@ async def update_stats_from_sheet_once():
                         e_value = 2
 
                 elif status == "удален":
-                    # Обработка удаленных отзывов - снимаем деньги даже если E=1
                     if user:
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
@@ -474,18 +463,11 @@ async def update_stats_from_sheet_once():
                             cur = conn.cursor()
                             cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
                             field_map = {
-                                "яндекс": "yandex",
-                                "google": "google",
-                                "2гис": "gis",
-                                "авито": "avito",
-                                "вк": "vk",
-                                "отзовик": "otzovik",
-                                "доктору": "doctoru",
-                                "докдок": "dokdok",
-                                "про докторов": "prodoctors",
-                                "докту": "doctu",
-                                "32топ": "top32",
-                                "zoon": "zoon",
+                                "яндекс": "yandex", "google": "google", "2гис": "gis",
+                                "авито": "avito", "вк": "vk", "отзовик": "otzovik",
+                                "доктору": "doctoru", "докдок": "dokdok",
+                                "про докторов": "prodoctors", "докту": "doctu",
+                                "32топ": "top32", "zoon": "zoon",
                             }
                             field_prefix = field_map.get(platform)
                             if field_prefix:
@@ -493,7 +475,7 @@ async def update_stats_from_sheet_once():
                                 passed_field = f"{field_prefix}_passed"
                                 cur.execute(f"UPDATE users SET {total_field} = {total_field} - 1, {passed_field} = {passed_field} - 1 WHERE user_id = ? AND {total_field} > 0", (uid,))
                             conn.commit()
-                        e_value = 7  # Ставим E=7 для удаленных
+                        e_value = 7
                         logger.info(f"✅ Вычтено {price}₽ у пользователя {uid} за удалённый отзыв ({platform})")
                     else:
                         e_value = 2
@@ -511,11 +493,10 @@ async def update_stats_from_sheet_once():
             if sheet_updates:
                 updates_by_sheet[sheet] = sheet_updates
 
-        # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ E ----
         for sheet, updates in updates_by_sheet.items():
             total = len(updates)
             logger.info(f"📝 Обновление E для {total} строк на листе {sheet.title}")
-            
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = updates[i:i+batch_size]
@@ -527,7 +508,7 @@ async def update_stats_from_sheet_once():
                         "range": f"E{row_idx}",
                         "values": [[e_value]]
                     })
-                
+
                 try:
                     sheet.batch_update(batch_data)
                     logger.info(f"✅ Пакетно обновлено {len(batch)} строк (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
@@ -583,6 +564,7 @@ async def update_stats_from_sheet_once():
 
     except Exception as e:
         logger.error(f"❌ Ошибка обновления статистики: {e}", exc_info=True)
+
 
 async def mark_as_paid_in_table(user_ids: list):
     """
@@ -649,7 +631,7 @@ async def mark_as_paid_in_table(user_ids: list):
         for sheet, updates in updates_by_sheet.items():
             total = len(updates)
             logger.info(f"📝 Обновление статуса для {total} строк на листе {sheet.title} -> 'В отчете ИСПЛ'")
-            
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = updates[i:i+batch_size]
@@ -662,7 +644,7 @@ async def mark_as_paid_in_table(user_ids: list):
                         "range": f"{col_letter}{row_idx}",
                         "values": [["В отчете ИСПЛ"]]
                     })
-                
+
                 try:
                     sheet.batch_update(batch_data)
                     logger.info(f"✅ Пакетно обновлено {len(batch)} строк статусом 'В отчете ИСПЛ' (пачка {i//batch_size + 1}/{(total + batch_size - 1)//batch_size}) на листе {sheet.title}")
@@ -682,3 +664,44 @@ async def mark_as_paid_in_table(user_ids: list):
             logger.warning("⚠️ Не найдено строк для отметки. Проверьте, что в таблице есть строки с E=1 и статусом 'опубликовано' для этих пользователей.")
     except Exception as e:
         logger.error(f"❌ Ошибка в mark_as_paid_in_table: {e}")
+
+
+# ============ АВТООЧИСТКА КАНАЛА В 4:30 МСК ============
+async def cleanup_channel(bot):
+    """Каждый день в 4:30 МСК удаляет старые сообщения из канала (старше 12 часов)."""
+    logger.info("🧹 Модуль автоочистки канала запущен (4:30 МСК)")
+    while True:
+        try:
+            now = datetime.now(moscow_tz)
+            target = now.replace(hour=4, minute=30, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            logger.info(f"⏳ Следующая очистка канала в {target.strftime('%d.%m.%Y %H:%M')} МСК, ждём {wait_seconds/3600:.1f} ч.")
+            await asyncio.sleep(wait_seconds)
+
+            logger.info("🧹 Начинаем очистку канала от старых сообщений")
+            old_messages = get_old_channel_messages(hours=12)
+            deleted = 0
+            failed = 0
+
+            for msg in old_messages:
+                try:
+                    await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
+                    delete_channel_message(msg["id"])
+                    deleted += 1
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось удалить сообщение {msg['message_id']}: {e}")
+                    delete_channel_message(msg["id"])
+                    failed += 1
+
+            logger.info(f"✅ Очистка канала завершена: удалено {deleted}, не удалось {failed}")
+
+            # Очищаем active_slots (это только в памяти)
+            active_slots.clear()
+            logger.info("✅ active_slots очищен")
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка автоочистки канала: {e}", exc_info=True)
+        await asyncio.sleep(60)
