@@ -51,6 +51,19 @@ def init_db():
                 zoon_total INTEGER DEFAULT 0
             )
         """)
+
+        # === МИГРАЦИИ: добавляем колонки, если их нет ===
+        cur.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in cur.fetchall()]
+        needed_columns = {
+            "zoon_passed": "INTEGER DEFAULT 0",
+            "zoon_total": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_type in needed_columns.items():
+            if col_name not in columns:
+                cur.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                print(f"✅ Добавлена колонка users.{col_name}")
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS admins (
                 user_id INTEGER PRIMARY KEY,
@@ -86,7 +99,6 @@ def init_db():
                 taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Таблица для хранения ID сообщений канала (автоочистка)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS channel_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
