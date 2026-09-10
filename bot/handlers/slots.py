@@ -1,4 +1,4 @@
-import logging, os, secrets, time
+import logging, os, secrets, time, asyncio
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Router, F
@@ -185,7 +185,7 @@ async def check_limit(user_id: int, platform: str) -> bool:
 
 # ============ ВАЖНО: cancel_task СТОИТ ВЫШЕ handle_quantity_input ============
 
-# ---------- КОМАНДА ОТКАЗА ----------
+# ---------- КОМАНДА ОТКАЗА (с пакетным обновлением) ----------
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -233,20 +233,56 @@ async def cancel_task(message: Message):
                     continue
         
         if sheet:
+            # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ ----
+            batch_data = []
             for row_idx in remaining_rows:
-                try:
-                    sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
-                    sheet.update_cell(row_idx, mapping["executor_col"], "")
-                    sheet.update_cell(row_idx, mapping["flag_third_col"], 0)
-                    sheet.update_cell(row_idx, mapping["flag_second_col"], 0)
-                    sheet.update_cell(row_idx, mapping["flag_first_col"], 0)
-                    sheet.update_cell(row_idx, mapping["id_col"], "")
-                    sheet.update_cell(row_idx, mapping["order_col"], "")
-                    time.sleep(0.1)
-                    logger.info(f"✅ Строка {row_idx} очищена для переопубликации")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка очистки строки {row_idx}: {e}")
+                # J - статус -> "не принят в работу"
+                col_status = chr(64 + mapping["status_col"])
+                batch_data.append({"range": f"{col_status}{row_idx}", "values": [["не принят в работу"]]})
+                # K - исполнитель -> пусто
+                col_exec = chr(64 + mapping["executor_col"])
+                batch_data.append({"range": f"{col_exec}{row_idx}", "values": [[""]]})
+                # O - флаг третьей перепубликации -> 0
+                col_o = chr(64 + mapping["flag_third_col"])
+                batch_data.append({"range": f"{col_o}{row_idx}", "values": [[0]]})
+                # P - флаг второй перепубликации -> 0
+                col_p = chr(64 + mapping["flag_second_col"])
+                batch_data.append({"range": f"{col_p}{row_idx}", "values": [[0]]})
+                # Q - флаг первой публикации -> 0
+                col_q = chr(64 + mapping["flag_first_col"])
+                batch_data.append({"range": f"{col_q}{row_idx}", "values": [[0]]})
+                # S - ID отзыва -> пусто
+                col_s = chr(64 + mapping["id_col"])
+                batch_data.append({"range": f"{col_s}{row_idx}", "values": [[""]]})
+                # T - номер отзыва -> пусто
+                col_t = chr(64 + mapping["order_col"])
+                batch_data.append({"range": f"{col_t}{row_idx}", "values": [[""]]})
+            
+            # Отправляем пачками по 50
+            try:
+                for i in range(0, len(batch_data), 50):
+                    chunk = batch_data[i:i+50]
+                    sheet.batch_update(chunk)
+                    logger.info(f"✅ Пакетно очищено {len(chunk)} ячеек")
+                    await asyncio.sleep(0.5)
+                logger.info(f"✅ Все {len(remaining_rows)} строк очищены для переопубликации")
+            except Exception as e:
+                logger.error(f"❌ Ошибка пакетного обновления: {e}")
+                # Fallback: по одной
+                for row_idx in remaining_rows:
+                    try:
+                        sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
+                        sheet.update_cell(row_idx, mapping["executor_col"], "")
+                        sheet.update_cell(row_idx, mapping["flag_third_col"], 0)
+                        sheet.update_cell(row_idx, mapping["flag_second_col"], 0)
+                        sheet.update_cell(row_idx, mapping["flag_first_col"], 0)
+                        sheet.update_cell(row_idx, mapping["id_col"], "")
+                        sheet.update_cell(row_idx, mapping["order_col"], "")
+                        time.sleep(0.1)
+                    except Exception as e2:
+                        logger.error(f"❌ Ошибка очистки строки {row_idx}: {e2}")
     
+    # Возвращаем отзывы в активный слот для переопубликации
     slot_msg_id = request.get("slot_msg_id")
     if slot_msg_id and slot_msg_id != "menu":
         slot_info = active_slots.get(slot_msg_id)
