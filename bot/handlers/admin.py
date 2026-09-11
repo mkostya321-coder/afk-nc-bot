@@ -60,29 +60,30 @@ async def cmd_helpadm(message: Message):
         text += (
             "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
             "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
+            "💸 /pay @username <сумма> — пополнить баланс пользователю\n"
             "ℹ️ /info <username> — краткий профиль пользователя\n"
             "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
-            "⛔ /stop_tiktok — закрыть участие в Tik Tok (с уведомлением всех пользователей)\n"
-            "▶️ /start_tiktok — возобновить участие в Tik Tok (с уведомлением всех пользователей)\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
-            "📊 /set_limit <platform> <limit> — установить лимит на количество отзывов за 24 часа для платформы\n"
+            "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
+            "▶️ /start_tiktok — возобновить участие в Tik Tok\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение пользователю\n"
+            "📊 /set_limit <platform> <limit> — установить лимит отзывов\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение (с датой снятия)\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение\n"
         )
     if is_comoderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
             "ℹ️ /info <username> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение (с датой снятия)\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение пользователю от администрации\n"
+            "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
+            "📨 /smsuser <username> <текст> — отправить сообщение\n"
         )
     await message.answer(text)
     log_action(message, "Просмотр списка админ-команд")
@@ -263,7 +264,8 @@ async def cmd_info(message: Message):
         f"Город: {user['city']}\n"
         f"С нами уже: {time_str}\n"
         f"К выплате чт: {user['payout']}₽\n"
-        f"Заработано за всё время: {user['total_earned']}₽\n\n"
+        f"Заработано за всё время: {user['total_earned']}₽\n"
+        f"Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"📊 Статистика по слотам:\n"
         f"Яндекс: {user['yandex_passed']}\n"
         f"Google: {user['google_passed']}\n"
@@ -275,7 +277,8 @@ async def cmd_info(message: Message):
         f"ДокДок: {user['dokdok_passed']}\n"
         f"Про Докторов: {user['prodoctors_passed']}\n"
         f"ДокТу: {user['doctu_passed']}\n"
-        f"32ТОП: {user['top32_passed']}\n\n"
+        f"32ТОП: {user['top32_passed']}\n"
+        f"ZOON: {user.get('zoon_passed', 0)}\n\n"
         f"Рефералка: {ref if ref != '0' else 'нет'} ({ref_status})\n"
         f"Реквизиты: {user['phone_card']} / {user['bank']}\n"
         f"{warn_text}"
@@ -336,6 +339,54 @@ async def user_edit(message: Message):
     log_action(message, f"Изменены данные пользователя {user_id}: {field}={value}")
 
 
+@router.message(Command("pay"))
+async def cmd_pay(message: Message):
+    """GA и владелец: пополняет payout, total_earned и admin_topup пользователю."""
+    if not is_ga(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer(
+            "❌ Использование: /pay @username <сумма>\n"
+            "Пример: /pay @ivan 500"
+        )
+        return
+
+    target = parts[1].lstrip("@").lower()
+    try:
+        amount = int(parts[2])
+        if amount <= 0:
+            await message.answer("❌ Сумма должна быть положительным числом.")
+            return
+    except ValueError:
+        await message.answer("❌ Сумма должна быть числом.")
+        return
+
+    user = get_user_by_username(target)
+    if not user:
+        await message.answer(f"❌ Пользователь с username '{target}' не найден.")
+        return
+
+    user_id = user["user_id"]
+    new_payout = (user.get("payout") or 0) + amount
+    new_earned = (user.get("total_earned") or 0) + amount
+    new_topup = (user.get("admin_topup") or 0) + amount
+
+    update_user_field(user_id, "payout", new_payout)
+    update_user_field(user_id, "total_earned", new_earned)
+    update_user_field(user_id, "admin_topup", new_topup)
+
+    await message.answer(
+        f"✅ Пользователю @{user.get('tg_username')} начислено {amount}₽\n\n"
+        f"💰 К выплате: {new_payout}₽\n"
+        f"💵 Заработано ЗВВ: {new_earned}₽\n"
+        f"📊 Пополнение адм за неделю: {new_topup}₽"
+    )
+    log_action(message, f"Пополнение {amount}₽ пользователю {user_id} ({target})")
+
+
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
     if not is_ga(message.from_user.id):
@@ -367,6 +418,7 @@ async def reset_balance(message: Message):
             placeholders = ','.join(['?'] * len(user_ids))
             cur.execute(f"""
                 UPDATE users SET payout = 0,
+                admin_topup = 0,
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
                 doctu_passed=0, top32_passed=0, zoon_passed=0
@@ -427,6 +479,7 @@ async def cmd_payout_report(message: Message):
                 cur.execute(f"""
                     UPDATE users SET 
                         payout = 0,
+                        admin_topup = 0,
                         yandex_passed = 0,
                         google_passed = 0,
                         gis_passed = 0,
