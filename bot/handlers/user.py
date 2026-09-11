@@ -216,6 +216,7 @@ async def menu_profile(message: Message):
         f"Про Докторов: {user['prodoctors_passed']}\n"
         f"ДокТу: {user['doctu_passed']}\n"
         f"32ТОП: {user['top32_passed']}\n\n"
+        f"💰 Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"ℹ️ Статистика обновляется каждый день в 10:00 и 20:00 МСК.\n\n"
         f"👥 Рефералка: {referrer if referrer != '0' else 'нет'} ({ref_status})\n\n"
         f"💳 Реквизиты\n"
