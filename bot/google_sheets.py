@@ -158,7 +158,7 @@ async def monitor_schedule(bot):
                             date, time, row_ids, attempt=1, mapping=mapping, sheet_title=sheet_name
                         )
                         if sent_msg:
-                            # === ПАКЕТНОЕ ОБНОВЛЕНИЕ Q=1 И S=ID ===
+                            # Пакетное обновление Q=1 и S=ID
                             batch_data = []
                             for row_idx in row_ids:
                                 review_id = secrets.token_hex(4)
@@ -686,37 +686,76 @@ async def mark_as_paid_in_table(user_ids: list):
 
 # ============ АВТООЧИСТКА КАНАЛА В 4:30 МСК ============
 async def cleanup_channel(bot):
+    """Каждый день в 4:30 МСК удаляет старые сообщения из канала.
+    Если бот был выключен в 4:30 — очистка выполнится при первом запуске до 12:00."""
     logger.info("🧹 Модуль автоочистки канала запущен (4:30 МСК)")
+
+    last_cleanup_date = None
+
     while True:
         try:
             now = datetime.now(moscow_tz)
-            target = now.replace(hour=4, minute=30, second=0, microsecond=0)
-            if now >= target:
-                target += timedelta(days=1)
-            wait_seconds = (target - now).total_seconds()
-            logger.info(f"⏳ Следующая очистка канала в {target.strftime('%d.%m.%Y %H:%M')} МСК, ждём {wait_seconds/3600:.1f} ч.")
-            await asyncio.sleep(wait_seconds)
+            today_date = now.date()
 
-            logger.info("🧹 Начинаем очистку канала от старых сообщений")
-            old_messages = get_old_channel_messages(hours=12)
-            deleted = 0
-            failed = 0
+            today_target = now.replace(hour=4, minute=30, second=0, microsecond=0)
 
-            for msg in old_messages:
-                try:
-                    await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
-                    delete_channel_message(msg["id"])
-                    deleted += 1
-                    await asyncio.sleep(0.3)
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось удалить сообщение {msg['message_id']}: {e}")
-                    delete_channel_message(msg["id"])
-                    failed += 1
+            # Очистка нужна, если:
+            # 1. Сейчас >= 4:30 сегодня
+            # 2. Очистка сегодня ещё не выполнялась
+            # 3. Сейчас < 12:00 (чтобы не удалять сегодняшние слоты)
+            should_cleanup_now = (
+                now >= today_target
+                and last_cleanup_date != today_date
+                and now.hour < 12
+            )
 
-            logger.info(f"✅ Очистка канала завершена: удалено {deleted}, не удалось {failed}")
-            active_slots.clear()
-            logger.info("✅ active_slots очищен")
+            if should_cleanup_now:
+                logger.info("🧹 Начинаем очистку канала от старых сообщений")
+                old_messages = get_old_channel_messages(hours=12)
+                logger.info(f"📋 Найдено {len(old_messages)} старых сообщений для удаления")
+
+                deleted = 0
+                failed = 0
+
+                for msg in old_messages:
+                    try:
+                        await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
+                        delete_channel_message(msg["id"])
+                        deleted += 1
+                        logger.info(f"✅ Удалено сообщение {msg['message_id']}")
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if "message can't be deleted" in error_msg or "message to delete not found" in error_msg:
+                            logger.warning(f"⚠️ Нельзя удалить {msg['message_id']} (старше 48ч), убираем из БД")
+                            delete_channel_message(msg["id"])
+                            failed += 1
+                        else:
+                            logger.error(f"❌ Ошибка удаления {msg['message_id']}: {e}")
+                            failed += 1
+
+                logger.info(f"✅ Очистка канала завершена: удалено {deleted}, не удалось {failed}")
+                active_slots.clear()
+                logger.info("✅ active_slots очищен")
+
+                last_cleanup_date = today_date
+
+            # Вычисляем время следующей очистки
+            if last_cleanup_date == today_date:
+                next_target = today_target + timedelta(days=1)
+            elif now < today_target:
+                next_target = today_target
+            else:
+                next_target = today_target + timedelta(days=1)
+
+            wait_seconds = (next_target - now).total_seconds()
+            logger.info(f"⏳ Следующая очистка канала в {next_target.strftime('%d.%m.%Y %H:%M')} МСК, ждём {wait_seconds/3600:.1f} ч.")
+
+            if wait_seconds > 3600:
+                await asyncio.sleep(3600)
+            else:
+                await asyncio.sleep(max(wait_seconds, 60))
 
         except Exception as e:
             logger.error(f"❌ Ошибка автоочистки канала: {e}", exc_info=True)
-        await asyncio.sleep(60)
+            await asyncio.sleep(60)
