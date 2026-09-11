@@ -94,6 +94,7 @@ async def weekly_payout_report(bot):
                         cur.execute(f"""
                             UPDATE users SET 
                                 payout = 0,
+                                admin_topup = 0,
                                 yandex_passed = 0,
                                 google_passed = 0,
                                 gis_passed = 0,
@@ -142,7 +143,7 @@ async def main():
     asyncio.create_task(update_stats_from_sheet())
     asyncio.create_task(weekly_payout_report(bot))
     asyncio.create_task(username_checker(bot))
-    asyncio.create_task(cleanup_channel(bot))  # <-- Автоочистка в 4:30 МСК
+    asyncio.create_task(cleanup_channel(bot))
 
     await dp.start_polling(bot)
 
