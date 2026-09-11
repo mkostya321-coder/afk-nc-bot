@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 from .config import DB_PATH, OWNER_ID
@@ -53,10 +54,8 @@ def init_db():
             )
         """)
 
-        # === МИГРАЦИЯ: добавляем недостающие колонки, если их нет ===
         cur.execute("PRAGMA table_info(users)")
         columns = [col[1] for col in cur.fetchall()]
-
         needed_columns = {
             "zoon_passed": "INTEGER DEFAULT 0",
             "zoon_total": "INTEGER DEFAULT 0",
@@ -110,11 +109,47 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # === ХРАНЕНИЕ СЕССИЙ В БД ===
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS active_slots (
+                msg_id INTEGER PRIMARY KEY,
+                platform TEXT NOT NULL,
+                count INTEGER DEFAULT 0,
+                row_ids TEXT,
+                date TEXT,
+                time TEXT,
+                publish_time TIMESTAMP,
+                attempt INTEGER DEFAULT 1,
+                sheet_title TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS slot_requests_db (
+                user_id INTEGER PRIMARY KEY,
+                platform TEXT,
+                count INTEGER DEFAULT 0,
+                date TEXT,
+                time TEXT,
+                slot_msg_id INTEGER,
+                state TEXT,
+                assigned_rows TEXT,
+                row_ids TEXT,
+                sheet_title TEXT,
+                ordered_reviews TEXT,
+                completed_reviews TEXT,
+                active_review_row INTEGER,
+                extra_messages TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         if OWNER_ID:
             cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
         conn.commit()
 
 
+# ============ USERS ============
 def add_user(user_id: int, username: str, first_name: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -170,6 +205,7 @@ def toggle_block(user_id: int) -> Optional[int]:
     return new_status
 
 
+# ============ ADMINS ============
 def get_admin_role(user_id: int) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -204,6 +240,7 @@ def is_comoderator(user_id: int) -> bool:
     return role in ('owner', 'ga', 'moderator', 'comoderator')
 
 
+# ============ WARNINGS ============
 def add_warning(user_id: int, reason: str, warned_by: int):
     extend_warnings_expiry(user_id, 45)
     with sqlite3.connect(DB_PATH) as conn:
@@ -246,6 +283,7 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         conn.commit()
 
 
+# ============ SETTINGS ============
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -269,6 +307,7 @@ def get_all_users_with_payout():
         return [dict(row) for row in cur.fetchall()]
 
 
+# ============ REVIEW TAKES ============
 def add_review_take(user_id: int, platform: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -316,7 +355,7 @@ def get_all_registered_users():
         return [dict(row) for row in cur.fetchall()]
 
 
-# ============ СОХРАНЕНИЕ СООБЩЕНИЙ КАНАЛА ============
+# ============ СООБЩЕНИЯ КАНАЛА ============
 def save_channel_message(message_id: int, chat_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -340,3 +379,127 @@ def delete_channel_message(record_id: int):
         cur = conn.cursor()
         cur.execute("DELETE FROM channel_messages WHERE id = ?", (record_id,))
         conn.commit()
+
+
+# ============ ХРАНЕНИЕ СЕССИЙ (active_slots) ============
+def save_active_slot(msg_id: int, data: dict):
+    """Сохраняет активный слот в БД."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR REPLACE INTO active_slots 
+            (msg_id, platform, count, row_ids, date, time, publish_time, attempt, sheet_title)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            msg_id,
+            data.get("platform"),
+            data.get("count", 0),
+            json.dumps(data.get("row_ids", [])),
+            data.get("date"),
+            data.get("time"),
+            data.get("publish_time").isoformat() if data.get("publish_time") else None,
+            data.get("attempt", 1),
+            data.get("sheet_title")
+        ))
+        conn.commit()
+
+
+def update_active_slot(msg_id: int, data: dict):
+    save_active_slot(msg_id, data)
+
+
+def delete_active_slot(msg_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM active_slots WHERE msg_id = ?", (msg_id,))
+        conn.commit()
+
+
+def get_all_active_slots() -> dict:
+    """Возвращает {msg_id: {...}}."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM active_slots")
+        result = {}
+        for row in cur.fetchall():
+            d = dict(row)
+            d["row_ids"] = json.loads(d.get("row_ids") or "[]")
+            if d.get("publish_time"):
+                try:
+                    d["publish_time"] = datetime.fromisoformat(d["publish_time"])
+                except:
+                    pass
+            result[d["msg_id"]] = d
+        return result
+
+
+# ============ ХРАНЕНИЕ СЕССИЙ (slot_requests) ============
+def save_slot_request(user_id: int, data: dict):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR REPLACE INTO slot_requests_db 
+            (user_id, platform, count, date, time, slot_msg_id, state, assigned_rows,
+             row_ids, sheet_title, ordered_reviews, completed_reviews, active_review_row,
+             extra_messages, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            data.get("platform"),
+            data.get("count", 0),
+            data.get("date"),
+            data.get("time"),
+            data.get("slot_msg_id"),
+            data.get("state"),
+            json.dumps(data.get("assigned_rows", [])),
+            json.dumps(data.get("row_ids", [])),
+            data.get("sheet_title"),
+            json.dumps(data.get("ordered_reviews", [])),
+            json.dumps(data.get("completed_reviews", [])),
+            data.get("active_review_row"),
+            json.dumps(data.get("extra_messages", [])),
+            datetime.now()
+        ))
+        conn.commit()
+
+
+def delete_slot_request(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM slot_requests_db WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+def get_all_slot_requests() -> dict:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM slot_requests_db")
+        result = {}
+        for row in cur.fetchall():
+            d = dict(row)
+            d["assigned_rows"] = json.loads(d.get("assigned_rows") or "[]")
+            d["row_ids"] = json.loads(d.get("row_ids") or "[]")
+            d["ordered_reviews"] = json.loads(d.get("ordered_reviews") or "[]")
+            d["completed_reviews"] = json.loads(d.get("completed_reviews") or "[]")
+            d["extra_messages"] = json.loads(d.get("extra_messages") or "[]")
+            result[d["user_id"]] = d
+        return result
+
+
+def get_slot_request(user_id: int) -> Optional[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM slot_requests_db WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["assigned_rows"] = json.loads(d.get("assigned_rows") or "[]")
+        d["row_ids"] = json.loads(d.get("row_ids") or "[]")
+        d["ordered_reviews"] = json.loads(d.get("ordered_reviews") or "[]")
+        d["completed_reviews"] = json.loads(d.get("completed_reviews") or "[]")
+        d["extra_messages"] = json.loads(d.get("extra_messages") or "[]")
+        return d
