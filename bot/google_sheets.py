@@ -19,6 +19,19 @@ from bot.helpers import (
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
+# Статусы, при которых строка НЕ публикуется (занята или прошла)
+BLOCKED_STATUSES = (
+    "в работе",
+    "на модерации",
+    "на модерации с опз",
+    "опубликован",
+    "опубликовано",
+    "опубликован опз",
+    "оплачено",
+    "в отчете испол",
+    "удален",
+)
+
 
 def get_credentials():
     path = get_credentials_path()
@@ -30,7 +43,6 @@ def get_credentials():
 
 
 def get_client():
-    """Создаёт gspread-клиент. Retry при 429 делается вручную в retry_api_call."""
     creds = get_credentials()
     if not creds:
         return None
@@ -135,7 +147,7 @@ async def monitor_schedule(bot):
                     status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
                     executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                    if status in ("в работе", "на модерации", "на модерации с опз", "оплачено", "в отчете испол"):
+                    if status in BLOCKED_STATUSES:
                         continue
                     if executor:
                         continue
@@ -281,7 +293,7 @@ async def _check_republish(bot, client, now):
             row = records[row_idx - 1]
             status = row[slot_mapping["status_col"]-1].strip().lower() if len(row) >= slot_mapping["status_col"] else ""
             executor = row[slot_mapping["executor_col"]-1].strip() if len(row) >= slot_mapping["executor_col"] else ""
-            if status in ("в работе", "на модерации", "на модерации с опз", "оплачено", "в отчете испол"):
+            if status in BLOCKED_STATUSES:
                 continue
             if executor:
                 continue
@@ -570,7 +582,7 @@ async def update_stats_from_sheet_once():
                     ur[3] * PRICES.get("2гис", 0) + ur[4] * PRICES.get("авито", 0) +
                     ur[5] * PRICES.get("вк", 0) + ur[6] * PRICES.get("отзовик", 0) +
                     ur[7] * PRICES.get("доктору", 0) + ur[8] * PRICES.get("докдок", 0) +
-                    ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("доkту", 0) +
+                    ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("докту", 0) +
                     ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
