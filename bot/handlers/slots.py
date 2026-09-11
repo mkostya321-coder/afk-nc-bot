@@ -25,36 +25,130 @@ def is_admin(user_id: int) -> bool:
 
 PLATFORM_TEMPLATES = {
     "яндекс": {
-        "instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>\nСкриншот должен быть по ТЗ!",
-        "extra_text": "Рекомендуем просмотреть 5-10 фото и посидеть на карточке 1-2 мин. Можно переписать отзыв от руки.",
-        "warning": "<i>⚠️ Если не выполнить до 23:30 — оплата на 30% ниже!</i>"
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
     },
     "google": {
-        "instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>\nСкриншот должен быть по ТЗ!",
-        "extra_text": "Рекомендуем просмотреть 5-10 фото и посидеть на карточке 1-2 мин. Можно переписать отзыв от руки.",
-        "warning": "<i>⚠️ Если не выполнить до 23:30 — оплата на 30% ниже!</i>"
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
     },
     "2гис": {
-        "instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>\nСкриншот должен быть по ТЗ!",
-        "extra_text": "Рекомендуем просмотреть 5-10 фото и посидеть на карточке 1-2 мин. Можно переписать отзыв от руки.",
-        "warning": "<i>⚠️ Если не выполнить до 23:30 — оплата на 30% ниже!</i>"
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": (
+            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
+            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
     },
     "вк": {
-        "instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>\nСкриншот должен быть по ТЗ!",
-        "extra_text": "<b>Перепишите текст от руки.</b>\nДЛЯ 90%: оставьте 3-4 раза.",
-        "warning": "<i>⚠️ Если не выполнить до 23:30 — оплата на 30% ниже!</i>"
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": (
+            "<b>- На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.</b>\n"
+            "ДЛЯ 90% прохода:\n"
+            "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
+        ),
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
     },
-    "докдок": {"instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>", "extra_text": "", "warning": "<i>⚠️ Не выполнить до 23:30 — оплата на 30% ниже!</i>"},
-    "докту": {"instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>", "extra_text": "", "warning": "<i>⚠️ Не выполнить до 23:30 — оплата на 30% ниже!</i>"},
-    "32топ": {"instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>", "extra_text": "", "warning": "<i>⚠️ Не выполнить до 23:30 — оплата на 30% ниже!</i>"},
-    "авито": {"instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>", "extra_text": "", "warning": "<i>⚠️ Не выполнить до 23:30 — оплата на 30% ниже!</i>"},
-    "zoon": {"instruction": "<b>⚠️ ПРИМЕР СКРИНШОТА!</b>", "extra_text": "", "warning": "<i>⚠️ Не выполнить до 23:30 — оплата на 30% ниже!</i>"},
+    "докдок": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "докту": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "32топ": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "авито": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
+    "zoon": {
+        "instruction": (
+            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
+            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+        ),
+        "extra_text": "",
+        "warning": (
+            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+            "все вами выполненное будет оплачено на 30% ниже!</i>"
+        )
+    },
 }
 
 
 async def send_instruction(user_id: int, bot):
     try:
-        caption = "📸 Инструкция:\n1. Скриншот отзыва.\n2. Видна платформа и текст.\n3. В приложении, не в браузере.\n4. Отправьте в этот чат."
+        caption = (
+            "📸 Инструкция по отправке скриншотов:\n\n"
+            "1. Сделайте скриншот экрана с опубликованным отзывом.\n"
+            "2. Убедитесь, что видна платформа, текст и время публикации.\n"
+            "3. Скриншот должен быть сделан в приложении (не в браузере), иначе шанс проходимости снижается, есть риск удаления отзыва.\n"
+            "4. Отправьте скриншот в этот чат.\n"
+            "5. Если скриншот не соответствует требованиям, отзыв НЕ БУДЕТ ОПЛАЧЕН."
+        )
         if INSTRUCTION_PHOTO_ID:
             await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
         elif INSTRUCTION_PHOTO_PATH and os.path.exists(INSTRUCTION_PHOTO_PATH):
@@ -63,7 +157,7 @@ async def send_instruction(user_id: int, bot):
         else:
             await bot.send_message(chat_id=user_id, text=caption)
     except Exception as e:
-        logger.error(f"Ошибка инструкции: {e}")
+        logger.error(f"Ошибка отправки инструкции: {e}")
 
 
 async def check_limit(user_id: int, platform: str) -> bool:
@@ -76,20 +170,22 @@ async def check_limit(user_id: int, platform: str) -> bool:
 async def cancel_task(message: Message):
     user_id = message.from_user.id
     if user_id not in slot_requests:
-        await message.answer("❌ Нет активного задания.")
+        await message.answer("❌ У вас нет активного задания.")
         return
     request = slot_requests[user_id]
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
     if not remaining:
-        await message.answer("✅ Нечего отменять.")
+        await message.answer("✅ У вас нет невыполненных отзывов.")
         del slot_requests[user_id]
         return
 
     platform = request.get("platform", "неизвестно")
     mapping = request.get("mapping", {})
     sheet_title = request.get("sheet_title")
+    logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}")
+
     client = get_client()
     if client:
         try:
@@ -104,11 +200,16 @@ async def cancel_task(message: Message):
             for i in range(0, len(batch), 50):
                 sheet.batch_update(batch[i:i+50])
                 await asyncio.sleep(0.5)
+            logger.info(f"✅ Очищено {len(remaining)} строк")
         except Exception as e:
-            logger.error(f"Ошибка отмены: {e}")
+            logger.error(f"❌ Ошибка отмены: {e}")
 
     del slot_requests[user_id]
-    await message.answer(f"✅ Отказ принят. Невыполненных: {len(remaining)}")
+    await message.answer(
+        f"✅ Отказ принят.\n\n"
+        f"• Выполненные: {len(completed)} – на модерацию\n"
+        f"• Невыполненные: {len(remaining)} – переопубликуются"
+    )
 
 
 # ============ RESUME ============
@@ -117,10 +218,10 @@ async def cancel_task(message: Message):
 async def cmd_resume(message: Message):
     user_id = message.from_user.id
     if not is_registered(user_id):
-        await message.answer("❌ Не зарегистрированы.")
+        await message.answer("❌ Вы не зарегистрированы.")
         return
     if is_blocked(user_id):
-        await message.answer("⛔ Заблокированы.")
+        await message.answer("⛔ Вы заблокированы.")
         return
 
     if user_id in slot_requests:
@@ -128,7 +229,8 @@ async def cmd_resume(message: Message):
         total = len(req.get("ordered_reviews", []))
         done = len(req.get("completed_reviews", []))
         await message.answer(
-            f"✅ Есть активный слот: {req['platform']}.\nОсталось: {total - done}",
+            f"✅ У вас уже есть активный слот: {req['platform']}.\n"
+            f"Отзывов осталось: {total - done}",
             reply_markup=InlineKeyboardBuilder().button(
                 text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
             ).as_markup()
@@ -137,15 +239,16 @@ async def cmd_resume(message: Message):
 
     user = get_user(user_id)
     if not user or not user.get("tg_username"):
-        await message.answer("❌ Нет username в Telegram.")
+        await message.answer("❌ У вас не указан Telegram username.")
         return
     username = f"@{user['tg_username']}"
 
     client = get_client()
     if not client:
-        await message.answer("❌ Ошибка доступа.")
+        await message.answer("❌ Ошибка доступа к таблице.")
         return
     spreadsheet = client.open_by_key(SHEET_ID)
+
     found = []
     for sheet in spreadsheet.worksheets():
         sheet_name = sheet.title
@@ -164,9 +267,11 @@ async def cmd_resume(message: Message):
             executor = row[mapping["executor_col"]-1].strip().lower()
             if status == "в работе" and executor == username.lower():
                 found.append({"platform": platform, "sheet_title": sheet_name, "row_idx": row_idx, "mapping": mapping})
+
     if not found:
-        await message.answer("❌ Нет активных слотов.")
+        await message.answer("❌ У вас нет активных слотов.")
         return
+
     platform = found[0]["platform"]
     sheet_title = found[0]["sheet_title"]
     mapping = found[0]["mapping"]
@@ -182,7 +287,9 @@ async def cmd_resume(message: Message):
         "active_review_row": None, "extra_messages": []
     }
     await message.answer(
-        f"✅ Восстановлено! {platform}, отзывов: {len(row_ids)}",
+        f"✅ Сессия восстановлена!\n\n"
+        f"📋 Платформа: {platform}\n"
+        f"📊 Отзывов: {len(row_ids)}",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
         ).as_markup()
@@ -203,18 +310,19 @@ async def handle_quantity_input(message: Message):
     try:
         quantity = int(message.text.strip())
     except:
-        await message.answer("Введите число.")
+        await message.answer("Пожалуйста, введите число.")
         return
     if quantity <= 0 or quantity > request["count"]:
-        await message.answer(f"❌ От 1 до {request['count']}.")
+        await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
 
     platform = request["platform"]
     mapping = request["mapping"]
     sheet_title = request.get("sheet_title")
+
     client = get_client()
     if not client:
-        await message.answer("❌ Ошибка доступа.")
+        await message.answer("❌ Ошибка доступа к таблице.")
         del slot_requests[user_id]
         return
     spreadsheet = client.open_by_key(SHEET_ID)
@@ -222,28 +330,29 @@ async def handle_quantity_input(message: Message):
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
+        logger.warning(f"⚠️ Слот {slot_msg_id} не найден, используем request")
         slot_info = {
             "row_ids": request.get("row_ids", []),
             "count": request.get("count", 0),
             "mapping": mapping, "sheet_title": sheet_title, "platform": platform
         }
         if not slot_info["row_ids"]:
-            await message.answer("❌ Попробуйте /resume.")
+            await message.answer("❌ Не удалось получить список. Попробуйте /resume.")
             del slot_requests[user_id]
             return
 
     row_ids = slot_info["row_ids"]
     if len(row_ids) < quantity:
-        await message.answer("❌ Свободных меньше. Попробуйте заново.")
+        await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
         del slot_requests[user_id]
         return
 
-    # === ПРОВЕРКА ЗАНЯТОСТИ через get_all_values ===
+    # === ПРОВЕРКА ЗАНЯТОСТИ ===
     try:
         sheet = spreadsheet.worksheet(sheet_title)
         records = sheet.get_all_values()
     except Exception as e:
-        await message.answer("❌ Ошибка таблицы.")
+        await message.answer("❌ Ошибка доступа к листу.")
         del slot_requests[user_id]
         return
 
@@ -261,22 +370,20 @@ async def handle_quantity_input(message: Message):
         free_rows.append(row_idx)
 
     if len(free_rows) < quantity:
-        await message.answer(f"⚠️ Свободно только {len(free_rows)}. Возьмите меньше или /resume.")
+        await message.answer(f"⚠️ Часть отзывов уже занята. Свободно: {len(free_rows)}.")
         del slot_requests[user_id]
         return
 
     assigned_rows = free_rows[:quantity]
 
-    # Обновляем active_slots
     if slot_msg_id in active_slots:
         slot_info["row_ids"] = [r for r in row_ids if r not in assigned_rows]
         slot_info["count"] = len(slot_info["row_ids"])
         active_slots[slot_msg_id] = slot_info
 
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    logger.info(f"📝 {username} → строки {assigned_rows}")
+    logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
 
-    # === BATCH UPDATE ===
     batch = []
     for row_idx in assigned_rows:
         col_j = chr(64 + mapping["status_col"])
@@ -291,6 +398,7 @@ async def handle_quantity_input(message: Message):
         for i in range(0, len(batch), 50):
             sheet.batch_update(batch[i:i+50])
             await asyncio.sleep(0.5)
+        logger.info(f"✅ Записано {len(assigned_rows)} строк")
     except Exception as e:
         logger.error(f"❌ Ошибка batch: {e}")
 
@@ -307,11 +415,15 @@ async def handle_quantity_input(message: Message):
         add_review_take(user_id, platform)
 
     await message.answer(
-        f"🎯 Взяли {quantity} отзывов ({platform}).",
+        f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
+        "Нажмите «Активный слот», чтобы приступить.",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
         ).as_markup()
     )
+
+    # Отправляем инструкцию
+    await send_instruction(user_id, message.bot)
 
 
 # ============ ВЗЯТЬ СЛОТ ============
@@ -323,13 +435,13 @@ async def take_slot_start(callback: CallbackQuery):
         pass
     user_id = callback.from_user.id
     if not is_registered(user_id):
-        await callback.bot.send_message(user_id, "❌ Не зарегистрированы.")
+        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
         return
     if is_blocked(user_id):
-        await callback.bot.send_message(user_id, "⛔ Заблокированы.")
+        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
     if user_id in slot_requests:
-        await callback.bot.send_message(user_id, f"❌ Уже есть слот: {slot_requests[user_id]['platform']}.")
+        await callback.bot.send_message(user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
         return
 
     parts = callback.data.split("|")
@@ -373,7 +485,7 @@ async def take_slot_start(callback: CallbackQuery):
 async def active_slot(callback: CallbackQuery):
     user_id = int(callback.data.split("|")[1])
     if user_id != callback.from_user.id:
-        await callback.answer("Не ваша сессия.", show_alert=True)
+        await callback.answer("Это не ваша сессия.", show_alert=True)
         return
     if user_id not in slot_requests:
         await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
@@ -406,11 +518,11 @@ async def show_slot_buttons(message: Message, user_id: int):
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ /resume.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
-        await callback.answer("❌ Уже работаете.", show_alert=True)
+        await callback.answer("❌ Вы уже работаете.", show_alert=True)
         return
     selected_num = int(callback.data.split("|")[1])
     ordered = request.get("ordered_reviews", [])
@@ -420,7 +532,7 @@ async def select_review(callback: CallbackQuery):
             target_row = row_idx
             break
     if target_row is None:
-        await callback.answer("❌ Уже выполнен.", show_alert=True)
+        await callback.answer("❌ Отзыв уже выполнен.", show_alert=True)
         return
     request["active_review_row"] = target_row
     request["state"] = "working_on_review"
@@ -460,6 +572,8 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     row = sheet.row_values(row_idx)
     extra_ids = []
 
+    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}")
+
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
         doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
@@ -472,6 +586,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         history = row[mapping["text_history_col"]-1] if len(row) >= mapping["text_history_col"] else ""
         like = row[mapping["text_like_col"]-1] if len(row) >= mapping["text_like_col"] else ""
         minus = row[mapping["text_minus_col"]-1] if len(row) >= mapping["text_minus_col"] else ""
+
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
         info_msg = (
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
@@ -481,18 +596,22 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"Пол: {gender_text}\n"
             f"Кол-во звезд: {stars}\n"
             f"Платформа: {platform_name}\n"
-            f"Ссылка на платформу: {link}\n\n"
-            f"<b>❗ Важно!</b>\n"
-            f"Если в документе нет даты рождения — возраст от 20 лет.\n"
-            f"Если нет даты посещения — в течение последних 7 дней."
+            f"Ссылка на платформу: {link}"
         )
-        await message.edit_text(info_msg, parse_mode="HTML",
+        date_info = (
+            "\n\n<b>❗ Важно!</b>\n"
+            "Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
+            "Если нет даты посещения, укажите в течение последних 7 дней."
+        )
+        full_msg = info_msg + date_info
+        await message.edit_text(full_msg, parse_mode="HTML",
             reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
+
         if tz_link:
             sent = await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
         if doc_link:
-            sent = await message.answer(f"📎 <b>Документ</b> (обязательно!)\n\n{doc_link}", parse_mode="HTML")
+            sent = await message.answer(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
         if history:
             sent = await message.answer(f"1️⃣ <b>История</b>\n\n{history}", parse_mode="HTML")
@@ -503,6 +622,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         if minus:
             sent = await message.answer(f"3️⃣ <b>Минусы</b>\n\n{minus}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
+
     else:
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
@@ -511,39 +631,50 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         photo_link = row[17] if len(row) > 17 else ""
 
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
+        instruction_text = template["instruction"]
+        extra_text = template["extra_text"]
+        warning = template["warning"]
+
         gender_text = ""
         if gender.upper() == "М":
-            gender_text = "👨 Мужской — мужчина с мужским именем."
+            gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
         elif gender.upper() == "Ж":
-            gender_text = "👩 Женский — женщина с женским именем."
+            gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
         else:
-            gender_text = "👤 Без пола."
+            gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
+
         final_msg = (
-            f"{template['instruction']}\n\n"
+            f"{instruction_text}\n\n"
             f"⭐ Количество звезд: {stars}\n"
-            f"👥 1 ЧЕЛОВЕК 1 ОТЗЫВ\n{gender_text}\n"
+            "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
+            "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
+            f"{gender_text}\n"
         )
-        if template["extra_text"]:
-            final_msg += f"{template['extra_text']}\n"
+        if extra_text:
+            final_msg += f"{extra_text}\n"
         final_msg += (
-            "После выполнения пришлите скриншот.\n"
-            "Отказ — /cancel.\n\n"
-            f"{template['warning']}"
+            "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
+            "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
+            f"{warning}"
         )
+
         await message.edit_text(final_msg, parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
+
         if link:
             sent = await message.answer(link)
             extra_ids.append(sent.message_id)
+
         if text:
-            sent = await message.answer(f"📝 <b>Текст:</b>\n\n{text}", parse_mode="HTML")
+            sent = await message.answer(f"📝 <b>Текст отзыва:</b>\n\n{text}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
         else:
-            sent = await message.answer("⚠️ Текст не найден.")
+            sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b> Обратитесь к администратору.")
             extra_ids.append(sent.message_id)
+
         if photo_link:
             sent = await message.answer(
-                f"📸 <b>ФОТО обязательно!</b>\n\n{photo_link}\n\n"
+                f"📸 <b>ФОТО обязательное к прикреплению!</b>\n\n{photo_link}\n\n"
                 f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>",
                 parse_mode="HTML"
             )
@@ -558,11 +689,11 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ /resume.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "working_on_review":
-        await callback.answer("❌ Не в просмотре.", show_alert=True)
+        await callback.answer("❌ Вы не в просмотре.", show_alert=True)
         return
     chat_id = callback.message.chat.id
     for msg_id in request.get("extra_messages", []):
@@ -589,7 +720,7 @@ async def handle_screenshot(message: Message):
         return
     active_row = request.get("active_review_row")
     if active_row is None:
-        await message.answer("❌ Нет активного отзыва.")
+        await message.answer("❌ Активный отзыв не найден.")
         return
     chat_id = message.chat.id
     for msg_id in request.get("extra_messages", []):
@@ -635,6 +766,7 @@ async def handle_screenshot(message: Message):
         sheet.format(f"{chr(64+mapping['flag_final_col'])}{active_row}", {
             "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
         })
+        logger.info(f"✅ Строка {active_row} → 'на модерации'")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         await message.answer("❌ Ошибка сохранения.")
@@ -662,11 +794,11 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
-        await message.answer("✅ Все отзывы отправлены!")
+        await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
         return
     await message.answer(
-        f"✅ Выполнен! Осталось {total - len(completed)}.",
+        f"✅ Отзыв выполнен! Осталось {total - len(completed)}.",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
         ).as_markup()
