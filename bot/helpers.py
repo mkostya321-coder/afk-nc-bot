@@ -1,4 +1,5 @@
 # bot/helpers.py
+
 PRICES = {
     "яндекс": 150,
     "google": 50,
@@ -52,54 +53,29 @@ SHEET_NAME_TO_PLATFORM = {
     "ZOON": "zoon", "ЗУН": "zoon", "zoon": "zoon",
 }
 
+
 def get_column_mapping(platform: str):
     standard = {
-        "date_col": 1,
-        "time_col": 2,
-        "stars_col": 3,
-        "platform_col": 4,
-        "link_col": 7,
-        "status_col": 10,
-        "executor_col": 11,
-        "gender_col": 13,
-        "text_col": 14,
-        "flag_first_col": 17,
-        "flag_second_col": 16,
-        "flag_third_col": 15,
-        "flag_final_col": 9,
-        "id_col": 19,
-        "update_col": 5,
-        "order_col": 20,
+        "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
+        "link_col": 7, "status_col": 10, "executor_col": 11, "gender_col": 13,
+        "text_col": 14, "flag_first_col": 17, "flag_second_col": 16,
+        "flag_third_col": 15, "flag_final_col": 9, "id_col": 19,
+        "update_col": 5, "order_col": 20,
     }
     if platform == "про докторов":
         return {
-            "date_col": 1,
-            "time_col": 2,
-            "stars_col": 3,
-            "platform_col": 4,
-            "link_col": 11,
-            "status_col": 14,
-            "executor_col": 15,
-            "gender_col": 16,
-            "text_col": None,
-            "flag_first_col": 22,
-            "flag_second_col": 21,
-            "flag_third_col": 20,
-            "flag_final_col": 13,
-            "id_col": 23,
-            "update_col": 5,
-            "order_col": 24,
-            "text_history_col": 17,
-            "text_like_col": 18,
-            "text_minus_col": 19,
-            "tz_col": 10,
-            "doctor_name_col": 12,
-            "doctor_direction_col": 9,
-            "photo_doc_col": 8,
+            "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
+            "link_col": 11, "status_col": 14, "executor_col": 15, "gender_col": 16,
+            "text_col": None, "flag_first_col": 22, "flag_second_col": 21,
+            "flag_third_col": 20, "flag_final_col": 13, "id_col": 23,
+            "update_col": 5, "order_col": 24, "text_history_col": 17,
+            "text_like_col": 18, "text_minus_col": 19, "tz_col": 10,
+            "doctor_name_col": 12, "doctor_direction_col": 9, "photo_doc_col": 8,
         }
     return standard
 
-def match_platform(raw_name: str) -> str | None:
+
+def match_platform(raw_name: str):
     name = raw_name.strip().lower()
     for std, aliases in PLATFORM_ALIASES.items():
         for a in aliases:
@@ -107,7 +83,8 @@ def match_platform(raw_name: str) -> str | None:
                 return std
     return None
 
-def platform_from_sheet_name(sheet_name: str) -> str | None:
+
+def platform_from_sheet_name(sheet_name: str):
     key = sheet_name.strip()
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
