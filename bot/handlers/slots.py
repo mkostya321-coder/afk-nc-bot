@@ -139,6 +139,7 @@ PLATFORM_TEMPLATES = {
 
 
 async def send_instruction(user_id: int, bot):
+    """Отправляет инструкцию со скриншотом. ИСПОЛЬЗУЕТ FSInputFile."""
     try:
         caption = (
             "📸 Инструкция по отправке скриншотов:\n\n"
@@ -151,7 +152,7 @@ async def send_instruction(user_id: int, bot):
         if INSTRUCTION_PHOTO_ID:
             await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
         elif INSTRUCTION_PHOTO_PATH and os.path.exists(INSTRUCTION_PHOTO_PATH):
-            photo = FSInputFile(INSTRUCTION_PHOTO_PATH)
+            photo = FSInputFile(INSTRUCTION_PHOTO_PATH)  # ← ФИКС
             await bot.send_photo(chat_id=user_id, photo=photo, caption=caption)
         else:
             await bot.send_message(chat_id=user_id, text=caption)
