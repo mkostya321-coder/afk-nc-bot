@@ -171,20 +171,14 @@ async def send_instruction(user_id: int, bot):
             await bot.send_message(chat_id=user_id, text=caption)
     except Exception as e:
         logger.error(f"Ошибка отправки инструкции: {e}")
-        try:
-            await bot.send_message(chat_id=user_id, text="📸 Инструкция: сделайте скриншот отзыва и отправьте.")
-        except:
-            pass
 
 async def check_limit(user_id: int, platform: str) -> bool:
     limit = get_limit(platform)
     count = count_review_takes_last_24h(user_id, platform)
-    if count >= limit:
-        return False
-    return True
+    return count < limit
 
-# ============ ВАЖНО: cancel_task СТОИТ ВЫШЕ handle_quantity_input ============
 
+# ============ КОМАНДА /cancel ============
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -194,10 +188,8 @@ async def cancel_task(message: Message):
         return
 
     request = slot_requests[user_id]
-    assigned_rows = request.get("assigned_rows", [])
     completed = request.get("completed_reviews", [])
     ordered_reviews = request.get("ordered_reviews", [])
-
     remaining_rows = [row_idx for row_idx, num in ordered_reviews if num not in completed]
 
     if not remaining_rows:
@@ -209,7 +201,7 @@ async def cancel_task(message: Message):
     mapping = request.get("mapping", get_column_mapping(platform))
     sheet_title = request.get("sheet_title")
 
-    logger.info(f"🔄 Отмена: пользователь {user_id}, платформа {platform}, невыполненных: {len(remaining_rows)}")
+    logger.info(f"🔄 Отмена: {user_id}, платформа {platform}, невыполненных: {len(remaining_rows)}")
 
     creds = get_credentials()
     if creds:
@@ -253,54 +245,27 @@ async def cancel_task(message: Message):
                 for i in range(0, len(batch_data), 50):
                     chunk = batch_data[i:i+50]
                     sheet.batch_update(chunk)
-                    logger.info(f"✅ Пакетно очищено {len(chunk)} ячеек")
                     await asyncio.sleep(0.5)
-                logger.info(f"✅ Все {len(remaining_rows)} строк очищены для переопубликации")
+                logger.info(f"✅ Все {len(remaining_rows)} строк очищены")
             except Exception as e:
-                logger.error(f"❌ Ошибка пакетного обновления: {e}")
-                for row_idx in remaining_rows:
-                    try:
-                        sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
-                        sheet.update_cell(row_idx, mapping["executor_col"], "")
-                        sheet.update_cell(row_idx, mapping["flag_third_col"], 0)
-                        sheet.update_cell(row_idx, mapping["flag_second_col"], 0)
-                        sheet.update_cell(row_idx, mapping["flag_first_col"], 0)
-                        sheet.update_cell(row_idx, mapping["id_col"], "")
-                        sheet.update_cell(row_idx, mapping["order_col"], "")
-                        time.sleep(0.1)
-                    except Exception as e2:
-                        logger.error(f"❌ Ошибка очистки строки {row_idx}: {e2}")
-
-    slot_msg_id = request.get("slot_msg_id")
-    if slot_msg_id and slot_msg_id != "menu":
-        slot_info = active_slots.get(slot_msg_id)
-        if slot_info:
-            for row in remaining_rows:
-                if row not in slot_info["row_ids"]:
-                    slot_info["row_ids"].append(row)
-            slot_info["count"] += len(remaining_rows)
-            logger.info(f"✅ Отзывы возвращены в слот {slot_msg_id}, теперь доступно: {slot_info['count']}")
+                logger.error(f"❌ Ошибка пакетной очистки: {e}")
 
     del slot_requests[user_id]
-
     await message.answer(
         f"✅ Отказ принят.\n\n"
-        f"• Выполненные отзывы: {len(completed)} – отправлены на модерацию\n"
-        f"• Невыполненные отзывы: {len(remaining_rows)} – сняты с вас и будут переопубликованы\n\n"
-        f"За невыполненные отзывы ничего не списывается."
+        f"• Выполненные: {len(completed)} – на модерацию\n"
+        f"• Невыполненные: {len(remaining_rows)} – переопубликуются"
     )
 
 
-# ============ КОМАНДА /resume — ВОССТАНОВЛЕНИЕ СЕССИИ ============
+# ============ КОМАНДА /resume ============
 @router.message(Command("resume"))
 @router.message(Command("слот"))
 async def cmd_resume(message: Message):
-    """Восстанавливает сессию слота, если бот был перезапущен."""
     user_id = message.from_user.id
     if not is_registered(user_id):
         await message.answer("❌ Вы не зарегистрированы.")
         return
-
     if is_blocked(user_id):
         await message.answer("⛔ Вы заблокированы.")
         return
@@ -310,8 +275,8 @@ async def cmd_resume(message: Message):
         total = len(request.get("ordered_reviews", []))
         completed = len(request.get("completed_reviews", []))
         await message.answer(
-            f"✅ У вас уже есть активный слот на платформе {request['platform']}.\n"
-            f"Отзывов осталось: {total - completed}",
+            f"✅ У вас уже есть активный слот: {request['platform']}.\n"
+            f"Осталось: {total - completed}",
             reply_markup=InlineKeyboardBuilder().button(
                 text="🎯 Активный слот",
                 callback_data=f"active_slot|{user_id}"
@@ -335,14 +300,12 @@ async def cmd_resume(message: Message):
     spreadsheet = client.open_by_key(SHEET_ID)
 
     found_rows = []
-
     for sheet in spreadsheet.worksheets():
         sheet_name = sheet.title
         platform = platform_from_sheet_name(sheet_name)
         if not platform:
             continue
         mapping = get_column_mapping(platform)
-
         records = sheet.get_all_values()
         if len(records) < 2:
             continue
@@ -361,21 +324,19 @@ async def cmd_resume(message: Message):
                 })
 
     if not found_rows:
-        await message.answer("❌ У вас нет активных слотов. Возьмите новый слот из канала.")
+        await message.answer("❌ У вас нет активных слотов.")
         return
 
     platform = found_rows[0]["platform"]
     sheet_title = found_rows[0]["sheet_title"]
     mapping = found_rows[0]["mapping"]
     row_ids = [r["row_idx"] for r in found_rows if r["platform"] == platform]
-
     ordered_reviews = [(row_idx, idx) for idx, row_idx in enumerate(row_ids, start=1)]
 
     slot_requests[user_id] = {
         "platform": platform,
         "count": len(row_ids),
-        "date": None,
-        "time": None,
+        "date": None, "time": None,
         "slot_msg_id": "resume",
         "state": "slot_selection",
         "assigned_rows": row_ids,
@@ -393,17 +354,15 @@ async def cmd_resume(message: Message):
     await message.answer(
         f"✅ Сессия восстановлена!\n\n"
         f"📋 Платформа: {platform}\n"
-        f"📊 Активных отзывов: {len(row_ids)}\n\n"
-        f"Нажмите кнопку ниже, чтобы продолжить.",
+        f"📊 Отзывов: {len(row_ids)}",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот",
             callback_data=f"active_slot|{user_id}"
         ).as_markup()
     )
-    logger.info(f"✅ Сессия восстановлена для {user_id}, платформа {platform}, строк: {len(row_ids)}")
 
 
-# ---------- Обработчик ввода количества (ПОСЛЕ cancel и resume) ----------
+# ============ ОБРАБОТКА ВВОДА КОЛИЧЕСТВА ============
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     if message.text and message.text.startswith('/'):
@@ -415,11 +374,13 @@ async def handle_quantity_input(message: Message):
     request = slot_requests[user_id]
     if request["state"] != "waiting_quantity":
         return
+
     try:
         quantity = int(message.text.strip())
     except:
         await message.answer("Пожалуйста, введите число.")
         return
+
     if quantity <= 0 or quantity > request["count"]:
         await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
@@ -433,24 +394,40 @@ async def handle_quantity_input(message: Message):
         await message.answer("❌ Ошибка доступа к таблице.")
         del slot_requests[user_id]
         return
+
     client = gspread.authorize(creds)
     spreadsheet = client.open_by_key(SHEET_ID)
 
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id)
+
+    # ФИКС: если слот потерян (после перезапуска) — восстанавливаем
     if not slot_info:
-        await message.answer("❌ Этот слот уже неактивен.")
-        del slot_requests[user_id]
-        return
+        logger.warning(f"⚠️ Слот {slot_msg_id} не найден, используем данные request")
+        row_ids = request.get("row_ids", [])
+        if not row_ids:
+            await message.answer("❌ Не удалось получить список отзывов. Попробуйте заново через /resume.")
+            del slot_requests[user_id]
+            return
+        slot_info = {
+            "row_ids": row_ids,
+            "count": len(row_ids),
+            "mapping": mapping,
+            "sheet_title": sheet_title,
+            "platform": platform
+        }
+
     row_ids = slot_info["row_ids"]
     if len(row_ids) < quantity:
         await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
         del slot_requests[user_id]
         return
+
     assigned_rows = row_ids[:quantity]
     slot_info["row_ids"] = row_ids[quantity:]
-    slot_info["count"] -= quantity
-    if slot_info["count"] == 0:
+    slot_info["count"] = len(slot_info["row_ids"])
+
+    if slot_info["count"] == 0 and slot_msg_id in active_slots:
         del active_slots[slot_msg_id]
         try:
             await message.bot.edit_message_text(
@@ -474,25 +451,30 @@ async def handle_quantity_input(message: Message):
                 break
             except:
                 continue
+
     if sheet is None:
         await message.answer("❌ Не удалось найти лист.")
         del slot_requests[user_id]
         return
 
+    # ЗАПИСЬ K (username) и J (в работе)
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+    logger.info(f"📝 Записываем @{message.from_user.username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
+
     for row_idx in assigned_rows:
         try:
             sheet.update_cell(row_idx, mapping["status_col"], "в работе")
             sheet.update_cell(row_idx, mapping["executor_col"], username)
-            time.sleep(0.1)
+            logger.info(f"✅ Строка {row_idx}: K={username}, J='в работе'")
+            time.sleep(0.2)
         except Exception as e:
-            logger.error(f"Ошибка обновления строки {row_idx}: {e}")
+            logger.error(f"❌ Ошибка обновления строки {row_idx}: {e}")
 
     for idx, row_idx in enumerate(assigned_rows, start=1):
         try:
             sheet.update_cell(row_idx, mapping["order_col"], idx)
         except Exception as e:
-            logger.error(f"Не удалось записать номер для строки {row_idx}: {e}")
+            logger.error(f"Не удалось записать номер: {e}")
 
     ordered_reviews = [(row_idx, idx) for idx, row_idx in enumerate(assigned_rows, start=1)]
     request["ordered_reviews"] = ordered_reviews
@@ -507,8 +489,11 @@ async def handle_quantity_input(message: Message):
 
     await message.answer(
         f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
-        "Нажмите кнопку «Активный слот», чтобы приступить к работе.",
-        reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+        "Нажмите «Активный слот», чтобы приступить.",
+        reply_markup=InlineKeyboardBuilder().button(
+            text="🎯 Активный слот",
+            callback_data=f"active_slot|{user_id}"
+        ).as_markup()
     )
 
 
@@ -531,8 +516,8 @@ async def take_slot_start(callback: CallbackQuery):
         active_platform = slot_requests[user_id]["platform"]
         await callback.bot.send_message(
             user_id,
-            f"❌ У вас уже есть активный слот на платформе {active_platform}.\n"
-            "Закончите его, чтобы взять новый."
+            f"❌ У вас уже есть активный слот: {active_platform}.\n"
+            "Закончите его или отправьте /cancel."
         )
         return
 
@@ -552,37 +537,31 @@ async def take_slot_start(callback: CallbackQuery):
     slot_msg_id = callback.message.message_id
     slot_info = active_slots.get(slot_msg_id)
 
-    # === ФИКС: если слот не найден в active_slots ===
     if not slot_info:
-        # Проверяем, есть ли ещё активные слоты этой платформы
+        # Ищем любой активный слот этой платформы
         platform_slots = [
             (mid, s) for mid, s in active_slots.items()
             if s.get("platform") == platform and s.get("count", 0) > 0
         ]
         if platform_slots:
-            # Есть другие слоты — переключаем на первый
             slot_msg_id, slot_info = platform_slots[0]
-            logger.info(f"⚠️ Слот {callback.message.message_id} не найден, переключаем на {slot_msg_id}")
         else:
-            # Нет активных слотов — сообщаем и предлагаем /resume
             await callback.bot.send_message(
                 user_id,
-                "❌ Слот не найден (возможно, бот перезапускался).\n\n"
-                "Если вы уже брали отзывы и они в статусе «в работе» — отправьте /resume, чтобы восстановить сессию.\n"
-                "Иначе возьмите новый слот из канала."
+                "❌ Слот не найден.\n\n"
+                "Если вы уже брали отзывы — отправьте /resume."
             )
             return
 
     if not await check_limit(user_id, platform):
         limit = get_limit(platform)
-        await callback.bot.send_message(user_id, f"❌ Вы превысили лимит на {platform} – максимум {limit} отзывов за 24 часа (с 10:00 МСК).")
+        await callback.bot.send_message(user_id, f"❌ Лимит на {platform}: {limit} за 24ч.")
         return
 
     slot_requests[user_id] = {
         "platform": platform,
         "count": slot_info.get("count", count),
-        "date": date,
-        "time": time,
+        "date": date, "time": time,
         "slot_msg_id": slot_msg_id,
         "state": "waiting_quantity",
         "assigned_rows": [],
@@ -595,7 +574,7 @@ async def take_slot_start(callback: CallbackQuery):
 
     await callback.bot.send_message(
         chat_id=user_id,
-        text=f"📊 Доступно отзывов: {slot_info.get('count', count)} шт.\nСколько вы готовы выполнить? (напишите число)"
+        text=f"📊 Доступно отзывов: {slot_info.get('count', count)} шт.\nСколько вы готовы выполнить?"
     )
 
 
@@ -606,11 +585,11 @@ async def active_slot(callback: CallbackQuery):
         await callback.answer("Это не ваша сессия.", show_alert=True)
         return
     if user_id not in slot_requests:
-        await callback.answer("❌ Активная сессия не найдена. Отправьте /resume для восстановления.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. Отправьте /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
-        await callback.answer("❌ Вы уже в процессе выполнения.", show_alert=True)
+        await callback.answer("❌ Вы уже в процессе.", show_alert=True)
         return
 
     await callback.answer()
@@ -637,7 +616,7 @@ async def show_slot_buttons(message: Message, user_id: int):
             builder.button(text=f"{platform_name} {num}", callback_data=f"select_review|{num}")
     builder.adjust(3)
     await message.edit_text(
-        f"📋 Выберите номер отзыва, который хотите выполнить:",
+        "📋 Выберите номер отзыва:",
         reply_markup=builder.as_markup()
     )
 
@@ -646,7 +625,7 @@ async def show_slot_buttons(message: Message, user_id: int):
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена. Отправьте /resume для восстановления.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. Отправьте /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
@@ -661,7 +640,7 @@ async def select_review(callback: CallbackQuery):
             target_row = row_idx
             break
     if target_row is None:
-        await callback.answer("❌ Этот отзыв уже выполнен или не найден.", show_alert=True)
+        await callback.answer("❌ Отзыв уже выполнен или не найден.", show_alert=True)
         return
 
     request["active_review_row"] = target_row
@@ -701,7 +680,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     row = sheet.row_values(row_idx)
     extra_ids = []
 
+    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping: {mapping}")
+
     if platform == "про докторов":
+        # ... (Продокторов код без изменений)
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
         doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
         doctor_direction = row[mapping["doctor_direction_col"]-1] if len(row) >= mapping["doctor_direction_col"] else ""
@@ -731,7 +713,8 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             "Если нет даты посещения, укажите в течение последних 7 дней."
         )
         full_msg = info_msg + date_info
-        await message.edit_text(full_msg, parse_mode="HTML", reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
+        await message.edit_text(full_msg, parse_mode="HTML",
+            reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
 
         if tz_link:
             sent = await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
@@ -750,10 +733,25 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             extra_ids.append(sent.message_id)
 
     else:
+        # === ОБЫЧНЫЕ ПЛАТФОРМЫ ===
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
-        text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
+
+        # ТЕКСТ ОТЗЫВА — ФИКС с проверкой нескольких столбцов
+        text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
+        logger.info(f"📝 text_col = {mapping['text_col']}, len(row) = {len(row)}, text = '{text[:50]}'")
+
+        if not text:
+            # Фоллбэк: ищем текст в столбцах N, O, P, Q, M
+            for col_idx in [14, 15, 16, 17, 13]:
+                if len(row) >= col_idx and row[col_idx-1].strip():
+                    candidate = row[col_idx-1].strip()
+                    if not candidate.startswith("http") and candidate not in ("0", "1"):
+                        text = candidate
+                        logger.info(f"✅ Текст найден в столбце {col_idx}: '{candidate[:50]}...'")
+                        break
+
         photo_link = row[17] if len(row) > 17 else ""
 
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
@@ -767,7 +765,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         elif gender.upper() == "Ж":
             gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
         else:
-            gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина. Главное – изменить род в тексте при отправке исполнителю."
+            gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
         final_msg = (
             f"{instruction_text}\n\n"
@@ -780,29 +778,34 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             final_msg += f"{extra_text}\n"
         final_msg += (
             "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
-            "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
+            "Если хотите отказаться — /cancel.\n\n"
             f"{warning}"
         )
 
-        await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
+        await message.edit_text(final_msg, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
 
         if link:
             sent = await message.answer(link)
             extra_ids.append(sent.message_id)
 
+        # ФИКС: если текст не найден — сообщаем
         if text:
-            sent = await message.answer(text)
+            sent = await message.answer(f"📝 <b>Текст отзыва:</b>\n\n{text}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
+            logger.info(f"✅ Текст отправлен пользователю {user_id}")
+        else:
+            sent = await message.answer("⚠️ <b>Внимание!</b> Текст отзыва не найден в таблице. Обратитесь к администратору.")
+            extra_ids.append(sent.message_id)
+            logger.warning(f"⚠️ Текст отзыва пустой для строки {row_idx}")
 
         if photo_link:
             sent = await message.answer(
-                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n"
-                f"{photo_link}\n\n"
-                f"<b>⚠️ ШТРАФ: если вы не прикрепите это фото к отзыву, оплата будет снижена на 50%!</b>",
+                f"📸 <b>ФОТО обязательное к прикреплению!</b>\n\n{photo_link}\n\n"
+                f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>",
                 parse_mode="HTML"
             )
             extra_ids.append(sent.message_id)
-            logger.info(f"✅ Ссылка на фото из столбца R отправлена: {photo_link}")
 
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
@@ -816,17 +819,16 @@ async def back_to_slot(callback: CallbackQuery):
         return
     request = slot_requests[user_id]
     if request["state"] != "working_on_review":
-        await callback.answer("❌ Вы не находитесь в режиме просмотра отзыва.", show_alert=True)
+        await callback.answer("❌ Вы не в просмотре отзыва.", show_alert=True)
         return
 
     chat_id = callback.message.chat.id
     for msg_id in request.get("extra_messages", []):
         try:
             await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception as e:
-            logger.error(f"Не удалось удалить сообщение {msg_id}: {e}")
+        except:
+            pass
     request["extra_messages"] = []
-
     request["state"] = "slot_selection"
     request["active_review_row"] = None
     await callback.answer()
@@ -840,7 +842,7 @@ async def handle_screenshot(message: Message):
         return
     request = slot_requests[user_id]
     if request["state"] != "working_on_review":
-        await message.answer("❌ Сначала выберите отзыв из списка.")
+        await message.answer("❌ Сначала выберите отзыв.")
         return
 
     active_row = request.get("active_review_row")
@@ -852,8 +854,8 @@ async def handle_screenshot(message: Message):
     for msg_id in request.get("extra_messages", []):
         try:
             await message.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception as e:
-            logger.error(f"Не удалось удалить сообщение {msg_id}: {e}")
+        except:
+            pass
     request["extra_messages"] = []
 
     mapping = request["mapping"]
@@ -894,17 +896,17 @@ async def handle_screenshot(message: Message):
         sheet.format(f"{chr(64+mapping['flag_final_col'])}{active_row}", {
             "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
         })
-        logger.info(f"✅ Строка {active_row} обновлена (статус 'на модерации')")
+        logger.info(f"✅ Строка {active_row} → 'на модерации'")
     except Exception as e:
-        logger.error(f"Ошибка обновления статуса: {e}")
-        await message.answer("❌ Ошибка при сохранении скриншота. Попробуйте позже.")
+        logger.error(f"Ошибка обновления: {e}")
+        await message.answer("❌ Ошибка при сохранении. Попробуйте позже.")
         return
 
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        caption = f"{user_mention} – {timestamp}\nID отзыва: {review_id or 'Unknown'}"
+        caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
         await message.bot.send_photo(
             chat_id=SCREENSHOT_CHANNEL_ID,
             photo=message.photo[-1].file_id,
@@ -925,11 +927,14 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered_reviews)
     if len(completed) == total:
-        await message.answer("✅ Все отзывы отправлены на модерацию. Спасибо за работу!")
+        await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
         return
 
     await message.answer(
-        f"✅ Отзыв выполнен! Осталось {total - len(completed)} отзывов.",
-        reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
+        f"✅ Отзыв выполнен! Осталось {total - len(completed)}.",
+        reply_markup=InlineKeyboardBuilder().button(
+            text="🎯 Активный слот",
+            callback_data=f"active_slot|{user_id}"
+        ).as_markup()
     )
