@@ -2,7 +2,6 @@ import os, sqlite3, logging, asyncio, secrets
 from datetime import datetime, timedelta
 from collections import defaultdict
 import pytz, gspread
-from gspread import BackoffClient
 from oauth2client.service_account import ServiceAccountCredentials
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
@@ -31,17 +30,32 @@ def get_credentials():
 
 
 def get_client():
-    """Создаёт gspread-клиент с BackoffClient (автоматически ждёт при 429)."""
+    """Создаёт gspread-клиент. Retry при 429 делается вручную в retry_api_call."""
     creds = get_credentials()
     if not creds:
         return None
-    client = gspread.authorize(creds)
-    # BackoffClient автоматически делает паузы при 429
-    client.set_timeout(30)
-    return client
+    return gspread.authorize(creds)
 
 
-# ============ ОБЪЕДИНЕНИЕ СЛОТОВ ============
+async def retry_api_call(func, *args, max_attempts=8, **kwargs):
+    """Повторяет вызов при ошибке 429 с экспоненциальной задержкой."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            error_msg = str(e)
+            if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower():
+                wait = min(2 ** attempt, 60)
+                logger.warning(f"⚠️ 429 (попытка {attempt}/{max_attempts}), ждём {wait} сек")
+                await asyncio.sleep(wait)
+                continue
+            raise
+        except Exception as e:
+            logger.error(f"❌ Ошибка API: {e}")
+            raise
+    raise Exception(f"Не удалось выполнить после {max_attempts} попыток")
+
+
 def build_slot_message(platform: str, count: int, date: str, time: str):
     platform_names = {
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
@@ -60,10 +74,9 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
     )
     time_safe = time.replace(':', '-')
     callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
-    url_to_bot = "https://t.me/ncjobbot?start"
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
-    builder.button(text="🚀 Перейти к задаче", url=url_to_bot)
+    builder.button(text="🚀 Перейти к задаче", url="https://t.me/ncjobbot?start")
     builder.button(text="📋 Другие задания", url=OTHER_JOBS_CHANNEL)
     builder.adjust(1)
     return post_text, builder.as_markup()
@@ -75,14 +88,14 @@ async def monitor_schedule(bot):
         try:
             client = get_client()
             if not client:
-                logger.error("❌ Не удалось получить credentials")
+                logger.error("❌ Нет credentials")
                 await asyncio.sleep(60)
                 continue
 
             spreadsheet = client.open_by_key(SHEET_ID)
             worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
-            logger.info(f"🔍 Проверка таблицы в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
+            logger.info(f"🔍 Проверка в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
 
             for sheet in worksheets:
                 sheet_name = sheet.title
@@ -92,13 +105,13 @@ async def monitor_schedule(bot):
                 mapping = get_column_mapping(platform)
 
                 try:
-                    records = sheet.get_all_values()
+                    records = await retry_api_call(sheet.get_all_values)
                 except Exception as e:
-                    logger.error(f"❌ Ошибка чтения '{sheet_name}': {e}")
-                    await asyncio.sleep(5)
+                    logger.error(f"❌ Чтение '{sheet_name}': {e}")
                     continue
 
                 if not records or len(records) < 2:
+                    await asyncio.sleep(0.3)
                     continue
 
                 # === СБОР СТРОК ДЛЯ ПУБЛИКАЦИИ ===
@@ -124,7 +137,7 @@ async def monitor_schedule(bot):
 
                     if status in ("в работе", "на модерации", "на модерации с опз", "оплачено", "в отчете испол"):
                         continue
-                    if executor:  # кто-то уже взял
+                    if executor:
                         continue
 
                     try:
@@ -142,70 +155,67 @@ async def monitor_schedule(bot):
 
                 # === ИЩЕМ АКТИВНЫЙ СЛОТ ЭТОЙ ПЛАТФОРМЫ ===
                 existing_msg_id = None
-                existing_slot = None
                 for mid, slot in active_slots.items():
                     if slot.get("platform") == platform and slot.get("count", 0) > 0:
                         existing_msg_id = mid
-                        existing_slot = slot
                         break
 
                 row_ids = [r[0] for r in to_publish]
-                count_new = len(row_ids)
                 first_row = to_publish[0][1]
                 date_str = first_row[mapping["date_col"]-1].strip()
                 time_str = first_row[mapping["time_col"]-1].strip()
 
-                if existing_slot:
-                    # === ДОБАВЛЯЕМ В СУЩЕСТВУЮЩИЙ ===
-                    new_rows = [r for r in row_ids if r not in existing_slot["row_ids"]]
+                if existing_msg_id:
+                    # Дополняем существующий
+                    slot = active_slots[existing_msg_id]
+                    new_rows = [r for r in row_ids if r not in slot["row_ids"]]
                     if not new_rows:
                         await asyncio.sleep(0.3)
                         continue
-                    existing_slot["row_ids"].extend(new_rows)
-                    existing_slot["count"] = len(existing_slot["row_ids"])
-                    existing_slot["date"] = date_str
-                    existing_slot["time"] = time_str
+                    slot["row_ids"].extend(new_rows)
+                    slot["count"] = len(slot["row_ids"])
+                    slot["date"] = date_str
+                    slot["time"] = time_str
+                    active_slots[existing_msg_id] = slot
 
-                    # Обновляем сообщение
-                    new_text, kb = build_slot_message(platform, existing_slot["count"], date_str, time_str)
+                    new_text, kb = build_slot_message(platform, slot["count"], date_str, time_str)
                     try:
                         await bot.edit_message_text(
                             chat_id=CHANNEL_ID, message_id=existing_msg_id,
                             text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
                         )
-                        logger.info(f"✅ Слот {platform} дополнен до {existing_slot['count']} шт")
+                        logger.info(f"✅ Слот {platform} дополнен до {slot['count']} шт")
                     except Exception as e:
-                        logger.error(f"❌ Ошибка обновления сообщения: {e}")
+                        logger.error(f"❌ Ошибка edit: {e}")
 
-                    # Обновляем Q/S
-                    batch_data = []
+                    batch = []
                     for row_idx in new_rows:
                         review_id = secrets.token_hex(4)
                         col_q = chr(64 + mapping["flag_first_col"])
-                        batch_data.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+                        batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                         col_s = chr(64 + mapping["id_col"])
-                        batch_data.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
+                        batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                     try:
-                        for i in range(0, len(batch_data), 50):
-                            sheet.batch_update(batch_data[i:i+50])
+                        for i in range(0, len(batch), 50):
+                            await retry_api_call(sheet.batch_update, batch[i:i+50])
                             await asyncio.sleep(0.5)
                     except Exception as e:
-                        logger.error(f"❌ Ошибка Q/S: {e}")
+                        logger.error(f"❌ Q/S: {e}")
 
                 else:
-                    # === СОЗДАЁМ НОВЫЙ СЛОТ ===
-                    new_text, kb = build_slot_message(platform, count_new, date_str, time_str)
+                    # Новый слот
+                    new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
                             chat_id=CHANNEL_ID, text=new_text,
                             reply_markup=kb, parse_mode=ParseMode.HTML
                         )
                         save_channel_message(sent_msg.message_id, CHANNEL_ID)
-                        logger.info(f"✅ Новый слот {platform} на {count_new} шт (msg {sent_msg.message_id})")
+                        logger.info(f"✅ Новый слот {platform} ({len(row_ids)} шт, msg {sent_msg.message_id})")
 
                         active_slots[sent_msg.message_id] = {
-                            "platform": platform, "count": count_new,
-                            "initial_count": count_new, "row_ids": row_ids,
+                            "platform": platform, "count": len(row_ids),
+                            "initial_count": len(row_ids), "row_ids": row_ids,
                             "date": date_str, "time": time_str,
                             "publish_time": datetime.now(moscow_tz),
                             "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
@@ -215,27 +225,26 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
-                    # Q/S
-                    batch_data = []
+                    batch = []
                     for row_idx in row_ids:
                         review_id = secrets.token_hex(4)
                         col_q = chr(64 + mapping["flag_first_col"])
-                        batch_data.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+                        batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                         col_s = chr(64 + mapping["id_col"])
-                        batch_data.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
+                        batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                     try:
-                        for i in range(0, len(batch_data), 50):
-                            sheet.batch_update(batch_data[i:i+50])
+                        for i in range(0, len(batch), 50):
+                            await retry_api_call(sheet.batch_update, batch[i:i+50])
                             await asyncio.sleep(0.5)
                     except Exception as e:
-                        logger.error(f"❌ Ошибка Q/S: {e}")
+                        logger.error(f"❌ Q/S: {e}")
 
                 await asyncio.sleep(0.5)
 
-            # === ПЕРЕОПУБЛИКАЦИЯ (через 2 часа) ===
+            # Переопубликация
             await _check_republish(bot, client, now)
 
-            # === ЗАКРЫТИЕ В 23:30 ===
+            # Закрытие в 23:30
             if now.hour == 23 and now.minute >= 30:
                 await _close_day(bot, client, now)
 
@@ -245,7 +254,6 @@ async def monitor_schedule(bot):
 
 
 async def _check_republish(bot, client, now):
-    """Переопубликация слотов старше 2 часов."""
     spreadsheet = client.open_by_key(SHEET_ID)
     expired_slots = []
 
@@ -258,16 +266,15 @@ async def _check_republish(bot, client, now):
         if (now - publish_time).total_seconds() < 7200:
             continue
 
-        # Проверяем доступные строки
         sheet_title = slot.get("sheet_title")
         try:
             sheet = spreadsheet.worksheet(sheet_title)
-            records = sheet.get_all_values()
+            records = await retry_api_call(sheet.get_all_values)
         except:
             continue
 
         slot_mapping = slot.get("mapping")
-        available_rows = []
+        available = []
         for row_idx in slot["row_ids"]:
             if row_idx - 1 >= len(records):
                 continue
@@ -278,33 +285,31 @@ async def _check_republish(bot, client, now):
                 continue
             if executor:
                 continue
-            available_rows.append(row_idx)
+            available.append(row_idx)
 
-        if available_rows:
-            expired_slots.append((msg_id, slot, available_rows, slot_mapping))
+        if available:
+            expired_slots.append((msg_id, slot, available, slot_mapping))
 
     for msg_id, slot, available_rows, slot_mapping in expired_slots:
         new_attempt = slot["attempt"] + 1
-        logger.info(f"🔄 Переопубликация {slot['platform']} попытка {new_attempt}")
+        logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt})")
 
         try:
             await bot.edit_message_text(
                 chat_id=CHANNEL_ID, message_id=msg_id,
-                text="Срок размещения истёк. Неразобранные отзывы будут переопубликованы."
+                text="Срок размещения истёк. Переопубликуем."
             )
         except:
             pass
         del active_slots[msg_id]
 
-        # Флаг P/O/I
+        col = None
         if new_attempt == 2:
             col = slot_mapping["flag_second_col"]
         elif new_attempt == 3:
             col = slot_mapping["flag_third_col"]
         elif new_attempt == 4:
             col = slot_mapping["flag_final_col"]
-        else:
-            col = None
 
         if col:
             try:
@@ -313,12 +318,11 @@ async def _check_republish(bot, client, now):
                 for row_idx in available_rows:
                     batch.append({"range": f"{chr(64+col)}{row_idx}", "values": [[1]]})
                 for i in range(0, len(batch), 50):
-                    sheet.batch_update(batch[i:i+50])
+                    await retry_api_call(sheet.batch_update, batch[i:i+50])
                     await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"❌ Ошибка флагов: {e}")
+                logger.error(f"❌ Флаги: {e}")
 
-        # Публикуем заново
         new_text, kb = build_slot_message(slot["platform"], len(available_rows), slot["date"], slot["time"])
         try:
             sent_msg = await bot.send_message(chat_id=CHANNEL_ID, text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -337,11 +341,9 @@ async def _check_republish(bot, client, now):
 
 
 async def _close_day(bot, client, now):
-    """Закрытие дня в 23:30."""
     logger.info("🕒 Закрытие дня")
     spreadsheet = client.open_by_key(SHEET_ID)
 
-    # Обработка активных сессий пользователей
     if slot_requests:
         for user_id, request in list(slot_requests.items()):
             assigned_rows = request.get("assigned_rows", [])
@@ -353,7 +355,7 @@ async def _close_day(bot, client, now):
                 continue
             try:
                 sheet = spreadsheet.worksheet(sheet_title)
-                records = sheet.get_all_values()
+                records = await retry_api_call(sheet.get_all_values)
             except:
                 continue
 
@@ -377,24 +379,20 @@ async def _close_day(bot, client, now):
             if batch:
                 try:
                     for i in range(0, len(batch), 50):
-                        sheet.batch_update(batch[i:i+50])
+                        await retry_api_call(sheet.batch_update, batch[i:i+50])
                         await asyncio.sleep(0.5)
                 except Exception as e:
-                    logger.error(f"❌ Ошибка закрытия: {e}")
+                    logger.error(f"❌ Закрытие: {e}")
 
             try:
-                await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата за них снижена на 30%.")
+                await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
             except:
                 pass
             del slot_requests[user_id]
 
-    # Закрываем сообщения в канале
     for msg_id in list(active_slots.keys()):
         try:
-            await bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=msg_id,
-                text="Рабочий день завершён. Все слоты закрыты."
-            )
+            await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=msg_id, text="Рабочий день завершён. Все слоты закрыты.")
         except:
             pass
         del active_slots[msg_id]
@@ -421,10 +419,10 @@ async def update_stats_from_sheet():
                 now.replace(hour=10, minute=0, second=0, microsecond=0),
                 now.replace(hour=20, minute=0, second=0, microsecond=0),
             ]
-        future_times = [t for t in target_times if t > now]
-        if not future_times:
-            future_times = [now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)]
-        next_target = min(future_times)
+        future = [t for t in target_times if t > now]
+        if not future:
+            future = [now.replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)]
+        next_target = min(future)
         await asyncio.sleep((next_target - now).total_seconds())
         await update_stats_from_sheet_once()
 
@@ -440,7 +438,7 @@ async def update_stats_from_sheet_once():
 
         for sheet in spreadsheet.worksheets():
             try:
-                records = sheet.get_all_values()
+                records = await retry_api_call(sheet.get_all_values)
             except:
                 continue
             if len(records) < 2:
@@ -549,17 +547,14 @@ async def update_stats_from_sheet_once():
                 updates_by_sheet[sheet] = sheet_updates
 
         for sheet, updates in updates_by_sheet.items():
-            batch = []
-            for item in updates:
-                batch.append({"range": f"E{item['row_idx']}", "values": [[item["e_value"]]]})
+            batch = [{"range": f"E{u['row_idx']}", "values": [[u["e_value"]]]} for u in updates]
             try:
                 for i in range(0, len(batch), 50):
-                    sheet.batch_update(batch[i:i+50])
+                    await retry_api_call(sheet.batch_update, batch[i:i+50])
                     await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"❌ Ошибка E: {e}")
+                logger.error(f"❌ E: {e}")
 
-        # Пересчёт payout
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -575,7 +570,7 @@ async def update_stats_from_sheet_once():
                     ur[3] * PRICES.get("2гис", 0) + ur[4] * PRICES.get("авито", 0) +
                     ur[5] * PRICES.get("вк", 0) + ur[6] * PRICES.get("отзовик", 0) +
                     ur[7] * PRICES.get("доктору", 0) + ur[8] * PRICES.get("докдок", 0) +
-                    ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("докту", 0) +
+                    ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("доkту", 0) +
                     ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
@@ -600,7 +595,7 @@ async def mark_as_paid_in_table(user_ids: list):
 
         for sheet in spreadsheet.worksheets():
             try:
-                records = sheet.get_all_values()
+                records = await retry_api_call(sheet.get_all_values)
             except:
                 continue
             if len(records) < 2:
@@ -631,12 +626,12 @@ async def mark_as_paid_in_table(user_ids: list):
             if batch:
                 try:
                     for i in range(0, len(batch), 50):
-                        sheet.batch_update(batch[i:i+50])
+                        await retry_api_call(sheet.batch_update, batch[i:i+50])
                         await asyncio.sleep(0.5)
                 except Exception as e:
-                    logger.error(f"❌ Ошибка статуса: {e}")
+                    logger.error(f"❌ Статус: {e}")
     except Exception as e:
-        logger.error(f"❌ Ошибка mark_as_paid: {e}")
+        logger.error(f"❌ mark_as_paid: {e}")
 
 
 async def cleanup_channel(bot):
@@ -647,12 +642,8 @@ async def cleanup_channel(bot):
             now = datetime.now(moscow_tz)
             today_date = now.date()
             today_target = now.replace(hour=4, minute=30, second=0, microsecond=0)
-            should_cleanup = (
-                now >= today_target
-                and last_cleanup_date != today_date
-                and now.hour < 12
-            )
-            if should_cleanup:
+            should = (now >= today_target and last_cleanup_date != today_date and now.hour < 12)
+            if should:
                 logger.info("🧹 Очистка канала")
                 old = get_old_channel_messages(hours=12)
                 deleted = 0
@@ -664,10 +655,10 @@ async def cleanup_channel(bot):
                         deleted += 1
                         await asyncio.sleep(0.3)
                     except Exception as e:
-                        logger.warning(f"⚠️ Не удалено {msg['message_id']}: {e}")
+                        logger.warning(f"⚠️ {msg['message_id']}: {e}")
                         delete_channel_message(msg["id"])
                         failed += 1
-                logger.info(f"✅ Очистка: удалено {deleted}, не удалось {failed}")
+                logger.info(f"✅ Удалено {deleted}, не удалось {failed}")
                 active_slots.clear()
                 last_cleanup_date = today_date
 
@@ -677,12 +668,9 @@ async def cleanup_channel(bot):
                 next_target = today_target
             else:
                 next_target = today_target + timedelta(days=1)
-            wait_seconds = (next_target - now).total_seconds()
+            wait = (next_target - now).total_seconds()
             logger.info(f"⏳ Очистка в {next_target.strftime('%d.%m.%Y %H:%M')} МСК")
-            if wait_seconds > 3600:
-                await asyncio.sleep(3600)
-            else:
-                await asyncio.sleep(max(wait_seconds, 60))
+            await asyncio.sleep(min(wait, 3600) if wait > 3600 else max(wait, 60))
         except Exception as e:
-            logger.error(f"❌ Ошибка очистки: {e}", exc_info=True)
+            logger.error(f"❌ Очистка: {e}", exc_info=True)
             await asyncio.sleep(60)
