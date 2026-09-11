@@ -18,7 +18,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
-
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
@@ -152,8 +151,8 @@ async def send_instruction(user_id: int, bot):
         if INSTRUCTION_PHOTO_ID:
             await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
         elif INSTRUCTION_PHOTO_PATH and os.path.exists(INSTRUCTION_PHOTO_PATH):
-            with open(INSTRUCTION_PHOTO_PATH, 'rb') as photo:
-                await bot.send_photo(chat_id=user_id, photo=photo, caption=caption)
+            photo = FSInputFile(INSTRUCTION_PHOTO_PATH)
+            await bot.send_photo(chat_id=user_id, photo=photo, caption=caption)
         else:
             await bot.send_message(chat_id=user_id, text=caption)
     except Exception as e:
@@ -422,7 +421,6 @@ async def handle_quantity_input(message: Message):
         ).as_markup()
     )
 
-    # Отправляем инструкцию
     await send_instruction(user_id, message.bot)
 
 
