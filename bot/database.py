@@ -23,6 +23,7 @@ def init_db():
                 blocked INTEGER DEFAULT 0,
                 payout INTEGER DEFAULT 0,
                 total_earned INTEGER DEFAULT 0,
+                admin_topup INTEGER DEFAULT 0,
                 referrer TEXT,
                 referral_bonus_paid INTEGER DEFAULT 0,
                 yandex_passed INTEGER DEFAULT 0,
@@ -52,12 +53,14 @@ def init_db():
             )
         """)
 
-        # === МИГРАЦИИ: добавляем колонки, если их нет ===
+        # === МИГРАЦИЯ: добавляем недостающие колонки, если их нет ===
         cur.execute("PRAGMA table_info(users)")
         columns = [col[1] for col in cur.fetchall()]
+
         needed_columns = {
             "zoon_passed": "INTEGER DEFAULT 0",
             "zoon_total": "INTEGER DEFAULT 0",
+            "admin_topup": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
