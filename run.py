@@ -33,18 +33,31 @@ async def scheduler(bot):
     moscow_tz = pytz.timezone("Europe/Moscow")
     while True:
         now = datetime.now(moscow_tz)
-        mt = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        if now >= mt: mt += timedelta(days=1)
-        et = now.replace(hour=22, minute=30, second=0, microsecond=0)
-        if now >= et: et += timedelta(days=1)
-        nt = min(mt, et)
-        await asyncio.sleep((nt - now).total_seconds())
-        n = datetime.now(moscow_tz)
-        if n.hour == 8:
-            msg = await bot.send_message(CHANNEL_ID, "☀️ Доброе утро! Ожидайте сегодняшние слоты.")
+        morning_target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now >= morning_target:
+            morning_target += timedelta(days=1)
+        evening_target = now.replace(hour=22, minute=30, second=0, microsecond=0)
+        if now >= evening_target:
+            evening_target += timedelta(days=1)
+        next_time = min(morning_target, evening_target)
+        await asyncio.sleep((next_time - now).total_seconds())
+        now_after = datetime.now(moscow_tz)
+        if now_after.hour == 8:
+            msg = await bot.send_message(
+                CHANNEL_ID,
+                "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. "
+                "Всем хорошего дня! Ожидайте сегодняшние слоты. "
+                "С уважением, команда NC 🤝"
+            )
             save_channel_message(msg.message_id, CHANNEL_ID)
-        elif n.hour == 22 and n.minute == 30:
-            msg = await bot.send_message(CHANNEL_ID, "🌙 Рабочий день подошёл к концу. Успевайте до 23:59 МСК.")
+        elif now_after.hour == 22 and now_after.minute == 30:
+            msg = await bot.send_message(
+                CHANNEL_ID,
+                "🌙 Сегодняшний рабочий день подошёл к концу. "
+                "Всем спасибо за работу! Кто ещё не отправил скриншоты — "
+                "успевайте до 23:59 МСК. Всем доброй ночи! "
+                "С уважением, команда NC 😴🌟"
+            )
             save_channel_message(msg.message_id, CHANNEL_ID)
 
 
@@ -55,8 +68,9 @@ async def weekly_payout_report(bot):
         days_ahead = (3 - now.weekday() + 7) % 7
         if days_ahead == 0 and now.hour >= 8:
             days_ahead = 7
-        next_thu = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-        await asyncio.sleep((next_thu - now).total_seconds())
+        next_thursday = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+        await asyncio.sleep((next_thursday - now).total_seconds())
+
         try:
             users = get_all_users_with_payout()
             if users:
@@ -66,37 +80,62 @@ async def weekly_payout_report(bot):
                     username = u.get('tg_username') or u.get('username') or str(u['user_id'])
                     phone = u.get('phone_card') or '—'
                     bank = u.get('bank') or '—'
-                    line = f"👤 @{username} (ID: {u['user_id']})\n💰 {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
+                    line = (
+                        f"👤 @{username} (ID: {u['user_id']})\n"
+                        f"💰 Сумма: {u['payout']}₽\n"
+                        f"📞 {phone}\n"
+                        f"🏦 {bank}\n"
+                        f"──────────────"
+                    )
                     text_lines.append(line)
                     user_ids.append(u['user_id'])
                 full_text = "\n".join(text_lines)
-                for i in range(0, len(full_text), 4000):
+                max_len = 4000
+                for i in range(0, len(full_text), max_len):
+                    chunk = full_text[i:i+max_len]
                     await bot.send_message(
-                        chat_id=REPORT_CHAT_ID, text=full_text[i:i+4000],
-                        message_thread_id=REPORT_THREAD_ID or None, parse_mode="HTML"
+                        chat_id=REPORT_CHAT_ID,
+                        text=chunk,
+                        message_thread_id=REPORT_THREAD_ID or None,
+                        parse_mode="HTML"
                     )
                 if user_ids:
                     try:
                         await mark_as_paid_in_table(user_ids)
                     except Exception as e:
-                        logging.error(f"Ошибка отметки: {e}")
+                        logging.error(f"Ошибка обновления статуса в таблице: {e}")
+
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.cursor()
-                        ph = ','.join(['?'] * len(user_ids))
+                        placeholders = ','.join(['?'] * len(user_ids))
                         cur.execute(f"""
-                            UPDATE users SET payout=0, admin_topup=0,
-                            yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0,
-                            vk_passed=0, otzovik_passed=0, doctoru_passed=0, dokdok_passed=0,
-                            prodoctors_passed=0, doctu_passed=0, top32_passed=0, zoon_passed=0
-                            WHERE user_id IN ({ph})
+                            UPDATE users SET 
+                                payout = 0,
+                                admin_topup = 0,
+                                yandex_passed = 0,
+                                google_passed = 0,
+                                gis_passed = 0,
+                                avito_passed = 0,
+                                vk_passed = 0,
+                                otzovik_passed = 0,
+                                doctoru_passed = 0,
+                                dokdok_passed = 0,
+                                prodoctors_passed = 0,
+                                doctu_passed = 0,
+                                top32_passed = 0,
+                                zoon_passed = 0
+                            WHERE user_id IN ({placeholders})
                         """, user_ids)
                         conn.commit()
-                    logging.info(f"✅ Обнулено {len(user_ids)}")
+                    logging.info(f"✅ Обнулены балансы и passed-поля у {len(user_ids)} пользователей")
             else:
-                await bot.send_message(chat_id=REPORT_CHAT_ID,
-                    text="Нет выплат.", message_thread_id=REPORT_THREAD_ID or None)
+                await bot.send_message(
+                    chat_id=REPORT_CHAT_ID,
+                    text="Сегодня нет пользователей, которым нужно выплатить вознаграждение.",
+                    message_thread_id=REPORT_THREAD_ID or None
+                )
         except Exception as e:
-            logging.error(f"Ошибка отчёта: {e}")
+            logging.error(f"Ошибка еженедельного отчета: {e}")
 
 
 async def main():
