@@ -185,7 +185,6 @@ async def check_limit(user_id: int, platform: str) -> bool:
 
 # ============ ВАЖНО: cancel_task СТОИТ ВЫШЕ handle_quantity_input ============
 
-# ---------- КОМАНДА ОТКАЗА (с пакетным обновлением) ----------
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -193,30 +192,30 @@ async def cancel_task(message: Message):
     if user_id not in slot_requests:
         await message.answer("❌ У вас нет активного задания.")
         return
-    
+
     request = slot_requests[user_id]
     assigned_rows = request.get("assigned_rows", [])
     completed = request.get("completed_reviews", [])
     ordered_reviews = request.get("ordered_reviews", [])
-    
+
     remaining_rows = [row_idx for row_idx, num in ordered_reviews if num not in completed]
-    
+
     if not remaining_rows:
         await message.answer("✅ У вас нет невыполненных отзывов для отмены.")
         del slot_requests[user_id]
         return
-    
+
     platform = request.get("platform", "неизвестно")
     mapping = request.get("mapping", get_column_mapping(platform))
     sheet_title = request.get("sheet_title")
-    
+
     logger.info(f"🔄 Отмена: пользователь {user_id}, платформа {platform}, невыполненных: {len(remaining_rows)}")
-    
+
     creds = get_credentials()
     if creds:
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
-        
+
         sheet = None
         if sheet_title:
             try:
@@ -231,34 +230,25 @@ async def cancel_task(message: Message):
                     break
                 except:
                     continue
-        
+
         if sheet:
-            # ---- ПАКЕТНОЕ ОБНОВЛЕНИЕ ----
             batch_data = []
             for row_idx in remaining_rows:
-                # J - статус -> "не принят в работу"
                 col_status = chr(64 + mapping["status_col"])
                 batch_data.append({"range": f"{col_status}{row_idx}", "values": [["не принят в работу"]]})
-                # K - исполнитель -> пусто
                 col_exec = chr(64 + mapping["executor_col"])
                 batch_data.append({"range": f"{col_exec}{row_idx}", "values": [[""]]})
-                # O - флаг третьей перепубликации -> 0
                 col_o = chr(64 + mapping["flag_third_col"])
                 batch_data.append({"range": f"{col_o}{row_idx}", "values": [[0]]})
-                # P - флаг второй перепубликации -> 0
                 col_p = chr(64 + mapping["flag_second_col"])
                 batch_data.append({"range": f"{col_p}{row_idx}", "values": [[0]]})
-                # Q - флаг первой публикации -> 0
                 col_q = chr(64 + mapping["flag_first_col"])
                 batch_data.append({"range": f"{col_q}{row_idx}", "values": [[0]]})
-                # S - ID отзыва -> пусто
                 col_s = chr(64 + mapping["id_col"])
                 batch_data.append({"range": f"{col_s}{row_idx}", "values": [[""]]})
-                # T - номер отзыва -> пусто
                 col_t = chr(64 + mapping["order_col"])
                 batch_data.append({"range": f"{col_t}{row_idx}", "values": [[""]]})
-            
-            # Отправляем пачками по 50
+
             try:
                 for i in range(0, len(batch_data), 50):
                     chunk = batch_data[i:i+50]
@@ -268,7 +258,6 @@ async def cancel_task(message: Message):
                 logger.info(f"✅ Все {len(remaining_rows)} строк очищены для переопубликации")
             except Exception as e:
                 logger.error(f"❌ Ошибка пакетного обновления: {e}")
-                # Fallback: по одной
                 for row_idx in remaining_rows:
                     try:
                         sheet.update_cell(row_idx, mapping["status_col"], "не принят в работу")
@@ -281,8 +270,7 @@ async def cancel_task(message: Message):
                         time.sleep(0.1)
                     except Exception as e2:
                         logger.error(f"❌ Ошибка очистки строки {row_idx}: {e2}")
-    
-    # Возвращаем отзывы в активный слот для переопубликации
+
     slot_msg_id = request.get("slot_msg_id")
     if slot_msg_id and slot_msg_id != "menu":
         slot_info = active_slots.get(slot_msg_id)
@@ -292,9 +280,9 @@ async def cancel_task(message: Message):
                     slot_info["row_ids"].append(row)
             slot_info["count"] += len(remaining_rows)
             logger.info(f"✅ Отзывы возвращены в слот {slot_msg_id}, теперь доступно: {slot_info['count']}")
-    
+
     del slot_requests[user_id]
-    
+
     await message.answer(
         f"✅ Отказ принят.\n\n"
         f"• Выполненные отзывы: {len(completed)} – отправлены на модерацию\n"
@@ -302,13 +290,125 @@ async def cancel_task(message: Message):
         f"За невыполненные отзывы ничего не списывается."
     )
 
-# ---------- Обработчик ввода количества (ПОСЛЕ cancel) ----------
+
+# ============ КОМАНДА /resume — ВОССТАНОВЛЕНИЕ СЕССИИ ============
+@router.message(Command("resume"))
+@router.message(Command("слот"))
+async def cmd_resume(message: Message):
+    """Восстанавливает сессию слота, если бот был перезапущен."""
+    user_id = message.from_user.id
+    if not is_registered(user_id):
+        await message.answer("❌ Вы не зарегистрированы.")
+        return
+
+    if is_blocked(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+
+    if user_id in slot_requests:
+        request = slot_requests[user_id]
+        total = len(request.get("ordered_reviews", []))
+        completed = len(request.get("completed_reviews", []))
+        await message.answer(
+            f"✅ У вас уже есть активный слот на платформе {request['platform']}.\n"
+            f"Отзывов осталось: {total - completed}",
+            reply_markup=InlineKeyboardBuilder().button(
+                text="🎯 Активный слот",
+                callback_data=f"active_slot|{user_id}"
+            ).as_markup()
+        )
+        return
+
+    user = get_user(user_id)
+    if not user or not user.get("tg_username"):
+        await message.answer("❌ У вас не указан Telegram username.")
+        return
+
+    username = f"@{user['tg_username']}"
+
+    creds = get_credentials()
+    if not creds:
+        await message.answer("❌ Ошибка доступа к таблице.")
+        return
+
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+
+    found_rows = []
+
+    for sheet in spreadsheet.worksheets():
+        sheet_name = sheet.title
+        platform = platform_from_sheet_name(sheet_name)
+        if not platform:
+            continue
+        mapping = get_column_mapping(platform)
+
+        records = sheet.get_all_values()
+        if len(records) < 2:
+            continue
+
+        for row_idx, row in enumerate(records[1:], start=2):
+            if len(row) < max(mapping["status_col"], mapping["executor_col"]):
+                continue
+            status = row[mapping["status_col"]-1].strip().lower()
+            executor = row[mapping["executor_col"]-1].strip().lower()
+            if status == "в работе" and executor == username.lower():
+                found_rows.append({
+                    "platform": platform,
+                    "sheet_title": sheet_name,
+                    "row_idx": row_idx,
+                    "mapping": mapping
+                })
+
+    if not found_rows:
+        await message.answer("❌ У вас нет активных слотов. Возьмите новый слот из канала.")
+        return
+
+    platform = found_rows[0]["platform"]
+    sheet_title = found_rows[0]["sheet_title"]
+    mapping = found_rows[0]["mapping"]
+    row_ids = [r["row_idx"] for r in found_rows if r["platform"] == platform]
+
+    ordered_reviews = [(row_idx, idx) for idx, row_idx in enumerate(row_ids, start=1)]
+
+    slot_requests[user_id] = {
+        "platform": platform,
+        "count": len(row_ids),
+        "date": None,
+        "time": None,
+        "slot_msg_id": "resume",
+        "state": "slot_selection",
+        "assigned_rows": row_ids,
+        "current_index": 0,
+        "row_ids": [],
+        "from_menu": False,
+        "mapping": mapping,
+        "sheet_title": sheet_title,
+        "ordered_reviews": ordered_reviews,
+        "completed_reviews": [],
+        "active_review_row": None,
+        "extra_messages": []
+    }
+
+    await message.answer(
+        f"✅ Сессия восстановлена!\n\n"
+        f"📋 Платформа: {platform}\n"
+        f"📊 Активных отзывов: {len(row_ids)}\n\n"
+        f"Нажмите кнопку ниже, чтобы продолжить.",
+        reply_markup=InlineKeyboardBuilder().button(
+            text="🎯 Активный слот",
+            callback_data=f"active_slot|{user_id}"
+        ).as_markup()
+    )
+    logger.info(f"✅ Сессия восстановлена для {user_id}, платформа {platform}, строк: {len(row_ids)}")
+
+
+# ---------- Обработчик ввода количества (ПОСЛЕ cancel и resume) ----------
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
-    # Пропускаем команды
     if message.text and message.text.startswith('/'):
         return
-    
+
     user_id = message.from_user.id
     if user_id not in slot_requests:
         return
@@ -411,6 +511,7 @@ async def handle_quantity_input(message: Message):
         reply_markup=InlineKeyboardBuilder().button(text="🎯 Активный слот", callback_data=f"active_slot|{user_id}").as_markup()
     )
 
+
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     try:
@@ -450,9 +551,27 @@ async def take_slot_start(callback: CallbackQuery):
     time = time_safe.replace('-', ':')
     slot_msg_id = callback.message.message_id
     slot_info = active_slots.get(slot_msg_id)
+
+    # === ФИКС: если слот не найден в active_slots ===
     if not slot_info:
-        await callback.bot.send_message(user_id, "❌ Этот слот уже неактивен.")
-        return
+        # Проверяем, есть ли ещё активные слоты этой платформы
+        platform_slots = [
+            (mid, s) for mid, s in active_slots.items()
+            if s.get("platform") == platform and s.get("count", 0) > 0
+        ]
+        if platform_slots:
+            # Есть другие слоты — переключаем на первый
+            slot_msg_id, slot_info = platform_slots[0]
+            logger.info(f"⚠️ Слот {callback.message.message_id} не найден, переключаем на {slot_msg_id}")
+        else:
+            # Нет активных слотов — сообщаем и предлагаем /resume
+            await callback.bot.send_message(
+                user_id,
+                "❌ Слот не найден (возможно, бот перезапускался).\n\n"
+                "Если вы уже брали отзывы и они в статусе «в работе» — отправьте /resume, чтобы восстановить сессию.\n"
+                "Иначе возьмите новый слот из канала."
+            )
+            return
 
     if not await check_limit(user_id, platform):
         limit = get_limit(platform)
@@ -461,7 +580,7 @@ async def take_slot_start(callback: CallbackQuery):
 
     slot_requests[user_id] = {
         "platform": platform,
-        "count": count,
+        "count": slot_info.get("count", count),
         "date": date,
         "time": time,
         "slot_msg_id": slot_msg_id,
@@ -476,8 +595,9 @@ async def take_slot_start(callback: CallbackQuery):
 
     await callback.bot.send_message(
         chat_id=user_id,
-        text=f"📊 Доступно отзывов: {count} шт.\nСколько вы готовы выполнить? (напишите число)"
+        text=f"📊 Доступно отзывов: {slot_info.get('count', count)} шт.\nСколько вы готовы выполнить? (напишите число)"
     )
+
 
 @router.callback_query(F.data.startswith("active_slot|"))
 async def active_slot(callback: CallbackQuery):
@@ -486,7 +606,7 @@ async def active_slot(callback: CallbackQuery):
         await callback.answer("Это не ваша сессия.", show_alert=True)
         return
     if user_id not in slot_requests:
-        await callback.answer("❌ Активная сессия не найдена.", show_alert=True)
+        await callback.answer("❌ Активная сессия не найдена. Отправьте /resume для восстановления.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
@@ -495,6 +615,7 @@ async def active_slot(callback: CallbackQuery):
 
     await callback.answer()
     await show_slot_buttons(callback.message, user_id)
+
 
 async def show_slot_buttons(message: Message, user_id: int):
     request = slot_requests[user_id]
@@ -505,7 +626,7 @@ async def show_slot_buttons(message: Message, user_id: int):
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Отзовик",
         "доктору": "Doctoru", "докдок": "ДокДок",
-        "про докторов": "Про Докторов", "докту": "ДокТу", 
+        "про докторов": "Про Докторов", "докту": "ДокТу",
         "32топ": "32ТОП", "zoon": "ZOON"
     }
     platform_name = platform_names.get(platform, platform.capitalize())
@@ -520,11 +641,12 @@ async def show_slot_buttons(message: Message, user_id: int):
         reply_markup=builder.as_markup()
     )
 
+
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. Отправьте /resume для восстановления.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
@@ -572,6 +694,7 @@ async def select_review(callback: CallbackQuery):
     platform = request["platform"]
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
     await callback.answer()
+
 
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
@@ -632,7 +755,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
         photo_link = row[17] if len(row) > 17 else ""
-        
+
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
         extra_text = template["extra_text"]
@@ -660,17 +783,17 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
             f"{warning}"
         )
-        
+
         await message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data=f"back_to_slot").as_markup())
-        
+
         if link:
             sent = await message.answer(link)
             extra_ids.append(sent.message_id)
-        
+
         if text:
             sent = await message.answer(text)
             extra_ids.append(sent.message_id)
-        
+
         if photo_link:
             sent = await message.answer(
                 f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n"
@@ -683,6 +806,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
+
 
 @router.callback_query(F.data == "back_to_slot")
 async def back_to_slot(callback: CallbackQuery):
@@ -707,6 +831,7 @@ async def back_to_slot(callback: CallbackQuery):
     request["active_review_row"] = None
     await callback.answer()
     await show_slot_buttons(callback.message, user_id)
+
 
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
