@@ -1,163 +1,185 @@
 import logging, os, secrets, time, asyncio
-from urllib.parse import quote
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-from bot.config import ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID, SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
-from bot.database import is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username, add_review_take, count_review_takes_last_24h, get_limit
+from bot.config import (
+    ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID,
+    SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
+)
+from bot.database import (
+    is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
+    add_review_take, count_review_takes_last_24h, get_limit
+)
 from bot.google_sheets import get_client
 from bot.helpers import get_column_mapping, platform_from_sheet_name
 from bot.state import active_slots, slot_requests
-import gspread
 import pytz
 
 router = Router()
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+SNIPPET_WARNING = (
+    "⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!\n"
+    "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен."
+)
 
+SNIPPET_REQ = (
+    "📌 Требования к скриншоту:\n"
+    "Скриншот должен быть сделан в свернутом приложении (не в браузере).\n"
+    "На скриншоте видно: платформу, текст отзыва, время публикации."
+)
+
+WARNING = (
+    "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
+    "всё выполненное будет оплачено на 30% ниже!</i>"
+)
+
+PIN_REMINDER = "📸 Инструкция по скриншотам — закреплена выше ⬆️"
 
 PLATFORM_TEMPLATES = {
     "яндекс": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": (
-            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
-            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
-        ),
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
+        "instruction": SNIPPET_WARNING + "\n\n🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
     },
     "google": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": (
-            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
-            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
-        ),
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
+        "instruction": SNIPPET_WARNING + "\n\n🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
     },
     "2гис": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": (
-            "Чтобы повысить шанс прохода отзыва, рекомендуем просмотреть 5-10 фотографий и посидеть на карточке 1-2 минуты.\n"
-            "Так же для повышения прохода можно переписать отзыв от руки, это значительно повысит шанс прохода и Вашу прибыль."
-        ),
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
-    },
-    "вк": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": (
-            "<b>- На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.</b>\n"
-            "ДЛЯ 90% прохода:\n"
-            "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
-        ),
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
-    },
-    "докдок": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
-    },
-    "докту": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
-    },
-    "32топ": {
-        "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
-        ),
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
+        "instruction": SNIPPET_WARNING + "\n\n🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
     },
     "авито": {
         "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+            SNIPPET_WARNING + "\n\n🔥 Авито\n\n"
+            "1. Поиск объявлений.\n"
+            "   – Найти и изучить похожие объявления (критерии уточнить у администратора).\n"
+            "2. Диалог с продавцом.\n"
+            "   – Задать 5–6 вопросов о товаре/услуге.\n"
+            "   – Важно: без скриншотов переписки!\n"
+            "3. Ожидание.\n"
+            "   – Выждать 2–3 дня после диалога.\n"
+            "4. Отзыв.\n"
+            "   – Написать отзыв (согласовать текст с администратором).\n"
+            "   – Нельзя: копировать текст, делать скриншоты.\n"
+            "   – Дополнительно: оставить отзыв через «ждут оценки», если получится."
         ),
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "вк": {
+        "instruction": (
+            SNIPPET_WARNING + "\n\n🔥 ВКонтакте\n\n"
+            "1. Переходим по ссылке.\n2. Переписываем текст.\n\n"
+            "На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.\n"
+            "ДЛЯ 90% прохода:\n"
+            "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
+        ),
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "докдок": {
+        "instruction": SNIPPET_WARNING + "\n\n🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "докту": {
+        "instruction": SNIPPET_WARNING + "\n\n🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "32топ": {
+        "instruction": SNIPPET_WARNING + "\n\n🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
     },
     "zoon": {
         "instruction": (
-            "<b>⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!</b>\n"
-            "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен, пожалуйста, будьте внимательны!"
+            SNIPPET_WARNING + "\n\n🔥 ZOON\n\n"
+            "1. Переходим по ссылке, прокладываем маршрут и просматриваем всю информацию.\n"
+            "2. Через 30 минут оставляем отзыв."
         ),
-        "extra_text": "",
-        "warning": (
-            "<i>⚠️ Если не выполнить все взятые вами задачи до 23:30 и не успеть от них отказаться, "
-            "все вами выполненное будет оплачено на 30% ниже!</i>"
-        )
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "яу": {
+        "instruction": (
+            SNIPPET_WARNING + "\n\n🔥 Яндекс Услуги\n\n"
+            "1. Переходим по ссылке.\n"
+            "2. Оставляем отзыв."
+        ),
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "яб": {
+        "instruction": (
+            SNIPPET_WARNING + "\n\n🔥 Яндекс Браузер\n\n"
+            "1. Переходим по ссылке.\n"
+            "2. Открывается сайт компании — в нижнем или верхнем правом углу жмём 3 точки.\n"
+            "3. Жмём на количество отзывов и оставляем отзыв с текстом."
+        ),
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
+    },
+    "h": {
+        "instruction": (
+            SNIPPET_WARNING + "\n\n🔥 HH.RU\n\n"
+            "1. Зайти по ссылке.\n"
+            "2. Просматриваем фото/видео, лайкаем хорошие отзывы.\n"
+            "3. Оставить отзыв."
+        ),
+        "extra_text": SNIPPET_REQ,
+        "warning": WARNING
     },
 }
 
 
+# ============ ИНСТРУКЦИЯ ============
 async def send_instruction(user_id: int, bot):
-    """Отправляет инструкцию со скриншотом. ИСПОЛЬЗУЕТ FSInputFile."""
+    """Отправляет инструкцию с примером скрина и ЗАКРЕПЛЯЕТ её."""
     try:
         caption = (
             "📸 Инструкция по отправке скриншотов:\n\n"
-            "1. Сделайте скриншот экрана с опубликованным отзывом.\n"
+            "1. Сделайте скриншот экрана с отправленным на модерацию отзывом.\n"
             "2. Убедитесь, что видна платформа, текст и время публикации.\n"
-            "3. Скриншот должен быть сделан в приложении (не в браузере), иначе шанс проходимости снижается, есть риск удаления отзыва.\n"
-            "4. Отправьте скриншот в этот чат.\n"
+            "3. Скриншот должен быть сделан в свернутом приложении (не в браузере), иначе шанс проходимости снижается, есть риск удаления отзыва.\n"
+            "4. Отправьте скриншот конкретно на отзыв, который вы сделали.\n"
             "5. Если скриншот не соответствует требованиям, отзыв НЕ БУДЕТ ОПЛАЧЕН."
         )
+
+        sent = None
         if INSTRUCTION_PHOTO_ID:
-            await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
+            sent = await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
         elif INSTRUCTION_PHOTO_PATH and os.path.exists(INSTRUCTION_PHOTO_PATH):
-            photo = FSInputFile(INSTRUCTION_PHOTO_PATH)  # ← ФИКС
-            await bot.send_photo(chat_id=user_id, photo=photo, caption=caption)
+            photo = FSInputFile(INSTRUCTION_PHOTO_PATH)
+            sent = await bot.send_photo(chat_id=user_id, photo=photo, caption=caption)
         else:
-            await bot.send_message(chat_id=user_id, text=caption)
+            sent = await bot.send_message(chat_id=user_id, text=caption)
+
+        if sent:
+            try:
+                await bot.pin_chat_message(chat_id=user_id, message_id=sent.message_id, disable_notification=True)
+                logger.info(f"📌 Инструкция закреплена для {user_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось закрепить инструкцию: {e}")
     except Exception as e:
         logger.error(f"Ошибка отправки инструкции: {e}")
+
+
+async def unpin_instruction(user_id: int, bot):
+    """Открепляет инструкцию (когда все отзывы выполнены)."""
+    try:
+        await bot.unpin_all_chat_messages(chat_id=user_id)
+        logger.info(f"📌 Инструкция откреплена у {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось открепить: {e}")
 
 
 async def check_limit(user_id: int, platform: str) -> bool:
@@ -186,8 +208,15 @@ async def cancel_task(message: Message):
     sheet_title = request.get("sheet_title")
     logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}")
 
+    default_mapping = {
+        "status_col": 10, "executor_col": 11,
+        "flag_third_col": 15, "flag_second_col": 16, "flag_first_col": 17,
+        "id_col": 19, "order_col": 20,
+    }
+    m = mapping if mapping and "status_col" in mapping else default_mapping
+
     client = get_client()
-    if client:
+    if client and sheet_title:
         try:
             sheet = client.open_by_key(SHEET_ID).worksheet(sheet_title)
             batch = []
@@ -195,7 +224,9 @@ async def cancel_task(message: Message):
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
                                  ("id_col", ""), ("order_col", "")]:
-                    col = chr(64 + mapping[key])
+                    if key not in m:
+                        continue
+                    col = chr(64 + m[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
             for i in range(0, len(batch), 50):
                 sheet.batch_update(batch[i:i+50])
@@ -330,24 +361,22 @@ async def handle_quantity_input(message: Message):
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id)
     if not slot_info:
-        logger.warning(f"⚠️ Слот {slot_msg_id} не найден, используем request")
         slot_info = {
             "row_ids": request.get("row_ids", []),
             "count": request.get("count", 0),
             "mapping": mapping, "sheet_title": sheet_title, "platform": platform
         }
         if not slot_info["row_ids"]:
-            await message.answer("❌ Не удалось получить список. Попробуйте /resume.")
+            await message.answer("❌ Попробуйте /resume.")
             del slot_requests[user_id]
             return
 
     row_ids = slot_info["row_ids"]
     if len(row_ids) < quantity:
-        await message.answer("❌ Количество свободных отзывов изменилось. Попробуйте заново.")
+        await message.answer("❌ Свободных меньше. Попробуйте заново.")
         del slot_requests[user_id]
         return
 
-    # === ПРОВЕРКА ЗАНЯТОСТИ ===
     try:
         sheet = spreadsheet.worksheet(sheet_title)
         records = sheet.get_all_values()
@@ -370,7 +399,7 @@ async def handle_quantity_input(message: Message):
         free_rows.append(row_idx)
 
     if len(free_rows) < quantity:
-        await message.answer(f"⚠️ Часть отзывов уже занята. Свободно: {len(free_rows)}.")
+        await message.answer(f"⚠️ Свободно только {len(free_rows)}. Возьмите меньше или /resume.")
         del slot_requests[user_id]
         return
 
@@ -380,6 +409,20 @@ async def handle_quantity_input(message: Message):
         slot_info["row_ids"] = [r for r in row_ids if r not in assigned_rows]
         slot_info["count"] = len(slot_info["row_ids"])
         active_slots[slot_msg_id] = slot_info
+
+        if slot_info["count"] == 0:
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=CHANNEL_ID,
+                    message_id=slot_msg_id,
+                    text="🔥 Слот полностью разобран. Ожидайте следующий."
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось отредактировать: {e}")
+            try:
+                del active_slots[slot_msg_id]
+            except KeyError:
+                pass
 
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
@@ -422,6 +465,7 @@ async def handle_quantity_input(message: Message):
         ).as_markup()
     )
 
+    # Отправляем и закрепляем инструкцию
     await send_instruction(user_id, message.bot)
 
 
@@ -462,6 +506,9 @@ async def take_slot_start(callback: CallbackQuery):
         else:
             await callback.bot.send_message(user_id, "❌ Слот не найден. /resume.")
             return
+    if slot_info.get("count", 0) == 0:
+        await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
+        return
     if not await check_limit(user_id, platform):
         await callback.bot.send_message(user_id, f"❌ Лимит на {platform}.")
         return
@@ -476,7 +523,11 @@ async def take_slot_start(callback: CallbackQuery):
     }
     await callback.bot.send_message(
         chat_id=user_id,
-        text=f"📊 Доступно: {slot_info.get('count', count)} шт.\nСколько выполните?"
+        text=(
+            f"📊 Доступно: {slot_info.get('count', count)} шт.\n"
+            f"Сколько выполните?\n\n"
+            f"Если хотите отказаться пропишите команду /cancel."
+        )
     )
 
 
@@ -501,9 +552,12 @@ async def show_slot_buttons(message: Message, user_id: int):
     ordered = request.get("ordered_reviews", [])
     completed = request.get("completed_reviews", [])
     platform = request["platform"]
-    names = {"яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС", "авито": "Авито",
-             "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
-             "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП", "zoon": "ZOON"}
+    names = {
+        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС", "авито": "Авито",
+        "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
+        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП",
+        "zoon": "ZOON", "яу": "ЯУ", "яб": "ЯБ", "h": "HH"
+    }
     name = names.get(platform, platform.capitalize())
     builder = InlineKeyboardBuilder()
     for row_idx, num in ordered:
@@ -517,11 +571,11 @@ async def show_slot_buttons(message: Message, user_id: int):
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
+        await callback.answer("❌ /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request["state"] != "slot_selection":
-        await callback.answer("❌ Вы уже работаете.", show_alert=True)
+        await callback.answer("❌ Уже работаете.", show_alert=True)
         return
     selected_num = int(callback.data.split("|")[1])
     ordered = request.get("ordered_reviews", [])
@@ -531,7 +585,7 @@ async def select_review(callback: CallbackQuery):
             target_row = row_idx
             break
     if target_row is None:
-        await callback.answer("❌ Отзыв уже выполнен.", show_alert=True)
+        await callback.answer("❌ Уже выполнен.", show_alert=True)
         return
     request["active_review_row"] = target_row
     request["state"] = "working_on_review"
@@ -588,6 +642,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
         info_msg = (
+            f"{SNIPPET_WARNING}\n\n"
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
             f"Направление: {doctor_direction}\n\n"
@@ -595,15 +650,14 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"Пол: {gender_text}\n"
             f"Кол-во звезд: {stars}\n"
             f"Платформа: {platform_name}\n"
-            f"Ссылка на платформу: {link}"
+            f"Ссылка на платформу: {link}\n\n"
+            f"{SNIPPET_REQ}\n\n"
+            f"<b>❗ Важно!</b>\n"
+            f"Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
+            f"Если нет даты посещения, укажите в течение последних 7 дней.\n\n"
+            f"{PIN_REMINDER}"
         )
-        date_info = (
-            "\n\n<b>❗ Важно!</b>\n"
-            "Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
-            "Если нет даты посещения, укажите в течение последних 7 дней."
-        )
-        full_msg = info_msg + date_info
-        await message.edit_text(full_msg, parse_mode="HTML",
+        await message.edit_text(info_msg, parse_mode="HTML",
             reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
 
         if tz_link:
@@ -619,7 +673,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(f"2️⃣ <b>Больше понравилось</b>\n\n{like}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
         if minus:
-            sent = await message.answer(f"3️⃣ <b>Минусы</b>\n\n{minus}", parse_mode="HTML")
+            sent = await message.answer(f"3️⃣ <b>Не понравилось</b>\n\n{minus}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
     else:
@@ -644,16 +698,13 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         final_msg = (
             f"{instruction_text}\n\n"
-            f"⭐ Количество звезд: {stars}\n"
-            "👥 ОТЗЫВЫ ПУБЛИКУЮТ РАЗНЫЕ ЛЮДИ\n"
-            "- 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
-            f"{gender_text}\n"
-        )
-        if extra_text:
-            final_msg += f"{extra_text}\n"
-        final_msg += (
+            f"{extra_text}\n\n"
+            f"⭐ Количество звёзд: {stars}\n"
+            f"👥 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
+            f"{gender_text}\n\n"
+            f"{PIN_REMINDER}\n\n"
             "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
-            "Если хотите отказаться от оставшихся заданий, отправьте команду /cancel.\n\n"
+            "Если хотите отказаться от оставшихся заданий — /cancel.\n\n"
             f"{warning}"
         )
 
@@ -668,12 +719,12 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(f"📝 <b>Текст отзыва:</b>\n\n{text}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
         else:
-            sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b> Обратитесь к администратору.")
+            sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b>")
             extra_ids.append(sent.message_id)
 
         if photo_link:
             sent = await message.answer(
-                f"📸 <b>ФОТО обязательное к прикреплению!</b>\n\n{photo_link}\n\n"
+                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n{photo_link}\n\n"
                 f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>",
                 parse_mode="HTML"
             )
@@ -692,7 +743,7 @@ async def back_to_slot(callback: CallbackQuery):
         return
     request = slot_requests[user_id]
     if request["state"] != "working_on_review":
-        await callback.answer("❌ Вы не в просмотре.", show_alert=True)
+        await callback.answer("❌ Не в просмотре.", show_alert=True)
         return
     chat_id = callback.message.chat.id
     for msg_id in request.get("extra_messages", []):
@@ -793,6 +844,8 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
+        # Все отзывы выполнены — открепляем инструкцию
+        await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
         return
