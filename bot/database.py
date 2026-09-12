@@ -39,6 +39,9 @@ def init_db():
                 doctu_passed INTEGER DEFAULT 0,
                 top32_passed INTEGER DEFAULT 0,
                 zoon_passed INTEGER DEFAULT 0,
+                yau_passed INTEGER DEFAULT 0,
+                yab_passed INTEGER DEFAULT 0,
+                hh_passed INTEGER DEFAULT 0,
                 yandex_total INTEGER DEFAULT 0,
                 google_total INTEGER DEFAULT 0,
                 gis_total INTEGER DEFAULT 0,
@@ -50,7 +53,10 @@ def init_db():
                 prodoctors_total INTEGER DEFAULT 0,
                 doctu_total INTEGER DEFAULT 0,
                 top32_total INTEGER DEFAULT 0,
-                zoon_total INTEGER DEFAULT 0
+                zoon_total INTEGER DEFAULT 0,
+                yau_total INTEGER DEFAULT 0,
+                yab_total INTEGER DEFAULT 0,
+                hh_total INTEGER DEFAULT 0
             )
         """)
 
@@ -60,6 +66,12 @@ def init_db():
             "zoon_passed": "INTEGER DEFAULT 0",
             "zoon_total": "INTEGER DEFAULT 0",
             "admin_topup": "INTEGER DEFAULT 0",
+            "yau_passed": "INTEGER DEFAULT 0",
+            "yau_total": "INTEGER DEFAULT 0",
+            "yab_passed": "INTEGER DEFAULT 0",
+            "yab_total": "INTEGER DEFAULT 0",
+            "hh_passed": "INTEGER DEFAULT 0",
+            "hh_total": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
@@ -110,7 +122,7 @@ def init_db():
             )
         """)
 
-        # === ХРАНЕНИЕ СЕССИЙ В БД ===
+        # Хранение сессий в БД
         cur.execute("""
             CREATE TABLE IF NOT EXISTS active_slots (
                 msg_id INTEGER PRIMARY KEY,
@@ -149,7 +161,6 @@ def init_db():
         conn.commit()
 
 
-# ============ USERS ============
 def add_user(user_id: int, username: str, first_name: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -205,7 +216,6 @@ def toggle_block(user_id: int) -> Optional[int]:
     return new_status
 
 
-# ============ ADMINS ============
 def get_admin_role(user_id: int) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -240,7 +250,6 @@ def is_comoderator(user_id: int) -> bool:
     return role in ('owner', 'ga', 'moderator', 'comoderator')
 
 
-# ============ WARNINGS ============
 def add_warning(user_id: int, reason: str, warned_by: int):
     extend_warnings_expiry(user_id, 45)
     with sqlite3.connect(DB_PATH) as conn:
@@ -283,7 +292,6 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         conn.commit()
 
 
-# ============ SETTINGS ============
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -307,7 +315,6 @@ def get_all_users_with_payout():
         return [dict(row) for row in cur.fetchall()]
 
 
-# ============ REVIEW TAKES ============
 def add_review_take(user_id: int, platform: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -381,9 +388,8 @@ def delete_channel_message(record_id: int):
         conn.commit()
 
 
-# ============ ХРАНЕНИЕ СЕССИЙ (active_slots) ============
+# ============ ХРАНЕНИЕ СЕССИЙ ============
 def save_active_slot(msg_id: int, data: dict):
-    """Сохраняет активный слот в БД."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -416,7 +422,6 @@ def delete_active_slot(msg_id: int):
 
 
 def get_all_active_slots() -> dict:
-    """Возвращает {msg_id: {...}}."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -434,7 +439,6 @@ def get_all_active_slots() -> dict:
         return result
 
 
-# ============ ХРАНЕНИЕ СЕССИЙ (slot_requests) ============
 def save_slot_request(user_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
