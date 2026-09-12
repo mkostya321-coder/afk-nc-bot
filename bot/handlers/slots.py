@@ -140,10 +140,24 @@ PLATFORM_TEMPLATES = {
     },
 }
 
+DEFAULT_MAPPING = {
+    "status_col": 10, "executor_col": 11,
+    "flag_third_col": 15, "flag_second_col": 16, "flag_first_col": 17,
+    "id_col": 19, "order_col": 20,
+}
+
+
+def get_safe_mapping(request: dict, platform: str) -> dict:
+    """Возвращает mapping с fallback, если его нет в request."""
+    mapping = request.get("mapping")
+    if not mapping or "status_col" not in mapping:
+        mapping = get_column_mapping(platform)
+        request["mapping"] = mapping
+    return mapping
+
 
 # ============ ИНСТРУКЦИЯ ============
 async def send_instruction(user_id: int, bot):
-    """Отправляет инструкцию с примером скрина и ЗАКРЕПЛЯЕТ её."""
     try:
         caption = (
             "📸 Инструкция по отправке скриншотов:\n\n"
@@ -153,7 +167,6 @@ async def send_instruction(user_id: int, bot):
             "4. Отправьте скриншот конкретно на отзыв, который вы сделали.\n"
             "5. Если скриншот не соответствует требованиям, отзыв НЕ БУДЕТ ОПЛАЧЕН."
         )
-
         sent = None
         if INSTRUCTION_PHOTO_ID:
             sent = await bot.send_photo(chat_id=user_id, photo=INSTRUCTION_PHOTO_ID, caption=caption)
@@ -174,7 +187,6 @@ async def send_instruction(user_id: int, bot):
 
 
 async def unpin_instruction(user_id: int, bot):
-    """Открепляет инструкцию (когда все отзывы выполнены)."""
     try:
         await bot.unpin_all_chat_messages(chat_id=user_id)
         logger.info(f"📌 Инструкция откреплена у {user_id}")
@@ -203,17 +215,10 @@ async def cancel_task(message: Message):
         del slot_requests[user_id]
         return
 
-    platform = request.get("platform", "неизвестно")
-    mapping = request.get("mapping", {})
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
     logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}")
-
-    default_mapping = {
-        "status_col": 10, "executor_col": 11,
-        "flag_third_col": 15, "flag_second_col": 16, "flag_first_col": 17,
-        "id_col": 19, "order_col": 20,
-    }
-    m = mapping if mapping and "status_col" in mapping else default_mapping
 
     client = get_client()
     if client and sheet_title:
@@ -224,9 +229,9 @@ async def cancel_task(message: Message):
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
                                  ("id_col", ""), ("order_col", "")]:
-                    if key not in m:
+                    if key not in mapping:
                         continue
-                    col = chr(64 + m[key])
+                    col = chr(64 + mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
             for i in range(0, len(batch), 50):
                 sheet.batch_update(batch[i:i+50])
@@ -336,7 +341,7 @@ async def handle_quantity_input(message: Message):
     if user_id not in slot_requests:
         return
     request = slot_requests[user_id]
-    if request["state"] != "waiting_quantity":
+    if request.get("state") != "waiting_quantity":
         return
     try:
         quantity = int(message.text.strip())
@@ -347,8 +352,8 @@ async def handle_quantity_input(message: Message):
         await message.answer(f"❌ Можно взять от 1 до {request['count']} отзывов.")
         return
 
-    platform = request["platform"]
-    mapping = request["mapping"]
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
 
     client = get_client()
@@ -452,6 +457,7 @@ async def handle_quantity_input(message: Message):
     request["state"] = "slot_selection"
     request["assigned_rows"] = assigned_rows
     request["extra_messages"] = []
+    request["mapping"] = mapping
     slot_requests[user_id] = request
 
     for _ in range(quantity):
@@ -465,7 +471,6 @@ async def handle_quantity_input(message: Message):
         ).as_markup()
     )
 
-    # Отправляем и закрепляем инструкцию
     await send_instruction(user_id, message.bot)
 
 
@@ -513,12 +518,13 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, f"❌ Лимит на {platform}.")
         return
 
+    mapping = slot_info.get("mapping") or get_column_mapping(platform)
     slot_requests[user_id] = {
         "platform": platform, "count": slot_info.get("count", count),
         "date": date, "time": time, "slot_msg_id": slot_msg_id,
         "state": "waiting_quantity", "assigned_rows": [], "current_index": 0,
         "row_ids": slot_info["row_ids"], "from_menu": False,
-        "mapping": slot_info.get("mapping", get_column_mapping(platform)),
+        "mapping": mapping,
         "sheet_title": slot_info.get("sheet_title")
     }
     await callback.bot.send_message(
@@ -540,7 +546,7 @@ async def active_slot(callback: CallbackQuery):
     if user_id not in slot_requests:
         await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
         return
-    if slot_requests[user_id]["state"] != "slot_selection":
+    if slot_requests[user_id].get("state") != "slot_selection":
         await callback.answer("❌ Уже в процессе.", show_alert=True)
         return
     await callback.answer()
@@ -551,7 +557,10 @@ async def show_slot_buttons(message: Message, user_id: int):
     request = slot_requests[user_id]
     ordered = request.get("ordered_reviews", [])
     completed = request.get("completed_reviews", [])
-    platform = request["platform"]
+    platform = request.get("platform", "яндекс")
+    if not request.get("mapping"):
+        request["mapping"] = get_column_mapping(platform)
+        slot_requests[user_id] = request
     names = {
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС", "авито": "Авито",
         "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
@@ -567,6 +576,7 @@ async def show_slot_buttons(message: Message, user_id: int):
     await message.edit_text("📋 Выберите номер отзыва:", reply_markup=builder.as_markup())
 
 
+# ============ ВЫБОР ОТЗЫВА ============
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -574,9 +584,15 @@ async def select_review(callback: CallbackQuery):
         await callback.answer("❌ /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
-    if request["state"] != "slot_selection":
+    if request.get("state") != "slot_selection":
         await callback.answer("❌ Уже работаете.", show_alert=True)
         return
+
+    # ФИКС: mapping с fallback
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
+    slot_requests[user_id] = request
+
     selected_num = int(callback.data.split("|")[1])
     ordered = request.get("ordered_reviews", [])
     target_row = None
@@ -614,14 +630,20 @@ async def select_review(callback: CallbackQuery):
     if sheet is None:
         await callback.answer("❌ Ошибка таблицы.", show_alert=True)
         return
-    mapping = request["mapping"]
-    platform = request["platform"]
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
     await callback.answer()
 
 
+# ============ ПОКАЗ ОТЗЫВА ============
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
+
+    # ФИКС: fallback mapping
+    if not mapping or "status_col" not in mapping:
+        mapping = get_column_mapping(platform)
+        request["mapping"] = mapping
+        slot_requests[user_id] = request
+
     row = sheet.row_values(row_idx)
     extra_ids = []
 
@@ -735,6 +757,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     slot_requests[user_id] = request
 
 
+# ============ ВЕРНУТЬСЯ К СЛОТУ ============
 @router.callback_query(F.data == "back_to_slot")
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -742,7 +765,7 @@ async def back_to_slot(callback: CallbackQuery):
         await callback.answer("❌ Сессия не найдена.", show_alert=True)
         return
     request = slot_requests[user_id]
-    if request["state"] != "working_on_review":
+    if request.get("state") != "working_on_review":
         await callback.answer("❌ Не в просмотре.", show_alert=True)
         return
     chat_id = callback.message.chat.id
@@ -759,13 +782,14 @@ async def back_to_slot(callback: CallbackQuery):
     await show_slot_buttons(callback.message, user_id)
 
 
+# ============ СКРИНШОТ ============
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
     if user_id not in slot_requests:
         return
     request = slot_requests[user_id]
-    if request["state"] != "working_on_review":
+    if request.get("state") != "working_on_review":
         await message.answer("❌ Сначала выберите отзыв.")
         return
     active_row = request.get("active_review_row")
@@ -780,8 +804,10 @@ async def handle_screenshot(message: Message):
             pass
     request["extra_messages"] = []
 
-    mapping = request["mapping"]
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
+
     client = get_client()
     if not client:
         await message.answer("❌ Ошибка доступа.")
@@ -844,7 +870,6 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
-        # Все отзывы выполнены — открепляем инструкцию
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
