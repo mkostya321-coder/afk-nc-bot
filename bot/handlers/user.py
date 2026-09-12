@@ -25,6 +25,7 @@ router = Router()
 
 REFERRAL_DEADLINE_DAYS = 28
 
+
 class RegForm(StatesGroup):
     name = State()
     timezone = State()
@@ -33,9 +34,11 @@ class RegForm(StatesGroup):
     phone_card = State()
     bank = State()
 
+
 class IntroState(StatesGroup):
     first = State()
     second = State()
+
 
 class TikTokReport(StatesGroup):
     account_name = State()
@@ -43,14 +46,17 @@ class TikTokReport(StatesGroup):
     video_link = State()
     screenshot_views = State()
 
+
 class CollaborationForm(StatesGroup):
     platforms = State()
     counts = State()
     description = State()
     texts = State()
 
+
 class SupportForm(StatesGroup):
     problem = State()
+
 
 # ============= ПРАВИЛА =============
 RULES_1 = (
@@ -86,15 +92,17 @@ RULES_2 = (
     "Скриншоты нужно отправлять в той форме в которой вам скажет бот, если скриншот будет не соответствовать ТЗ - ОТЗЫВ НЕ ОПЛАЧИВАЕТСЯ\n"
     "Если на скриншоте что-то другое не связанное с выполнением работы - выдается предупреждение 1/3.\n"
     "Если количество предупреждений достигнет 3/3 -> блокировка навсегда, с возможностью снять ее через 1 месяц.(на усмотрение администрации)\n\n"
-    "6. ❗️Сотрудник, который берет 5 отзывов+- в определенный день, должен предоставить и отправить все подтверждающие скриншоты до 2️⃣3️⃣:5️⃣9️⃣ по московскому времени в день когда ему отправил отзывы бот. В случае несоблюдения этого срока, оплата за отзывы, полученные в этот день, будет снижена на 50%❗️\n\n"
+    "6. ❗️Сотрудник, который берет 5 отзывов+- в определенный день, должен предоставить и отправить все подтверждающие скриншоты до 2️⃣3️⃣:5️⃣9️⃣ по московскому времени в день когда ему отправил отзывы бот. В случае несоблюдения этого срока, оплата за отзывы, полученные в этот день, будет снижена на 30%❗️\n\n"
     "Если бот пишет что пол не важен. ‼️То обязательно следи за текстом: если в тексте есть слова в женском роде, например покупала или ходила, а ты отправляешь задание парню, он должен изменить их на мужской род — покупал, ходил.‼️И наоборот. Отзыв должен соответствовать полу того, кто его пишет.✔️"
 )
+
 
 async def show_intro(message: Message, state: FSMContext):
     await state.set_state(IntroState.first)
     kb = InlineKeyboardBuilder()
     kb.button(text="Далее", callback_data="intro_next")
     await message.answer(RULES_1, reply_markup=kb.as_markup())
+
 
 @router.callback_query(F.data == "intro_next")
 async def process_intro_next(callback: CallbackQuery, state: FSMContext):
@@ -107,7 +115,7 @@ async def process_intro_next(callback: CallbackQuery, state: FSMContext):
             try:
                 await callback.message.edit_text(RULES_2, reply_markup=kb.as_markup())
             except Exception as e:
-                logger.warning(f"Не удалось отредактировать сообщение: {e}")
+                logger.warning(f"Не удалось отредактировать: {e}")
                 await callback.message.answer(RULES_2, reply_markup=kb.as_markup())
         elif current_state == IntroState.second.state:
             await state.clear()
@@ -116,12 +124,13 @@ async def process_intro_next(callback: CallbackQuery, state: FSMContext):
             try:
                 await callback.message.edit_text("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
             except Exception as e:
-                logger.warning(f"Не удалось отредактировать сообщение: {e}")
+                logger.warning(f"Не удалось отредактировать: {e}")
                 await callback.message.answer("Отлично! Теперь вы можете зарегистрироваться.", reply_markup=kb.as_markup())
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка в process_intro_next: {e}")
-        await callback.answer("Произошла ошибка, попробуйте снова /start", show_alert=True)
+        await callback.answer("Произошла ошибка, попробуйте /start", show_alert=True)
+
 
 @router.callback_query(F.data == "menu_reg")
 async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
@@ -133,6 +142,7 @@ async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
         logger.error(f"Ошибка в menu_reg_callback: {e}")
         await callback.message.answer("Произошла ошибка, попробуйте позже.")
 
+
 # ---------- Старт ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
@@ -142,6 +152,7 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer("👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями.", reply_markup=main_menu_keyboard(is_registered=True))
     else:
         await show_intro(message, state)
+
 
 # ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
@@ -215,7 +226,8 @@ async def menu_profile(message: Message):
         f"ДокДок: {user['dokdok_passed']}\n"
         f"Про Докторов: {user['prodoctors_passed']}\n"
         f"ДокТу: {user['doctu_passed']}\n"
-        f"32ТОП: {user['top32_passed']}\n\n"
+        f"32ТОП: {user['top32_passed']}\n"
+        f"ZOON: {user.get('zoon_passed', 0)}\n\n"
         f"💰 Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"ℹ️ Статистика обновляется каждый день в 10:00 и 20:00 МСК.\n\n"
         f"👥 Рефералка: {referrer if referrer != '0' else 'нет'} ({ref_status})\n\n"
@@ -226,6 +238,7 @@ async def menu_profile(message: Message):
         f"Чтобы посмотреть общие отзывы за всё время, используйте /myotz"
     )
     await message.answer(text)
+
 
 # ---------- /myotz ----------
 @router.message(Command("myotz"))
@@ -254,6 +267,7 @@ async def cmd_myotz(message: Message):
     )
     await message.answer(text)
 
+
 # ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
 @router.message(Command("help"))
@@ -263,6 +277,9 @@ async def menu_help(message: Message):
         "/start – Главное меню\n"
         "/reg – Регистрация\n"
         "/profile – Ваш профиль\n"
+        "/job – Активные слоты\n"
+        "/resume – Восстановить слот (если бот перезапустился)\n"
+        "/cancel – Отказаться от невыполненных заданий\n"
         "/myotz – Общая статистика за всё время\n"
         "/help – Эта справка\n"
         "/manual – Инструкция по правильной публикации отзывов\n"
@@ -275,11 +292,13 @@ async def menu_help(message: Message):
     is_reg = user and user.get("name") is not None
     await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
 
+
 # ---------- /manual ----------
 @router.message(Command("manual"))
 async def cmd_manual(message: Message):
     text = RULES_1 + "\n\n" + RULES_2
     await message.answer(text)
+
 
 # ---------- /money ----------
 @router.message(Command("money"))
@@ -296,21 +315,30 @@ async def cmd_money(message: Message):
         "• Отзовик — 100₽\n"
         "• Doctoru — 100₽\n"
         "• ДокДок — 100₽\n"
-        "• Про Докторов — 180₽\n"
-        "• ДокТу — 110₽\n"
-        "• 32ТОП — 100₽\n\n"
+        "• Про Докторов — 200₽\n"
+        "• ДокТу — 100₽\n"
+        "• 32ТОП — 125₽\n"
+        "• ZOON — 40₽\n\n"
         "<b>📅 Когда выплата?</b>\n"
         "Все выплаты производятся <b>по четвергам</b>.\n"
-        "В четверг вы получаете деньги за всё, что успели сделать <b>до понедельника (включительно)</b>.\n"
-        "То есть отзывы, выполненные в понедельник, проходят модерацию во вторник, и за них вы получаете в ближайший четверг.\n"
-        "Отзывы, выполненные во вторник, среду и т.д., переносятся на следующий четверг.\n"
-        "В среду деньги начисляются на ваш баланс в четверг вечером или в пятницу.\n\n"
+        "В четверг вы получаете деньги за всё, что успели сделать <b>до вечера вторника (включительно)</b>.\n"
+        "То есть отзывы, выполненные в понедельник и вторник, проходят модерацию и попадают в ближайший четверг.\n"
+        "Отзывы, выполненные в среду, четверг, пятницу и т.д., переносятся на следующий четверг.\n"
+        "<b>Важно:</b> в среду деньги на баланс <b>не начисляются</b> — ближайшее начисление будет в <b>четверг вечером</b>, после выплат.\n\n"
         "<b>⚠️ Важное правило:</b>\n"
         "Если вы не отказались от задания и не выполнили его до 23:30, то задания снимаются, а все выполненные отзывы из этого слота оплачиваются на <b>30% ниже</b>.\n"
         "Пожалуйста, будьте внимательны: либо доделывайте все отзывы, либо отказывайтесь заранее!\n\n"
+        "<b>📊 Лимиты на взятие отзывов:</b>\n"
+        "На старте проекта для каждой платформы установлен лимит: <b>10 отзывов на человека за 24 часа</b>.\n"
+        "Лимит считается отдельно для каждой платформы (Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON).\n"
+        "Сброс лимита каждый день в <b>10:00 МСК</b>.\n"
+        "Можно брать по частям: например, 3 + 5 + 2 = 10.\n"
+        "Когда лимит достигнут — бот напишет, что на этой платформе больше взять нельзя, попробуйте другую.\n\n"
+        "Администрация может изменять лимит для каждой платформы отдельно и поднимать его по мере роста проекта.\n\n"
         "Удачи в работе! 🚀"
     )
     await message.answer(text, parse_mode="HTML")
+
 
 # ---------- /tiktok ----------
 @router.message(Command("tiktok"))
@@ -320,9 +348,9 @@ async def cmd_tiktok(message: Message):
         "В этой справке вы можете ознакомиться с выплатами по Tik Tok.\n\n"
         "Когда вы делаете отчёт, фиксируется последнее количество просмотров.\n"
         "Отчёт следует сделать <b>до вторника (включительно)</b>.\n\n"
-        "💰 Максимальная выплата — <b>10 000 рублей</b>.\n"
-        "Если у вас выходит до 15 000 рублей, администратор может внести сразу всю выплату в отчёт на ближайший четверг (на усмотрение Главного Администратора).\n"
-        "Сумма зависит от количества людей, которым нужно выплатить.\n\n"
+        "💰 Максимальная выплата — <b>10 000 рублей за 1 неделю</b>.\n"
+        "Если ваш заработок превышает 10 000 рублей, вторая часть <b>переносится на следующий четверг</b>.\n"
+        "Например, если вы заработали 15 000 рублей — 10 000 вы получите в этот четверг, а оставшиеся 5 000 — в следующий.\n\n"
         "<b>📌 Важно!</b>\n"
         "Перед публикацией вашего рекламного ролика обязательно заходите в раздел «Другие задания» → «Tik Tok».\n"
         "Если в инструкции написано, что публикация роликов Tik Tok на сегодняшний день (дата) закрыта, то не выкладывайте ролик!\n"
@@ -331,6 +359,7 @@ async def cmd_tiktok(message: Message):
         "Удачи в творчестве! 🎥"
     )
     await message.answer(text, parse_mode="HTML")
+
 
 # ---------- /support ----------
 @router.message(Command("support"))
@@ -344,6 +373,7 @@ async def cmd_support(message: Message, state: FSMContext):
         "1. Подробно опишите вашу проблему:",
         parse_mode="HTML"
     )
+
 
 @router.message(SupportForm.problem)
 async def process_support(message: Message, state: FSMContext):
@@ -369,10 +399,11 @@ async def process_support(message: Message, state: FSMContext):
 
     await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
+
 # ---------- Реферальная система ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
-    logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id} (@{message.from_user.username}) нажал на кнопку")
+    logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id}")
     try:
         text = (
             "📢 Реферальная система\n\n"
@@ -394,14 +425,13 @@ async def referral_info(message: Message):
         kb.button(text="👥 Пригласить друга", callback_data="referral:invite")
         kb.adjust(2)
         await message.answer(text, reply_markup=kb.as_markup())
-        logger.info(f"✅ РЕФЕРАЛКА: сообщение отправлено {message.from_user.id}")
     except Exception as e:
         logger.error(f"❌ РЕФЕРАЛКА ошибка: {e}")
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
+
 @router.callback_query(F.data == "referral:back")
 async def referral_back(callback: CallbackQuery):
-    logger.info(f"🔄 РЕФЕРАЛКА: назад {callback.from_user.id}")
     try:
         await callback.message.delete()
         user = get_user(callback.from_user.id)
@@ -412,9 +442,9 @@ async def referral_back(callback: CallbackQuery):
         logger.error(f"❌ Ошибка referral_back: {e}")
         await callback.answer("Ошибка", show_alert=True)
 
+
 @router.callback_query(F.data == "referral:invite")
 async def referral_invite(callback: CallbackQuery):
-    logger.info(f"📨 РЕФЕРАЛКА: пригласить {callback.from_user.id}")
     try:
         user_id = callback.from_user.id
         user = get_user(user_id)
@@ -432,10 +462,10 @@ async def referral_invite(callback: CallbackQuery):
         )
         await callback.message.answer(invite_text)
         await callback.answer("Текст приглашения отправлен в чат.", show_alert=True)
-        logger.info(f"✅ РЕФЕРАЛКА: приглашение отправлено {user_id}")
     except Exception as e:
         logger.error(f"❌ Ошибка referral_invite: {e}")
         await callback.answer("Ошибка", show_alert=True)
+
 
 # ---------- Регистрация ----------
 @router.message(Command("reg"))
@@ -452,6 +482,7 @@ async def start_registration(message: Message, state: FSMContext):
     await state.set_state(RegForm.name)
     await message.answer("Отлично, задам вам пару вопросов.\n1. Ваше имя?", reply_markup=ReplyKeyboardRemove())
 
+
 @router.message(RegForm.name)
 async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
@@ -466,11 +497,13 @@ async def process_name(message: Message, state: FSMContext):
     await state.set_state(RegForm.timezone)
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
+
 @router.message(RegForm.timezone)
 async def process_timezone(message: Message, state: FSMContext):
     await state.update_data(timezone=message.text.strip())
     await state.set_state(RegForm.city)
     await message.answer("4. В каком городе проживаете? (Для отправки ближайших отзывов)")
+
 
 @router.message(RegForm.city)
 async def process_city(message: Message, state: FSMContext):
@@ -481,6 +514,7 @@ async def process_city(message: Message, state: FSMContext):
         "Если нет, просто напишите 0.\n\n"
         "⚠️ Внимание: указание неверного username может привести к тому, что вы не получите реферальный бонус."
     )
+
 
 @router.message(RegForm.referrer)
 async def process_referrer(message: Message, state: FSMContext):
@@ -498,11 +532,13 @@ async def process_referrer(message: Message, state: FSMContext):
         "Если не хотите указывать сейчас, просто напишите 0)"
     )
 
+
 @router.message(RegForm.phone_card)
 async def process_phone_card(message: Message, state: FSMContext):
     await state.update_data(phone_card=message.text.strip())
     await state.set_state(RegForm.bank)
     await message.answer("7. Банк?")
+
 
 @router.message(RegForm.bank)
 async def process_bank(message: Message, state: FSMContext):
@@ -522,6 +558,7 @@ async def process_bank(message: Message, state: FSMContext):
         "Хорошей работы и больших заработков!",
         reply_markup=main_menu_keyboard(is_registered=True)
     )
+
 
 # ---------- Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
@@ -596,6 +633,7 @@ async def show_my_referrals(message: Message, state: FSMContext):
     text = build_page_text(data, 0, PAGE_SIZE)
     await message.answer(text, reply_markup=kb.as_markup())
 
+
 def build_page_text(data, page, page_size):
     start = page * page_size
     end = start + page_size
@@ -604,6 +642,7 @@ def build_page_text(data, page, page_size):
     for name, username, status in page_items:
         lines.append(f"{name} (@{username}) – {status}")
     return "\n".join(lines)
+
 
 @router.callback_query(F.data.startswith("ref_nav:"))
 async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
@@ -630,8 +669,8 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
     await callback.answer()
 
-# ============ ДРУГИЕ ЗАДАНИЯ ============
 
+# ============ ДРУГИЕ ЗАДАНИЯ ============
 @router.message(F.text == "🎯 Другие задания")
 async def other_tasks(message: Message):
     kb = InlineKeyboardBuilder()
@@ -640,7 +679,7 @@ async def other_tasks(message: Message):
     kb.adjust(1)
     await message.answer("Выберите задание:", reply_markup=kb.as_markup())
 
-# ---------- Tik Tok: показ видео и правил (с проверкой остановки) ----------
+
 @router.callback_query(F.data == "task_tiktok")
 async def tiktok_task(callback: CallbackQuery):
     try:
@@ -695,7 +734,7 @@ async def tiktok_task(callback: CallbackQuery):
         logger.error(f"Ошибка отправки видео Tik Tok: {e}")
         await callback.message.answer(rules, parse_mode="HTML")
 
-# ---------- Отчет Tik Tok (сначала описание и кнопка) ----------
+
 @router.callback_query(F.data == "report_tiktok")
 async def report_tiktok_intro(callback: CallbackQuery):
     try:
@@ -721,6 +760,7 @@ async def report_tiktok_intro(callback: CallbackQuery):
     kb.button(text="📝 Перейти к заполнению формы", callback_data="report_tiktok_form")
     await callback.message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
+
 @router.callback_query(F.data == "report_tiktok_form")
 async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
     try:
@@ -728,9 +768,8 @@ async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
     except:
         pass
     await state.set_state(TikTokReport.account_name)
-    await callback.message.answer(
-        "1. Название вашего аккаунта Tik Tok:"
-    )
+    await callback.message.answer("1. Название вашего аккаунта Tik Tok:")
+
 
 @router.message(TikTokReport.account_name)
 async def process_tiktok_account(message: Message, state: FSMContext):
@@ -744,21 +783,25 @@ async def process_tiktok_account(message: Message, state: FSMContext):
         "На скриншоте ничего нельзя замазывать."
     )
 
+
 @router.message(TikTokReport.screenshot_profile, F.photo)
 async def process_tiktok_screenshot_profile(message: Message, state: FSMContext):
     await state.update_data(screenshot_profile=message.photo[-1].file_id)
     await state.set_state(TikTokReport.video_link)
     await message.answer("3. Отправьте ссылку на ролик, за который хотите получить выплату:")
 
+
 @router.message(TikTokReport.screenshot_profile)
 async def process_tiktok_screenshot_profile_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота профиля.")
+
 
 @router.message(TikTokReport.video_link)
 async def process_tiktok_video_link(message: Message, state: FSMContext):
     await state.update_data(video_link=message.text.strip())
     await state.set_state(TikTokReport.screenshot_views)
     await message.answer("4. Отправьте скриншот ролика, где видно количество просмотров.")
+
 
 @router.message(TikTokReport.screenshot_views, F.photo)
 async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
@@ -794,15 +837,17 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
                 photo=data['screenshot_views'],
                 message_thread_id=TIKTOK_REPORT_THREAD_ID or None
             )
-        logger.info(f"✅ Отчет Tik Tok отправлен в беседу {TIKTOK_REPORT_CHAT_ID}")
+        logger.info(f"✅ Отчет Tik Tok отправлен")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
 
     await message.answer("✅ Отчет отправлен! Менеджер проверит его в ближайшее время.")
 
+
 @router.message(TikTokReport.screenshot_views)
 async def process_tiktok_screenshot_views_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
+
 
 # ---------- СОТРУДНИЧЕСТВО ----------
 @router.message(F.text == "🤝 Сотрудничество с NC")
@@ -824,6 +869,7 @@ async def collaboration_start(message: Message):
     kb.button(text="📝 Перейти к заполнению формы", callback_data="collaboration_form")
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
+
 @router.callback_query(F.data == "collaboration_form")
 async def collaboration_form_start(callback: CallbackQuery, state: FSMContext):
     try:
@@ -838,6 +884,7 @@ async def collaboration_form_start(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
+
 @router.message(CollaborationForm.platforms)
 async def collaboration_platforms(message: Message, state: FSMContext):
     await state.update_data(platforms=message.text.strip())
@@ -846,6 +893,7 @@ async def collaboration_platforms(message: Message, state: FSMContext):
         "2. Какое количество отзывов требуется на каждую платформу?\n"
         "Укажите в формате: Яндекс – 50, Google – 30, и т.д."
     )
+
 
 @router.message(CollaborationForm.counts)
 async def collaboration_counts(message: Message, state: FSMContext):
@@ -856,6 +904,7 @@ async def collaboration_counts(message: Message, state: FSMContext):
         "Например: какие именно объекты, какие требования, есть ли фото для прикрепления, и т.д."
     )
 
+
 @router.message(CollaborationForm.description)
 async def collaboration_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text.strip())
@@ -865,6 +914,7 @@ async def collaboration_description(message: Message, state: FSMContext):
         "Если заказываете у нас – стоимость 35₽ за отзыв.\n"
         "Напишите: 'Заказываем у NC' или 'Отправляем сами'."
     )
+
 
 @router.message(CollaborationForm.texts)
 async def collaboration_texts(message: Message, state: FSMContext):
@@ -887,7 +937,7 @@ async def collaboration_texts(message: Message, state: FSMContext):
             message_thread_id=COLLABORATION_THREAD_ID or None,
             parse_mode="HTML"
         )
-        logger.info(f"✅ Заявка на сотрудничество отправлена в беседу {COLLABORATION_CHAT_ID}")
+        logger.info(f"✅ Заявка на сотрудничество отправлена")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки заявки на сотрудничество: {e}")
 
