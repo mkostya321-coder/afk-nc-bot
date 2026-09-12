@@ -19,7 +19,6 @@ from bot.helpers import (
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
-# Статусы, при которых строка НЕ публикуется (занята или прошла)
 BLOCKED_STATUSES = (
     "в работе",
     "на модерации",
@@ -50,7 +49,6 @@ def get_client():
 
 
 async def retry_api_call(func, *args, max_attempts=8, **kwargs):
-    """Повторяет вызов при ошибке 429 с экспоненциальной задержкой."""
     for attempt in range(1, max_attempts + 1):
         try:
             return func(*args, **kwargs)
@@ -73,7 +71,8 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
         "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу",
-        "32топ": "32ТОП", "zoon": "ZOON"
+        "32топ": "32ТОП", "zoon": "ZOON",
+        "яу": "Яндекс Услуги", "яб": "Яндекс Браузер", "h": "HH.RU"
     }
     pretty_name = platform_names.get(platform, platform)
     post_text = (
@@ -96,6 +95,7 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
 
 async def monitor_schedule(bot):
     logger.info("📅 Планировщик слотов запущен")
+    day_closed_for = None
     while True:
         try:
             client = get_client()
@@ -107,7 +107,10 @@ async def monitor_schedule(bot):
             spreadsheet = client.open_by_key(SHEET_ID)
             worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
+            today = now.date()
             logger.info(f"🔍 Проверка в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
+
+            after_close = (now.hour == 23 and now.minute >= 30) or (now.hour < 4) or (now.hour == 4 and now.minute < 30)
 
             for sheet in worksheets:
                 sheet_name = sheet.title
@@ -126,46 +129,46 @@ async def monitor_schedule(bot):
                     await asyncio.sleep(0.3)
                     continue
 
-                # === СБОР СТРОК ДЛЯ ПУБЛИКАЦИИ ===
                 to_publish = []
-                for row_idx, row in enumerate(records[1:], start=2):
-                    if len(row) < 8:
-                        continue
-                    date_str = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
-                    time_str = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
-                    if not date_str or not time_str:
-                        continue
+                if not after_close:
+                    for row_idx, row in enumerate(records[1:], start=2):
+                        if len(row) < 8:
+                            continue
+                        date_str = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
+                        time_str = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
+                        if not date_str or not time_str:
+                            continue
 
-                    flag_first = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
-                    flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
-                    flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
-                    flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
+                        flag_first = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
+                        flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
+                        flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
+                        flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
 
-                    if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888", "7"):
-                        continue
+                        if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888", "7"):
+                            continue
 
-                    status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
-                    executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
+                        status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+                        executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
-                    if status in BLOCKED_STATUSES:
-                        continue
-                    if executor:
-                        continue
+                        if status in BLOCKED_STATUSES:
+                            continue
+                        if executor:
+                            continue
 
-                    try:
-                        slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
-                        slot_time = moscow_tz.localize(slot_time)
-                    except:
-                        continue
-                    if now >= slot_time:
-                        to_publish.append((row_idx, row))
+                        try:
+                            slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
+                            slot_time = moscow_tz.localize(slot_time)
+                        except:
+                            continue
+                        if now >= slot_time:
+                            to_publish.append((row_idx, row))
 
                 if not to_publish:
                     logger.info(f"ℹ️ Нет строк на '{sheet_name}'")
                     await asyncio.sleep(0.3)
                     continue
 
-                # === ИЩЕМ АКТИВНЫЙ СЛОТ ЭТОЙ ПЛАТФОРМЫ ===
+                # Ищем активный слот этой платформы
                 existing_msg_id = None
                 for mid, slot in active_slots.items():
                     if slot.get("platform") == platform and slot.get("count", 0) > 0:
@@ -178,7 +181,6 @@ async def monitor_schedule(bot):
                 time_str = first_row[mapping["time_col"]-1].strip()
 
                 if existing_msg_id:
-                    # Дополняем существующий
                     slot = active_slots[existing_msg_id]
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
                     if not new_rows:
@@ -198,7 +200,7 @@ async def monitor_schedule(bot):
                         )
                         logger.info(f"✅ Слот {platform} дополнен до {slot['count']} шт")
                     except Exception as e:
-                        logger.error(f"❌ Ошибка edit: {e}")
+                        logger.warning(f"⚠️ Не удалось отредактировать сообщение слота: {e}")
 
                     batch = []
                     for row_idx in new_rows:
@@ -215,7 +217,6 @@ async def monitor_schedule(bot):
                         logger.error(f"❌ Q/S: {e}")
 
                 else:
-                    # Новый слот
                     new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
@@ -256,9 +257,10 @@ async def monitor_schedule(bot):
             # Переопубликация
             await _check_republish(bot, client, now)
 
-            # Закрытие в 23:30
-            if now.hour == 23 and now.minute >= 30:
+            # Закрытие в 23:30 — ОДИН РАЗ В ДЕНЬ
+            if now.hour == 23 and now.minute >= 30 and day_closed_for != today:
                 await _close_day(bot, client, now)
+                day_closed_for = today
 
         except Exception as e:
             logger.error(f"❌ Ошибка планировщика: {e}", exc_info=True)
@@ -492,6 +494,7 @@ async def update_stats_from_sheet_once():
                             "доктору": "doctoru", "докдок": "dokdok",
                             "про докторов": "prodoctors", "докту": "doctu",
                             "32топ": "top32", "zoon": "zoon",
+                            "яу": "yau", "яб": "yab", "h": "hh",
                         }
                         fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -515,6 +518,7 @@ async def update_stats_from_sheet_once():
                             "доктору": "doctoru", "докдок": "dokdok",
                             "про докторов": "prodoctors", "докту": "doctu",
                             "32топ": "top32", "zoon": "zoon",
+                            "яу": "yau", "яб": "yab", "h": "hh",
                         }
                         fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -540,6 +544,7 @@ async def update_stats_from_sheet_once():
                                 "доктору": "doctoru", "докдок": "dokdok",
                                 "про докторов": "prodoctors", "докту": "doctu",
                                 "32топ": "top32", "zoon": "zoon",
+                                "яу": "yau", "яб": "yab", "h": "hh",
                             }
                             fp = field_map.get(platform)
                             if fp:
@@ -572,7 +577,7 @@ async def update_stats_from_sheet_once():
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
-                       doctu_passed, top32_passed, zoon_passed
+                       doctu_passed, top32_passed, zoon_passed, yau_passed, yab_passed, hh_passed
                 FROM users
             """)
             for ur in cur.fetchall():
@@ -583,7 +588,9 @@ async def update_stats_from_sheet_once():
                     ur[5] * PRICES.get("вк", 0) + ur[6] * PRICES.get("отзовик", 0) +
                     ur[7] * PRICES.get("доктору", 0) + ur[8] * PRICES.get("докдок", 0) +
                     ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("докту", 0) +
-                    ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0)
+                    ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0) +
+                    ur[13] * PRICES.get("яу", 0) + ur[14] * PRICES.get("яб", 0) +
+                    ur[15] * PRICES.get("h", 0)
                 )
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
             conn.commit()
@@ -646,6 +653,7 @@ async def mark_as_paid_in_table(user_ids: list):
         logger.error(f"❌ mark_as_paid: {e}")
 
 
+# ============ АВТООЧИСТКА КАНАЛА В 4:30 МСК ============
 async def cleanup_channel(bot):
     logger.info("🧹 Автоочистка канала (4:30 МСК)")
     last_cleanup_date = None
@@ -663,13 +671,16 @@ async def cleanup_channel(bot):
                 for msg in old:
                     try:
                         await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
-                        delete_channel_message(msg["id"])
                         deleted += 1
                         await asyncio.sleep(0.3)
                     except Exception as e:
                         logger.warning(f"⚠️ {msg['message_id']}: {e}")
-                        delete_channel_message(msg["id"])
                         failed += 1
+                    finally:
+                        try:
+                            delete_channel_message(msg["id"])
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка удаления из БД {msg['id']}: {e}")
                 logger.info(f"✅ Удалено {deleted}, не удалось {failed}")
                 active_slots.clear()
                 last_cleanup_date = today_date
