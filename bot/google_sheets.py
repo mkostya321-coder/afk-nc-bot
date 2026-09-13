@@ -280,6 +280,15 @@ async def _check_republish(bot, client, now):
         if (now - publish_time).total_seconds() < 7200:
             continue
 
+        # ФИКС: если mapping потерян — восстанавливаем
+        slot_mapping = slot.get("mapping")
+        if not slot_mapping or "status_col" not in slot_mapping:
+            platform = slot.get("platform", "яндекс")
+            slot_mapping = get_column_mapping(platform)
+            slot["mapping"] = slot_mapping
+            active_slots[msg_id] = slot
+            logger.warning(f"⚠️ mapping восстановлен для слота {msg_id}, платформа {platform}")
+
         sheet_title = slot.get("sheet_title")
         try:
             sheet = spreadsheet.worksheet(sheet_title)
@@ -287,12 +296,13 @@ async def _check_republish(bot, client, now):
         except:
             continue
 
-        slot_mapping = slot.get("mapping")
         available = []
         for row_idx in slot["row_ids"]:
             if row_idx - 1 >= len(records):
                 continue
             row = records[row_idx - 1]
+            if not row:
+                continue
             status = row[slot_mapping["status_col"]-1].strip().lower() if len(row) >= slot_mapping["status_col"] else ""
             executor = row[slot_mapping["executor_col"]-1].strip() if len(row) >= slot_mapping["executor_col"] else ""
             if status in BLOCKED_STATUSES:
@@ -378,6 +388,8 @@ async def _close_day(bot, client, now):
                 if row_idx - 1 >= len(records):
                     continue
                 row = records[row_idx - 1]
+                if not row:
+                    continue
                 j_val = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
                 col_j = chr(64 + mapping["status_col"])
                 col_k = chr(64 + mapping["executor_col"])
