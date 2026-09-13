@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from flask import Flask, Response
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.exceptions import TelegramBadRequest
 import pytz
 from bot.config import (
     BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH,
@@ -43,7 +44,7 @@ def run_flask():
 
 
 async def validate_chat_ids(bot):
-    """Проверяем на старте все chat_id. Если что-то не так — громкий лог."""
+    """Проверяем на старте все chat_id. Отдельно ловим 'chat not found'."""
     checks = {
         "CHANNEL_ID": CHANNEL_ID,
         "LOG_CHANNEL_ID": LOG_CHANNEL_ID,
@@ -60,8 +61,17 @@ async def validate_chat_ids(bot):
         try:
             chat = await bot.get_chat(cid)
             logger.info(f"✅ {name} = {cid} ({chat.title or chat.username or chat.type})")
+        except TelegramBadRequest as e:
+            err = str(e).lower()
+            if "chat not found" in err:
+                logger.error(f"❌ {name} = {cid} — CHAT NOT FOUND. Проверь переменную окружения!")
+            else:
+                logger.error(f"❌ {name} = {cid} — {e}")
         except Exception as e:
-            logger.error(f"❌ {name} = {cid} — ОШИБКА: {e}")
+            logger.warning(
+                f"⚠️ {name} = {cid} — chat существует, но aiogram не смог распарсить ответ "
+                f"({type(e).__name__}: {e}). Проверь версию aiogram."
+            )
 
 
 async def scheduler(bot):
