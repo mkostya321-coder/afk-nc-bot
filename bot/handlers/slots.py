@@ -22,11 +22,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
-SNIPPET_WARNING = (
-    "⚠️ ПРИМЕР КАК ДОЛЖЕН ВЫГЛЯДЕТЬ СКРИНШОТ КОТОРЫЙ Я БУДУ ОТ ВАС ЖДАТЬ!\n"
-    "Скриншот в другом формате считается выполненным не по ТЗ и отзыв не будет оплачен."
-)
-
 SNIPPET_REQ = (
     "📌 Требования к скриншоту:\n"
     "Скриншот должен быть сделан в свернутом приложении (не в браузере).\n"
@@ -42,23 +37,23 @@ PIN_REMINDER = "📸 Инструкция по скриншотам — закр
 
 PLATFORM_TEMPLATES = {
     "яндекс": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "google": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "instruction": "🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "2гис": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
+        "instruction": "🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "авито": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 Авито\n\n"
+            "🔥 Авито\n\n"
             "1. Поиск объявлений.\n"
             "   – Найти и изучить похожие объявления (критерии уточнить у администратора).\n"
             "2. Диалог с продавцом.\n"
@@ -76,7 +71,7 @@ PLATFORM_TEMPLATES = {
     },
     "вк": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 ВКонтакте\n\n"
+            "🔥 ВКонтакте\n\n"
             "1. Переходим по ссылке.\n2. Переписываем текст.\n\n"
             "На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.\n"
             "ДЛЯ 90% прохода:\n"
@@ -86,23 +81,23 @@ PLATFORM_TEMPLATES = {
         "warning": WARNING
     },
     "докдок": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "докту": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "instruction": "🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "32топ": {
-        "instruction": SNIPPET_WARNING + "\n\n🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "instruction": "🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ,
         "warning": WARNING
     },
     "zoon": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 ZOON\n\n"
+            "🔥 ZOON\n\n"
             "1. Переходим по ссылке, прокладываем маршрут и просматриваем всю информацию.\n"
             "2. Через 30 минут оставляем отзыв."
         ),
@@ -111,7 +106,7 @@ PLATFORM_TEMPLATES = {
     },
     "яу": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 Яндекс Услуги\n\n"
+            "🔥 Яндекс Услуги\n\n"
             "1. Переходим по ссылке.\n"
             "2. Оставляем отзыв."
         ),
@@ -120,7 +115,7 @@ PLATFORM_TEMPLATES = {
     },
     "яб": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 Яндекс Браузер\n\n"
+            "🔥 Яндекс Браузер\n\n"
             "1. Переходим по ссылке.\n"
             "2. Открывается сайт компании — в нижнем или верхнем правом углу жмём 3 точки.\n"
             "3. Жмём на количество отзывов и оставляем отзыв с текстом."
@@ -130,7 +125,7 @@ PLATFORM_TEMPLATES = {
     },
     "h": {
         "instruction": (
-            SNIPPET_WARNING + "\n\n🔥 HH.RU\n\n"
+            "🔥 HH.RU\n\n"
             "1. Зайти по ссылке.\n"
             "2. Просматриваем фото/видео, лайкаем хорошие отзывы.\n"
             "3. Оставить отзыв."
@@ -588,7 +583,6 @@ async def select_review(callback: CallbackQuery):
         await callback.answer("❌ Уже работаете.", show_alert=True)
         return
 
-    # ФИКС: mapping с fallback
     platform = request.get("platform", "яндекс")
     mapping = get_safe_mapping(request, platform)
     slot_requests[user_id] = request
@@ -638,7 +632,6 @@ async def select_review(callback: CallbackQuery):
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
 
-    # ФИКС: fallback mapping
     if not mapping or "status_col" not in mapping:
         mapping = get_column_mapping(platform)
         request["mapping"] = mapping
@@ -663,8 +656,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         minus = row[mapping["text_minus_col"]-1] if len(row) >= mapping["text_minus_col"] else ""
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
+
+        # ВАЖНО: сначала требования к скриншоту, потом всё остальное
         info_msg = (
-            f"{SNIPPET_WARNING}\n\n"
+            f"{SNIPPET_REQ}\n\n"
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
             f"Направление: {doctor_direction}\n\n"
@@ -673,7 +668,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"Кол-во звезд: {stars}\n"
             f"Платформа: {platform_name}\n"
             f"Ссылка на платформу: {link}\n\n"
-            f"{SNIPPET_REQ}\n\n"
             f"<b>❗ Важно!</b>\n"
             f"Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
             f"Если нет даты посещения, укажите в течение последних 7 дней.\n\n"
@@ -718,9 +712,11 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
+        # ВАЖНО: сначала пример/требования к скриншоту (extra_text),
+        # затем уже инструкция по платформе и остальное
         final_msg = (
-            f"{instruction_text}\n\n"
             f"{extra_text}\n\n"
+            f"{instruction_text}\n\n"
             f"⭐ Количество звёзд: {stars}\n"
             f"👥 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
             f"{gender_text}\n\n"
