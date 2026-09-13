@@ -589,12 +589,14 @@ async def update_stats_from_sheet_once():
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
+        # === ФИКС: учитываем admin_topup при пересчёте payout ===
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
-                       doctu_passed, top32_passed, zoon_passed, yau_passed, yab_passed, hh_passed
+                       doctu_passed, top32_passed, zoon_passed, yau_passed, yab_passed, hh_passed,
+                       admin_topup
                 FROM users
             """)
             for ur in cur.fetchall():
@@ -609,6 +611,8 @@ async def update_stats_from_sheet_once():
                     ur[13] * PRICES.get("яу", 0) + ur[14] * PRICES.get("яб", 0) +
                     ur[15] * PRICES.get("h", 0)
                 )
+                admin_topup = ur[16] or 0
+                total += admin_topup  # ← добавляем пополнение админа
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
             conn.commit()
 
