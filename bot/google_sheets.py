@@ -168,7 +168,6 @@ async def monitor_schedule(bot):
                     await asyncio.sleep(0.3)
                     continue
 
-                # Ищем активный слот этой платформы
                 existing_msg_id = None
                 for mid, slot in active_slots.items():
                     if slot.get("platform") == platform and slot.get("count", 0) > 0:
@@ -254,10 +253,8 @@ async def monitor_schedule(bot):
 
                 await asyncio.sleep(0.5)
 
-            # Переопубликация
             await _check_republish(bot, client, now)
 
-            # Закрытие в 23:30 — ОДИН РАЗ В ДЕНЬ
             if now.hour == 23 and now.minute >= 30 and day_closed_for != today:
                 await _close_day(bot, client, now)
                 day_closed_for = today
@@ -280,7 +277,6 @@ async def _check_republish(bot, client, now):
         if (now - publish_time).total_seconds() < 7200:
             continue
 
-        # ФИКС: если mapping потерян — восстанавливаем
         slot_mapping = slot.get("mapping")
         if not slot_mapping or "status_col" not in slot_mapping:
             platform = slot.get("platform", "яндекс")
@@ -384,6 +380,7 @@ async def _close_day(bot, client, now):
                 continue
 
             batch = []
+            to_format = []
             for row_idx in assigned_rows:
                 if row_idx - 1 >= len(records):
                     continue
@@ -401,12 +398,20 @@ async def _close_day(bot, client, now):
                     batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                     batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
                     batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
+                    to_format.append((row_idx, col_i))
 
             if batch:
                 try:
                     for i in range(0, len(batch), 50):
                         await retry_api_call(sheet.batch_update, batch[i:i+50])
                         await asyncio.sleep(0.5)
+                    for row_idx, col_i in to_format:
+                        try:
+                            sheet.format(f"{col_i}{row_idx}", {
+                                "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
+                            })
+                        except Exception as e:
+                            logger.warning(f"⚠️ Не удалось закрасить {col_i}{row_idx}: {e}")
                 except Exception as e:
                     logger.error(f"❌ Закрытие: {e}")
 
