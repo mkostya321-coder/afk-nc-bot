@@ -208,11 +208,13 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
-                # Публикация / дополнение слота
+                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ СЛОТА ============
                 existing_msg_id = None
-                for mid, slot in active_slots.items():
-                    if slot.get("platform") == platform and slot.get("count", 0) > 0:
+                slot = None
+                for mid, s in active_slots.items():
+                    if s.get("platform") == platform and s.get("count", 0) > 0:
                         existing_msg_id = mid
+                        slot = s
                         break
 
                 row_ids = [r[0] for r in to_publish]
@@ -220,12 +222,50 @@ async def monitor_schedule(bot):
                 date_str = first_row[mapping["date_col"]-1].strip()
                 time_str = first_row[mapping["time_col"]-1].strip()
 
-                if existing_msg_id:
-                    slot = active_slots[existing_msg_id]
+                # Если слот уже есть и новых строк нет — проверяем, жив ли он в канале
+                if existing_msg_id is not None and slot is not None:
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
                     if not new_rows:
-                        await asyncio.sleep(0.3)
-                        continue
+                        slot_alive = False
+                        try:
+                            text_check, kb_check = build_slot_message(
+                                platform, slot.get("count", 0),
+                                slot.get("date") or "", slot.get("time") or ""
+                            )
+                            await bot.edit_message_text(
+                                chat_id=CHANNEL_ID, message_id=existing_msg_id,
+                                text=text_check, reply_markup=kb_check,
+                                parse_mode=ParseMode.HTML
+                            )
+                            slot_alive = True
+                        except Exception as e:
+                            err = str(e).lower()
+                            if "message is not modified" in err:
+                                slot_alive = True
+                            else:
+                                logger.warning(
+                                    f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
+                                    f"Удаляю запись и публикую заново."
+                                )
+
+                        if slot_alive:
+                            logger.info(
+                                f"ℹ️ '{sheet_name}' (platform={platform}): все {len(row_ids)} строк "
+                                f"уже в активном слоте (msg {existing_msg_id}, count {slot.get('count', 0)})"
+                            )
+                            await asyncio.sleep(0.3)
+                            continue
+                        else:
+                            try:
+                                del active_slots[existing_msg_id]
+                            except KeyError:
+                                pass
+                            existing_msg_id = None
+                            slot = None
+
+                if existing_msg_id is not None and slot is not None:
+                    # Дополняем существующий слот
+                    new_rows = [r for r in row_ids if r not in slot["row_ids"]]
                     slot["row_ids"].extend(new_rows)
                     slot["count"] = len(slot["row_ids"])
                     slot["date"] = date_str
@@ -255,8 +295,8 @@ async def monitor_schedule(bot):
                             await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
-
                 else:
+                    # Публикуем новый слот
                     new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
