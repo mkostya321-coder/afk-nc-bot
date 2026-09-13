@@ -18,6 +18,8 @@ router = Router()
 
 
 def log_action(message: Message, action: str):
+    if not LOG_CHANNEL_ID:
+        return
     try:
         text = f"👤 @{message.from_user.username or message.from_user.id} ({message.from_user.id})\n" \
                f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n" \
@@ -421,7 +423,8 @@ async def reset_balance(message: Message):
                 admin_topup = 0,
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
-                doctu_passed=0, top32_passed=0, zoon_passed=0
+                doctu_passed=0, top32_passed=0, zoon_passed=0,
+                yau_passed=0, yab_passed=0, hh_passed=0
                 WHERE user_id IN ({placeholders})
             """, user_ids)
             conn.commit()
@@ -455,14 +458,17 @@ async def cmd_payout_report(message: Message):
         max_len = 4000
         from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
 
-        for i in range(0, len(full_text), max_len):
-            chunk = full_text[i:i+max_len]
-            await message.bot.send_message(
-                chat_id=REPORT_CHAT_ID,
-                text=chunk,
-                message_thread_id=REPORT_THREAD_ID or None,
-                parse_mode="HTML"
-            )
+        if not REPORT_CHAT_ID:
+            await message.answer("⚠️ REPORT_CHAT_ID не задан в переменных окружения — отчёт некуда отправить.")
+        else:
+            for i in range(0, len(full_text), max_len):
+                chunk = full_text[i:i+max_len]
+                await message.bot.send_message(
+                    chat_id=REPORT_CHAT_ID,
+                    text=chunk,
+                    message_thread_id=REPORT_THREAD_ID or None,
+                    parse_mode="HTML"
+                )
 
         if user_ids:
             try:
@@ -477,7 +483,7 @@ async def cmd_payout_report(message: Message):
                 cur = conn.cursor()
                 placeholders = ','.join(['?'] * len(user_ids))
                 cur.execute(f"""
-                    UPDATE users SET 
+                    UPDATE users SET
                         payout = 0,
                         admin_topup = 0,
                         yandex_passed = 0,
@@ -491,7 +497,10 @@ async def cmd_payout_report(message: Message):
                         prodoctors_passed = 0,
                         doctu_passed = 0,
                         top32_passed = 0,
-                        zoon_passed = 0
+                        zoon_passed = 0,
+                        yau_passed = 0,
+                        yab_passed = 0,
+                        hh_passed = 0
                     WHERE user_id IN ({placeholders})
                 """, user_ids)
                 conn.commit()
@@ -542,7 +551,11 @@ async def cmd_tiktok_pay(message: Message):
         f"💰 Сумма: {amount}₽\n"
         f"🕒 Выполнил: @{message.from_user.username} (ID: {message.from_user.id})"
     )
-    await message.bot.send_message(LOG_CHANNEL_ID, log_msg)
+    if LOG_CHANNEL_ID:
+        try:
+            await message.bot.send_message(LOG_CHANNEL_ID, log_msg)
+        except Exception as e:
+            logger.warning(f"Не удалось отправить лог Tik Tok: {e}")
     await message.answer(
         f"✅ Выплата за Tik Tok начислена!\n"
         f"Пользователь: @{user.get('tg_username', user_id)}\n"
@@ -564,10 +577,14 @@ async def cmd_stop_tiktok(message: Message):
         set_setting("tiktok_stop_date", date_str)
         await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.")
         log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
-        await message.bot.send_message(
-            LOG_CHANNEL_ID,
-            f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
-        )
+        if LOG_CHANNEL_ID:
+            try:
+                await message.bot.send_message(
+                    LOG_CHANNEL_ID,
+                    f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось отправить лог: {e}")
 
         users = get_all_registered_users()
         if users:
@@ -600,10 +617,14 @@ async def cmd_start_tiktok(message: Message):
         set_setting("tiktok_stop_date", "")
         await message.answer("✅ Участие в Tik Tok возобновлено.\nТеперь вы можете публиковать ролики и получать выплаты.")
         log_action(message, "Возобновлено участие в Tik Tok")
-        await message.bot.send_message(
-            LOG_CHANNEL_ID,
-            "▶️ Tik Tok открыт для публикаций. Все новые ролики оплачиваются."
-        )
+        if LOG_CHANNEL_ID:
+            try:
+                await message.bot.send_message(
+                    LOG_CHANNEL_ID,
+                    "▶️ Tik Tok открыт для публикаций. Все новые ролики оплачиваются."
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось отправить лог: {e}")
 
         users = get_all_registered_users()
         if users:
