@@ -4,29 +4,64 @@ from flask import Flask, Response
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 import pytz
-from bot.config import BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH
+from bot.config import (
+    BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH,
+    LOG_CHANNEL_ID, SCREENSHOT_CHANNEL_ID,
+    TIKTOK_REPORT_CHAT_ID, COLLABORATION_CHAT_ID, SUPPORT_CHAT_ID,
+    REQUIRED_CHANNEL_ID,
+)
 from bot.database import init_db, get_all_users_with_payout, save_channel_message
 from bot.google_sheets import (
     monitor_schedule, update_stats_from_sheet,
     mark_as_paid_in_table, cleanup_channel
 )
-from bot.handlers import user, admin, slots, referral
+from bot.handlers import user, admin, slots
 from bot.handlers.admin_advanced import router as admin_advanced_router
 from bot.middlewares import AutoMenuMiddleware
 from bot.username_checker import username_checker
 import sqlite3
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
 @app.route('/')
-def home(): return "Bot is running!"
+def home():
+    return "Bot is running!"
+
+
 @app.route('/health')
-def health(): return Response(status=200)
+def health():
+    return Response(status=200)
+
 
 def run_flask():
     port = int(os.environ.get("PORT", 80))
     app.run(host='0.0.0.0', port=port)
+
+
+async def validate_chat_ids(bot):
+    """Проверяем на старте все chat_id. Если что-то не так — громкий лог."""
+    checks = {
+        "CHANNEL_ID": CHANNEL_ID,
+        "LOG_CHANNEL_ID": LOG_CHANNEL_ID,
+        "SCREENSHOT_CHANNEL_ID": SCREENSHOT_CHANNEL_ID,
+        "REPORT_CHAT_ID": REPORT_CHAT_ID,
+        "TIKTOK_REPORT_CHAT_ID": TIKTOK_REPORT_CHAT_ID,
+        "COLLABORATION_CHAT_ID": COLLABORATION_CHAT_ID,
+        "SUPPORT_CHAT_ID": SUPPORT_CHAT_ID,
+    }
+    for name, cid in checks.items():
+        if not cid:
+            logger.warning(f"⚠️ {name} не задан — связанные функции работать не будут.")
+            continue
+        try:
+            chat = await bot.get_chat(cid)
+            logger.info(f"✅ {name} = {cid} ({chat.title or chat.username or chat.type})")
+        except Exception as e:
+            logger.error(f"❌ {name} = {cid} — ОШИБКА: {e}")
 
 
 async def scheduler(bot):
@@ -42,23 +77,26 @@ async def scheduler(bot):
         next_time = min(morning_target, evening_target)
         await asyncio.sleep((next_time - now).total_seconds())
         now_after = datetime.now(moscow_tz)
-        if now_after.hour == 8:
-            msg = await bot.send_message(
-                CHANNEL_ID,
-                "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. "
-                "Всем хорошего дня! Ожидайте сегодняшние слоты. "
-                "С уважением, команда NC 🤝"
-            )
-            save_channel_message(msg.message_id, CHANNEL_ID)
-        elif now_after.hour == 22 and now_after.minute == 30:
-            msg = await bot.send_message(
-                CHANNEL_ID,
-                "🌙 Сегодняшний рабочий день подошёл к концу. "
-                "Всем спасибо за работу! Кто ещё не отправил скриншоты — "
-                "успевайте до 23:59 МСК. Всем доброй ночи! "
-                "С уважением, команда NC 😴🌟"
-            )
-            save_channel_message(msg.message_id, CHANNEL_ID)
+        try:
+            if now_after.hour == 8:
+                msg = await bot.send_message(
+                    CHANNEL_ID,
+                    "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. "
+                    "Всем хорошего дня! Ожидайте сегодняшние слоты. "
+                    "С уважением, команда NC 🤝"
+                )
+                save_channel_message(msg.message_id, CHANNEL_ID)
+            elif now_after.hour == 22 and now_after.minute >= 30:
+                msg = await bot.send_message(
+                    CHANNEL_ID,
+                    "🌙 Сегодняшний рабочий день подошёл к концу. "
+                    "Всем спасибо за работу! Кто ещё не отправил скриншоты — "
+                    "успевайте до 23:59 МСК. Всем доброй ночи! "
+                    "С уважением, команда NC 😴🌟"
+                )
+                save_channel_message(msg.message_id, CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"❌ scheduler: {e}")
 
 
 async def weekly_payout_report(bot):
@@ -91,14 +129,17 @@ async def weekly_payout_report(bot):
                     user_ids.append(u['user_id'])
                 full_text = "\n".join(text_lines)
                 max_len = 4000
-                for i in range(0, len(full_text), max_len):
-                    chunk = full_text[i:i+max_len]
-                    await bot.send_message(
-                        chat_id=REPORT_CHAT_ID,
-                        text=chunk,
-                        message_thread_id=REPORT_THREAD_ID or None,
-                        parse_mode="HTML"
-                    )
+                if not REPORT_CHAT_ID:
+                    logger.warning("⚠️ REPORT_CHAT_ID не задан — пропускаю отправку отчёта.")
+                else:
+                    for i in range(0, len(full_text), max_len):
+                        chunk = full_text[i:i+max_len]
+                        await bot.send_message(
+                            chat_id=REPORT_CHAT_ID,
+                            text=chunk,
+                            message_thread_id=REPORT_THREAD_ID or None,
+                            parse_mode="HTML"
+                        )
                 if user_ids:
                     try:
                         await mark_as_paid_in_table(user_ids)
@@ -109,7 +150,7 @@ async def weekly_payout_report(bot):
                         cur = conn.cursor()
                         placeholders = ','.join(['?'] * len(user_ids))
                         cur.execute(f"""
-                            UPDATE users SET 
+                            UPDATE users SET
                                 payout = 0,
                                 admin_topup = 0,
                                 yandex_passed = 0,
@@ -123,17 +164,21 @@ async def weekly_payout_report(bot):
                                 prodoctors_passed = 0,
                                 doctu_passed = 0,
                                 top32_passed = 0,
-                                zoon_passed = 0
+                                zoon_passed = 0,
+                                yau_passed = 0,
+                                yab_passed = 0,
+                                hh_passed = 0
                             WHERE user_id IN ({placeholders})
                         """, user_ids)
                         conn.commit()
                     logging.info(f"✅ Обнулены балансы и passed-поля у {len(user_ids)} пользователей")
             else:
-                await bot.send_message(
-                    chat_id=REPORT_CHAT_ID,
-                    text="Сегодня нет пользователей, которым нужно выплатить вознаграждение.",
-                    message_thread_id=REPORT_THREAD_ID or None
-                )
+                if REPORT_CHAT_ID:
+                    await bot.send_message(
+                        chat_id=REPORT_CHAT_ID,
+                        text="Сегодня нет пользователей, которым нужно выплатить вознаграждение.",
+                        message_thread_id=REPORT_THREAD_ID or None
+                    )
         except Exception as e:
             logging.error(f"Ошибка еженедельного отчета: {e}")
 
@@ -153,6 +198,8 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(admin_advanced_router)
     dp.include_router(slots.router)
+
+    await validate_chat_ids(bot)
 
     asyncio.create_task(scheduler(bot))
     asyncio.create_task(monitor_schedule(bot))
