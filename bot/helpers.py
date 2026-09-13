@@ -12,7 +12,7 @@ PRICES = {
     "про докторов": 200,
     "докту": 100,
     "32топ": 125,
-    "zoon": 40,
+    "zoon": 50,
     "яу": 100,
     "яб": 100,
     "h": 50,
@@ -37,37 +37,71 @@ PLATFORM_ALIASES = {
 }
 
 SHEET_NAME_TO_PLATFORM = {
+    # === Основные листы (с расширенным сопоставлением) ===
     "ЯНДЕКС (К)": "яндекс",
+    "Яндекс (К)": "яндекс",
+    "ЯНДЕКС": "яндекс",
+    "Яндекс": "яндекс",
+    
     "2ГИС (Г)": "2гис",
+    "2гис (Г)": "2гис",
+    "2ГИС": "2гис",
+    "2гис": "2гис",
+    
     "google (С)": "google",
+    "Google (С)": "google",
+    "google": "google",
+    "Google": "google",
+    "GOOGLE": "google",
+    
     "АВИТО (А)": "авито",
+    " АВИТО (А)": "авито",
+    "Авито (А)": "авито",
+    "АВИТО": "авито",
+    "Авито": "авито",
+    
     "Продокторов (ПР)": "про докторов",
+    "Продокторов": "про докторов",
+    "про докторов": "про докторов",
+    
     "ВК (ВК)": "вк",
+    "ВК": "вк",
+    "вк": "вк",
+    
     "ДокДок (ДД)": "докдок",
+    "ДокДок": "докдок",
+    "докдок": "докдок",
+    
     "32Топ (Т)": "32топ",
+    "32Топ": "32топ",
+    "32топ": "32топ",
+    
     "Докту (ДК)": "докту",
+    "Докту": "докту",
+    "докту": "докту",
+    
     "ZOON (Z)": "zoon",
     "ZOON 2.0 (Z2)": "zoon",
+    "ZOON": "zoon",
+    "zoon": "zoon",
+    
+    # === Новые платформы ===
     "ЯНДЕКС УСЛУГИ (ЯУ)": "яу",
     "Яндекс Услуги (ЯУ)": "яу",
+    "Яндекс Услуги": "яу",
+    "ЯУ": "яу",
+    
     "ЯНДЕКС БРАУЗЕР (ЯБ)": "яб",
     "Яндекс Браузер (ЯБ)": "яб",
+    "Яндекс Браузер": "яб",
+    "ЯБ": "яб",
+    
     "HH.RU (H)": "h",
     "HH (H)": "h",
-    "ЯНДЕКС": "яндекс", "Яндекс": "яндекс", "yandex": "яндекс",
-    "2ГИС": "2гис", "2гис": "2гис",
-    "google": "google", "Google": "google", "GOOGLE": "google",
-    "АВИТО": "авито", "Авито": "авито", "avito": "авито",
-    "Продокторов": "про докторов", "про докторов": "про докторов", "prodoctors": "про докторов",
-    "ВК": "вк", "вк": "вк", "vk": "вк",
-    "ДокДок": "докдок", "докдок": "докдок",
-    "32Топ": "32топ", "32топ": "32топ", "32top": "32топ",
-    "Докту": "докту", "докту": "докту", "doctu": "докту",
-    "ZOON": "zoon", "ЗУН": "zoon", "zoon": "zoon",
-    "ZOON 2.0": "zoon",
-    "ЯУ": "яу", "Яндекс Услуги": "яу",
-    "ЯБ": "яб", "Яндекс Браузер": "яб",
-    "H": "h", "HH": "h", "HHRU": "h", "HH.RU": "h",
+    "HH.RU": "h",
+    "HHRU": "h",
+    "H": "h",
+    "HH": "h",
 }
 
 
@@ -102,16 +136,28 @@ def match_platform(raw_name: str):
 
 
 def platform_from_sheet_name(sheet_name: str):
+    # Точное совпадение
     key = sheet_name.strip()
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
     key_lower = key.lower()
     if key_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key_lower]
+
+    # По первому слову
     first_word = key.split()[0] if key.split() else key
     if first_word in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[first_word]
     first_word_lower = first_word.lower()
     if first_word_lower in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[first_word_lower]
+
+    # По родительской платформе в скобках
+    if "(" in key:
+        base = key.split("(")[0].strip()
+        if base in SHEET_NAME_TO_PLATFORM:
+            return SHEET_NAME_TO_PLATFORM[base]
+        if base.lower() in SHEET_NAME_TO_PLATFORM:
+            return SHEET_NAME_TO_PLATFORM[base.lower()]
+
     return None
