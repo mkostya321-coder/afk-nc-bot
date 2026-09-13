@@ -263,7 +263,11 @@ async def cmd_myotz(message: Message):
         f"ДокДок: {user.get('dokdok_total', 0)}\n"
         f"Про Докторов: {user.get('prodoctors_total', 0)}\n"
         f"ДокТу: {user.get('doctu_total', 0)}\n"
-        f"32ТОП: {user.get('top32_total', 0)}"
+        f"32ТОП: {user.get('top32_total', 0)}\n"
+        f"ZOON: {user.get('zoon_total', 0)}\n"
+        f"Яндекс Услуги: {user.get('yau_total', 0)}\n"
+        f"Яндекс Браузер: {user.get('yab_total', 0)}\n"
+        f"HH.RU: {user.get('hh_total', 0)}"
     )
     await message.answer(text)
 
@@ -318,7 +322,10 @@ async def cmd_money(message: Message):
         "• Про Докторов — 200₽\n"
         "• ДокТу — 100₽\n"
         "• 32ТОП — 125₽\n"
-        "• ZOON — 40₽\n\n"
+        "• ZOON — 50₽\n"
+        "• Яндекс Услуги — 100₽\n"
+        "• Яндекс Браузер — 100₽\n"
+        "• HH.RU — 50₽\n\n"
         "<b>📅 Когда выплата?</b>\n"
         "Все выплаты производятся <b>по четвергам</b>.\n"
         "В четверг вы получаете деньги за всё, что успели сделать <b>до вечера вторника (включительно)</b>.\n"
@@ -330,7 +337,7 @@ async def cmd_money(message: Message):
         "Пожалуйста, будьте внимательны: либо доделывайте все отзывы, либо отказывайтесь заранее!\n\n"
         "<b>📊 Лимиты на взятие отзывов:</b>\n"
         "На старте проекта для каждой платформы установлен лимит: <b>10 отзывов на человека за 24 часа</b>.\n"
-        "Лимит считается отдельно для каждой платформы (Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON).\n"
+        "Лимит считается отдельно для каждой платформы (Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, ЯУ, ЯБ, HH).\n"
         "Сброс лимита каждый день в <b>10:00 МСК</b>.\n"
         "Можно брать по частям: например, 3 + 5 + 2 = 10.\n"
         "Когда лимит достигнут — бот напишет, что на этой платформе больше взять нельзя, попробуйте другую.\n\n"
@@ -386,16 +393,19 @@ async def process_support(message: Message, state: FSMContext):
         f"📝 Проблема:\n{problem}"
     )
 
-    try:
-        await message.bot.send_message(
-            chat_id=SUPPORT_CHAT_ID,
-            text=report,
-            message_thread_id=SUPPORT_THREAD_ID or None,
-            parse_mode="HTML"
-        )
-        logger.info(f"✅ Заявка в поддержку отправлена в беседу {SUPPORT_CHAT_ID}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки заявки в поддержку: {e}")
+    if not SUPPORT_CHAT_ID:
+        logger.warning("⚠️ SUPPORT_CHAT_ID не задан — заявка в поддержку не отправлена.")
+    else:
+        try:
+            await message.bot.send_message(
+                chat_id=SUPPORT_CHAT_ID,
+                text=report,
+                message_thread_id=SUPPORT_THREAD_ID or None,
+                parse_mode="HTML"
+            )
+            logger.info(f"✅ Заявка в поддержку отправлена в {SUPPORT_CHAT_ID}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки заявки в поддержку: {e}")
 
     await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
@@ -818,28 +828,31 @@ async def process_tiktok_screenshot_views(message: Message, state: FSMContext):
         f"📸 Скриншот просмотров: (см. ниже)"
     )
 
-    try:
-        await message.bot.send_message(
-            chat_id=TIKTOK_REPORT_CHAT_ID,
-            text=report,
-            message_thread_id=TIKTOK_REPORT_THREAD_ID or None,
-            parse_mode="HTML"
-        )
-        if data.get('screenshot_profile'):
-            await message.bot.send_photo(
+    if not TIKTOK_REPORT_CHAT_ID:
+        logger.warning("⚠️ TIKTOK_REPORT_CHAT_ID не задан — отчёт не отправлен.")
+    else:
+        try:
+            await message.bot.send_message(
                 chat_id=TIKTOK_REPORT_CHAT_ID,
-                photo=data['screenshot_profile'],
-                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
+                text=report,
+                message_thread_id=TIKTOK_REPORT_THREAD_ID or None,
+                parse_mode="HTML"
             )
-        if data.get('screenshot_views'):
-            await message.bot.send_photo(
-                chat_id=TIKTOK_REPORT_CHAT_ID,
-                photo=data['screenshot_views'],
-                message_thread_id=TIKTOK_REPORT_THREAD_ID or None
-            )
-        logger.info(f"✅ Отчет Tik Tok отправлен")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
+            if data.get('screenshot_profile'):
+                await message.bot.send_photo(
+                    chat_id=TIKTOK_REPORT_CHAT_ID,
+                    photo=data['screenshot_profile'],
+                    message_thread_id=TIKTOK_REPORT_THREAD_ID or None
+                )
+            if data.get('screenshot_views'):
+                await message.bot.send_photo(
+                    chat_id=TIKTOK_REPORT_CHAT_ID,
+                    photo=data['screenshot_views'],
+                    message_thread_id=TIKTOK_REPORT_THREAD_ID or None
+                )
+            logger.info("✅ Отчет Tik Tok отправлен")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки отчета Tik Tok: {e}")
 
     await message.answer("✅ Отчет отправлен! Менеджер проверит его в ближайшее время.")
 
@@ -930,15 +943,18 @@ async def collaboration_texts(message: Message, state: FSMContext):
         f"✍️ Текста: {message.text.strip()}"
     )
 
-    try:
-        await message.bot.send_message(
-            chat_id=COLLABORATION_CHAT_ID,
-            text=report,
-            message_thread_id=COLLABORATION_THREAD_ID or None,
-            parse_mode="HTML"
-        )
-        logger.info(f"✅ Заявка на сотрудничество отправлена")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки заявки на сотрудничество: {e}")
+    if not COLLABORATION_CHAT_ID:
+        logger.warning("⚠️ COLLABORATION_CHAT_ID не задан — заявка не отправлена.")
+    else:
+        try:
+            await message.bot.send_message(
+                chat_id=COLLABORATION_CHAT_ID,
+                text=report,
+                message_thread_id=COLLABORATION_THREAD_ID or None,
+                parse_mode="HTML"
+            )
+            logger.info("✅ Заявка на сотрудничество отправлена")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки заявки на сотрудничество: {e}")
 
     await message.answer("✅ Ваша заявка отправлена! Менеджер свяжется с вами в ближайшее время.")
