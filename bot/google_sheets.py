@@ -108,7 +108,7 @@ async def monitor_schedule(bot):
             worksheets = spreadsheet.worksheets()
             now = datetime.now(moscow_tz)
             today = now.date()
-            logger.info(f"🔍 Проверка в {now.strftime('%H:%M')}, листов: {len(worksheets)}")
+            logger.info(f"🔍 Проверка в {now.strftime('%H:%M')} МСК, листов: {len(worksheets)}")
 
             after_close = (now.hour == 23 and now.minute >= 30) or (now.hour < 4) or (now.hour == 4 and now.minute < 30)
 
@@ -116,7 +116,9 @@ async def monitor_schedule(bot):
                 sheet_name = sheet.title
                 platform = platform_from_sheet_name(sheet_name)
                 if not platform:
+                    logger.warning(f"⏭️ Лист '{sheet_name}' — платформа не определена, пропуск")
                     continue
+
                 mapping = get_column_mapping(platform)
 
                 try:
@@ -126,17 +128,30 @@ async def monitor_schedule(bot):
                     continue
 
                 if not records or len(records) < 2:
+                    logger.debug(f"ℹ️ '{sheet_name}': только заголовок/пусто")
                     await asyncio.sleep(0.3)
                     continue
 
                 to_publish = []
+                stats = {
+                    "total": 0, "no_date_time": 0, "already_flagged": 0,
+                    "blocked_status": 0, "has_executor": 0, "future_time": 0,
+                    "bad_date_format": 0, "too_short": 0,
+                }
+
                 if not after_close:
                     for row_idx, row in enumerate(records[1:], start=2):
-                        if len(row) < 8:
+                        stats["total"] += 1
+                        if not any((c or "").strip() for c in row):
                             continue
+                        if len(row) < 8:
+                            stats["too_short"] += 1
+                            continue
+
                         date_str = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
                         time_str = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
                         if not date_str or not time_str:
+                            stats["no_date_time"] += 1
                             continue
 
                         flag_first = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
@@ -144,30 +159,55 @@ async def monitor_schedule(bot):
                         flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
                         flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
 
-                        if flag_first in ("1", "999") or flag_second == "1" or flag_third == "1" or flag_final in ("1", "999", "333", "666", "888", "7"):
+                        if (flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
+                                or flag_final in ("1", "999", "333", "666", "888", "7")):
+                            stats["already_flagged"] += 1
+                            logger.debug(
+                                f"  [{sheet_name}] строка {row_idx}: уже с флагом "
+                                f"(f1={flag_first}, f2={flag_second}, f3={flag_third}, fin={flag_final})"
+                            )
                             continue
 
                         status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
                         executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
                         if status in BLOCKED_STATUSES:
+                            stats["blocked_status"] += 1
+                            logger.debug(f"  [{sheet_name}] строка {row_idx}: статус '{status}' в блок-листе")
                             continue
                         if executor:
+                            stats["has_executor"] += 1
+                            logger.debug(f"  [{sheet_name}] строка {row_idx}: уже исполнитель '{executor}'")
                             continue
 
                         try:
                             slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
                             slot_time = moscow_tz.localize(slot_time)
-                        except:
+                        except Exception:
+                            stats["bad_date_format"] += 1
+                            logger.warning(f"  [{sheet_name}] строка {row_idx}: не парсится '{date_str} {time_str}'")
                             continue
+
                         if now >= slot_time:
                             to_publish.append((row_idx, row))
+                        else:
+                            stats["future_time"] += 1
 
-                if not to_publish:
-                    logger.info(f"ℹ️ Нет строк на '{sheet_name}'")
-                    await asyncio.sleep(0.3)
-                    continue
+                    if not to_publish:
+                        logger.info(
+                            f"ℹ️ '{sheet_name}' (platform={platform}): строк {stats['total']}, "
+                            f"время ещё не пришло {stats['future_time']}, "
+                            f"уже с флагом {stats['already_flagged']}, "
+                            f"статус-блок {stats['blocked_status']}, "
+                            f"есть исполнитель {stats['has_executor']}, "
+                            f"нет даты/времени {stats['no_date_time']}, "
+                            f"битый формат {stats['bad_date_format']}, "
+                            f"коротких {stats['too_short']}"
+                        )
+                        await asyncio.sleep(0.3)
+                        continue
 
+                # Публикация / дополнение слота
                 existing_msg_id = None
                 for mid, slot in active_slots.items():
                     if slot.get("platform") == platform and slot.get("count", 0) > 0:
@@ -589,7 +629,7 @@ async def update_stats_from_sheet_once():
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
-        # === ФИКС: учитываем admin_topup при пересчёте payout ===
+        # === Пересчёт payout с учётом admin_topup ===
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -612,7 +652,7 @@ async def update_stats_from_sheet_once():
                     ur[15] * PRICES.get("h", 0)
                 )
                 admin_topup = ur[16] or 0
-                total += admin_topup  # ← добавляем пополнение админа
+                total += admin_topup
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
             conn.commit()
 
