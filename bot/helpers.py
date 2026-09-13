@@ -1,4 +1,7 @@
 # bot/helpers.py
+import logging
+
+logger = logging.getLogger(__name__)
 
 PRICES = {
     "яндекс": 150,
@@ -42,70 +45,73 @@ SHEET_NAME_TO_PLATFORM = {
     "Яндекс (К)": "яндекс",
     "ЯНДЕКС": "яндекс",
     "Яндекс": "яндекс",
-    
-    # === 2ГИС ===
+
+    # === 2ГИС (все варианты) ===
     "2ГИС (Г)": "2гис",
     "2гис (Г)": "2гис",
+    "2ГИС 2.0 (Г)": "2гис",
+    "2ГИС 2.0": "2гис",
     "2ГИС": "2гис",
     "2гис": "2гис",
-    
+    "2 ГИС": "2гис",
+
     # === Google ===
     "google (С)": "google",
     "Google (С)": "google",
     "google": "google",
     "Google": "google",
     "GOOGLE": "google",
-    
+
     # === Авито ===
     "АВИТО (А)": "авито",
-    " АВИТО (А)": "авито",
     "Авито (А)": "авито",
     "АВИТО": "авито",
     "Авито": "авито",
-    
+
     # === Продокторов ===
     "Продокторов (ПР)": "про докторов",
     "Продокторов": "про докторов",
     "про докторов": "про докторов",
-    
+
     # === ВК ===
     "ВК (ВК)": "вк",
     "ВК": "вк",
     "вк": "вк",
-    
+
     # === ДокДок ===
     "ДокДок (ДД)": "докдок",
     "ДокДок": "докдок",
     "докдок": "докдок",
-    
+
     # === 32ТОП ===
     "32Топ (Т)": "32топ",
     "32Топ": "32топ",
     "32топ": "32топ",
-    
+
     # === ДокТу ===
     "Докту (ДК)": "докту",
     "Докту": "докту",
     "докту": "докту",
-    
+
     # === ZOON ===
     "ZOON (Z)": "zoon",
     "ZOON 2.0 (Z2)": "zoon",
+    "ZOON 2.0": "zoon",
     "ZOON": "zoon",
     "zoon": "zoon",
-    
+
     # === Яндекс Услуги ===
     "ЯНДЕКС УСЛУГИ (ЯУ)": "яу",
     "Яндекс Услуги (ЯУ)": "яу",
     "Яндекс Услуги": "яу",
     "ЯУ": "яу",
-    
+
     # === Яндекс Браузер ===
     "ЯНДЕКС БРАУЗЕР (ЯБ)": "яб",
     "Яндекс Браузер (ЯБ)": "яб",
     "Яндекс Браузер": "яб",
     "ЯБ": "яб",
-    
+
     # === HH.RU ===
     "HH.RU (H)": "h",
     "HH (H)": "h",
@@ -138,6 +144,8 @@ def get_column_mapping(platform: str):
 
 
 def match_platform(raw_name: str):
+    if not raw_name:
+        return None
     name = raw_name.strip().lower()
     for std, aliases in PLATFORM_ALIASES.items():
         for a in aliases:
@@ -147,28 +155,32 @@ def match_platform(raw_name: str):
 
 
 def platform_from_sheet_name(sheet_name: str):
-    # Точное совпадение
+    """
+    Устойчивое определение платформы по имени листа.
+    1) точное совпадение
+    2) точное совпадение без учёта регистра
+    3) поиск подстроки (длинные ключи первыми — чтобы 'Яндекс Услуги' не съело 'Яндекс')
+    """
+    if not sheet_name:
+        return None
+
     key = sheet_name.strip()
+
+    # 1. Точное
     if key in SHEET_NAME_TO_PLATFORM:
         return SHEET_NAME_TO_PLATFORM[key]
+
+    # 2. Без регистра
     key_lower = key.lower()
-    if key_lower in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[key_lower]
+    for k, v in SHEET_NAME_TO_PLATFORM.items():
+        if k.lower() == key_lower:
+            return v
 
-    # По первому слову
-    first_word = key.split()[0] if key.split() else key
-    if first_word in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[first_word]
-    first_word_lower = first_word.lower()
-    if first_word_lower in SHEET_NAME_TO_PLATFORM:
-        return SHEET_NAME_TO_PLATFORM[first_word_lower]
+    # 3. Подстрока, длинные ключи — первыми
+    for k in sorted(SHEET_NAME_TO_PLATFORM.keys(), key=len, reverse=True):
+        if k.lower() in key_lower:
+            logger.debug(f"platform_from_sheet_name: '{sheet_name}' -> '{SHEET_NAME_TO_PLATFORM[k]}' (по подстроке '{k}')")
+            return SHEET_NAME_TO_PLATFORM[k]
 
-    # По базовому имени до "("
-    if "(" in key:
-        base = key.split("(")[0].strip()
-        if base in SHEET_NAME_TO_PLATFORM:
-            return SHEET_NAME_TO_PLATFORM[base]
-        if base.lower() in SHEET_NAME_TO_PLATFORM:
-            return SHEET_NAME_TO_PLATFORM[base.lower()]
-
+    logger.warning(f"⚠️ Не удалось определить платформу для листа '{sheet_name}'")
     return None
