@@ -109,6 +109,7 @@ async def monitor_schedule(bot):
             now = datetime.now(moscow_tz)
             today = now.date()
             logger.info(f"🔍 Проверка в {now.strftime('%H:%M')} МСК, листов: {len(worksheets)}")
+            logger.info(f"📋 Список листов: {[w.title for w in worksheets]}")
 
             after_close = (now.hour == 23 and now.minute >= 30) or (now.hour < 4) or (now.hour == 4 and now.minute < 30)
 
@@ -116,7 +117,7 @@ async def monitor_schedule(bot):
                 sheet_name = sheet.title
                 platform = platform_from_sheet_name(sheet_name)
                 if not platform:
-                    logger.warning(f"⏭️ Лист '{sheet_name}' — платформа не определена, пропуск")
+                    logger.info(f"⏭️ Лист '{sheet_name}' — платформа не определена")
                     continue
 
                 mapping = get_column_mapping(platform)
@@ -128,7 +129,7 @@ async def monitor_schedule(bot):
                     continue
 
                 if not records or len(records) < 2:
-                    logger.debug(f"ℹ️ '{sheet_name}': только заголовок/пусто")
+                    logger.info(f"ℹ️ '{sheet_name}' ({platform}): пусто / только заголовок")
                     await asyncio.sleep(0.3)
                     continue
 
