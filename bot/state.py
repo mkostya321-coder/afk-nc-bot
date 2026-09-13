@@ -52,6 +52,7 @@ class _ActiveSlotsProxy(dict):
         for k in list(super().keys()):
             delete_active_slot(k)
         super().clear()
+        self._loaded = False
 
 
 class _SlotRequestsProxy(dict):
@@ -101,6 +102,7 @@ class _SlotRequestsProxy(dict):
         for k in list(super().keys()):
             delete_slot_request(k)
         super().clear()
+        self._loaded = False
 
 
 active_slots = _ActiveSlotsProxy()
