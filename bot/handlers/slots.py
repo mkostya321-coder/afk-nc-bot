@@ -498,14 +498,52 @@ async def take_slot_start(callback: CallbackQuery):
         count = 0
     time = time_safe.replace('-', ':')
     slot_msg_id = callback.message.message_id
+
+    logger.info(
+        f"🎯 take_slot: user={user_id}, msg_id={slot_msg_id}, "
+        f"platform={platform}, count={count}, date={date}, time={time}"
+    )
+    logger.info(f"🎯 active_slots ключи в памяти: {sorted(active_slots.keys())}")
+
     slot_info = active_slots.get(slot_msg_id)
+    logger.info(f"🎯 по msg_id найдено: {slot_info is not None}")
+
     if not slot_info:
-        platform_slots = [(m, s) for m, s in active_slots.items() if s.get("platform") == platform and s.get("count", 0) > 0]
+        platform_slots = [
+            (m, s) for m, s in active_slots.items()
+            if s.get("platform") == platform and s.get("count", 0) > 0
+        ]
+        logger.info(f"🎯 fallback по platform='{platform}': {len(platform_slots)}")
         if platform_slots:
             slot_msg_id, slot_info = platform_slots[0]
+            logger.info(f"🎯 используем слот msg {slot_msg_id} из памяти")
         else:
-            await callback.bot.send_message(user_id, "❌ Слот не найден. /resume.")
-            return
+            # Последняя попытка — читаем напрямую из БД
+            from bot.database import get_all_active_slots
+            db_slots = get_all_active_slots()
+            logger.info(f"🎯 в БД слотов: {len(db_slots)}, ключи: {sorted(db_slots.keys())}")
+            if slot_msg_id in db_slots:
+                slot_info = db_slots[slot_msg_id]
+                active_slots[slot_msg_id] = slot_info
+                logger.info(f"🎯 найден в БД по msg_id {slot_msg_id}")
+            else:
+                platform_db = [
+                    (m, s) for m, s in db_slots.items()
+                    if s.get("platform") == platform and s.get("count", 0) > 0
+                ]
+                logger.info(f"🎯 в БД по platform='{platform}': {len(platform_db)}")
+                if platform_db:
+                    slot_msg_id, slot_info = platform_db[0]
+                    active_slots[slot_msg_id] = slot_info
+                    logger.info(f"🎯 используем слот msg {slot_msg_id} из БД")
+                else:
+                    await callback.bot.send_message(
+                        user_id,
+                        "❌ Слот не найден или уже разобран. Проверьте канал — возможно, слот "
+                        "переопубликован, нажмите «Взять слот» в свежем сообщении, либо /resume."
+                    )
+                    return
+
     if slot_info.get("count", 0) == 0:
         await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
         return
@@ -638,9 +676,13 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         slot_requests[user_id] = request
 
     row = sheet.row_values(row_idx)
+    # ВАЖНО: добиваем до 30 колонок, чтобы не терять текст и данные справа
+    if len(row) < 30:
+        row = row + [""] * (30 - len(row))
+
     extra_ids = []
 
-    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}")
+    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, длина row={len(row)}")
 
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
@@ -657,7 +699,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
-        # ВАЖНО: сначала требования к скриншоту, потом всё остальное
+        # ВАЖНО: сначала требования к скриншоту, потом инфа по врачу
         info_msg = (
             f"{SNIPPET_REQ}\n\n"
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
@@ -712,8 +754,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
-        # ВАЖНО: сначала пример/требования к скриншоту (extra_text),
-        # затем уже инструкция по платформе и остальное
+        # ВАЖНО: сначала требования к скриншоту, потом инструкция
         final_msg = (
             f"{extra_text}\n\n"
             f"{instruction_text}\n\n"
