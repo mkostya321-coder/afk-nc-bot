@@ -95,10 +95,7 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
 
 
 def _business_day_key(now: datetime) -> date:
-    """
-    Бизнес-день начинается в 4:30 МСК.
-    Всё, что до 4:30 утра — относится к предыдущему дню.
-    """
+    """Бизнес-день начинается в 4:30 МСК."""
     if now.hour < 4 or (now.hour == 4 and now.minute < 30):
         return (now.date() - timedelta(days=1))
     return now.date()
@@ -353,6 +350,21 @@ async def _check_republish(bot, client, now):
     spreadsheet = client.open_by_key(SHEET_ID)
     expired_slots = []
 
+    # Диагностика: что вообще лежит в active_slots
+    logger.info(f"🔄 _check_republish: слотов в памяти {len(active_slots)}")
+    for _mid, _slot in list(active_slots.items()):
+        _pt = _slot.get("publish_time")
+        _age = ""
+        if _pt:
+            try:
+                _age = f"{(now - _pt).total_seconds() / 60:.0f} мин"
+            except Exception:
+                _age = "?"
+        logger.info(
+            f"  msg {_mid}: platform={_slot.get('platform')} "
+            f"attempt={_slot.get('attempt')} rows={len(_slot.get('row_ids', []))} age={_age}"
+        )
+
     for msg_id, slot in list(active_slots.items()):
         if slot.get("attempt", 1) >= 4:
             continue
@@ -397,7 +409,7 @@ async def _check_republish(bot, client, now):
 
     for msg_id, slot, available_rows, slot_mapping in expired_slots:
         new_attempt = slot["attempt"] + 1
-        logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt})")
+        logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt}, строк {len(available_rows)})")
 
         try:
             await bot.edit_message_text(
@@ -440,7 +452,7 @@ async def _check_republish(bot, client, now):
                 "attempt": new_attempt, "mapping": slot_mapping,
                 "sheet_title": slot.get("sheet_title")
             }
-            logger.info(f"✅ Переопубликован {slot['platform']}")
+            logger.info(f"✅ Переопубликован {slot['platform']} ({len(available_rows)} шт)")
         except Exception as e:
             logger.error(f"❌ Ошибка: {e}")
 
@@ -448,7 +460,6 @@ async def _check_republish(bot, client, now):
 async def _close_day(bot, client, now):
     logger.info("🕒 Закрытие дня (старт)")
 
-    # Явно загружаем активные сессии из БД (через .items() прокси сам сделает _load)
     all_requests = list(slot_requests.items())
     logger.info(f"🕒 Активных сессий для закрытия: {len(all_requests)}")
 
@@ -471,7 +482,7 @@ async def _close_day(bot, client, now):
             continue
 
         if not sheet_title:
-            logger.warning(f"⚠️ user {user_id}: нет sheet_title — удаляю сессию, но строки в таблице не чищу")
+            logger.warning(f"⚠️ user {user_id}: нет sheet_title — удаляю сессию, строки в таблице не чищу")
             try:
                 del slot_requests[user_id]
             except KeyError:
@@ -511,10 +522,8 @@ async def _close_day(bot, client, now):
             col_i = chr(64 + mapping["flag_final_col"])
 
             if j_val == "на модерации":
-                # ОПЗ — оплата на 30% ниже
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif j_val == "в работе":
-                # Не сдан — снимаем исполнителя, ставим 888
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                 batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
                 batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
@@ -538,9 +547,8 @@ async def _close_day(bot, client, now):
                 logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек в '{sheet_title}'")
             except Exception as e:
                 logger.error(f"❌ user {user_id}: ошибка batch_update: {e} — сессию НЕ удаляю, попробуем в след. итерации")
-                continue  # ВАЖНО: не удаляем сессию, чтобы попробовать ещё раз
+                continue
 
-        # Уведомляем пользователя
         try:
             await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
         except Exception as e:
@@ -552,7 +560,6 @@ async def _close_day(bot, client, now):
         except KeyError:
             pass
 
-    # Закрываем сообщения слотов
     active_ids = list(active_slots.keys())
     logger.info(f"🕒 Активных слотов к закрытию: {len(active_ids)}")
     for msg_id in active_ids:
@@ -814,7 +821,6 @@ async def mark_as_paid_in_table(user_ids: list):
 async def cleanup_channel(bot):
     logger.info("🧹 Автоочистка канала (4:30 МСК)")
 
-    # Загружаем из БД, когда последний раз чистили (чтобы рестарт не запускал повторно)
     last_cleanup_str = get_setting("last_cleanup_date")
     last_cleanup_date = None
     if last_cleanup_str:
@@ -832,7 +838,6 @@ async def cleanup_channel(bot):
 
             if should:
                 logger.info(f"🧹 Очистка канала (запуск в {now.strftime('%H:%M')} МСК)")
-                # Отсечка = сегодня 4:30 МСК. Удаляем всё, что было ДО этой границы.
                 cutoff_msk = today_target
                 cutoff_utc = cutoff_msk.astimezone(pytz.utc).replace(tzinfo=None)
                 cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
@@ -865,7 +870,6 @@ async def cleanup_channel(bot):
                             logger.error(f"❌ Удаление из БД {msg['id']}: {e}")
                 logger.info(f"✅ Удалено {deleted}, не удалось {failed}")
 
-                # Чистим active_slots из памяти + БД
                 try:
                     active_slots.clear()
                     logger.info("🧹 active_slots очищены")
