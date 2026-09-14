@@ -28,6 +28,14 @@ class _ActiveSlotsProxy(dict):
         self._load()
         return super().__contains__(key)
 
+    def __bool__(self):
+        self._load()
+        return super().__len__() > 0
+
+    def __len__(self):
+        self._load()
+        return super().__len__()
+
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
         save_active_slot(key, value)
@@ -49,6 +57,7 @@ class _ActiveSlotsProxy(dict):
         return super().values()
 
     def clear(self):
+        self._load()
         for k in list(super().keys()):
             delete_active_slot(k)
         super().clear()
@@ -78,6 +87,14 @@ class _SlotRequestsProxy(dict):
         self._load()
         return super().__contains__(key)
 
+    def __bool__(self):
+        self._load()
+        return super().__len__() > 0
+
+    def __len__(self):
+        self._load()
+        return super().__len__()
+
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
         save_slot_request(key, value)
@@ -99,6 +116,7 @@ class _SlotRequestsProxy(dict):
         return super().values()
 
     def clear(self):
+        self._load()
         for k in list(super().keys()):
             delete_slot_request(k)
         super().clear()
