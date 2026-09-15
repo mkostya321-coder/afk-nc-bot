@@ -69,6 +69,7 @@ async def show_user_info(message: Message, user: dict, is_new_message: bool = Tr
         f"📅 С нами: {time_str}\n"
         f"💰 К выплате чт: {user['payout']}₽\n"
         f"💵 Заработано ЗВВ: {user['total_earned']}₽\n\n"
+        f"📊 Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"📊 Текущая статистика (passed):\n"
         f"  Яндекс: {user['yandex_passed']}, Google: {user['google_passed']}, 2ГИС: {user['gis_passed']}\n"
         f"  Авито: {user['avito_passed']}, ВК: {user['vk_passed']}, Отзовик: {user['otzovik_passed']}\n"
