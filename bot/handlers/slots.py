@@ -14,7 +14,7 @@ from bot.database import (
     add_review_take, count_review_takes_last_24h, get_limit
 )
 from bot.google_sheets import get_client
-from bot.helpers import get_column_mapping, platform_from_sheet_name
+from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
 from bot.state import active_slots, slot_requests
 import pytz
 
@@ -38,18 +38,15 @@ PIN_REMINDER = "📸 Инструкция по скриншотам — закр
 PLATFORM_TEMPLATES = {
     "яндекс": {
         "instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "google": {
         "instruction": "🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "2гис": {
         "instruction": "🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "авито": {
         "instruction": (
@@ -66,8 +63,7 @@ PLATFORM_TEMPLATES = {
             "   – Нельзя: копировать текст, делать скриншоты.\n"
             "   – Дополнительно: оставить отзыв через «ждут оценки», если получится."
         ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "вк": {
         "instruction": (
@@ -77,23 +73,19 @@ PLATFORM_TEMPLATES = {
             "ДЛЯ 90% прохода:\n"
             "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
         ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "докдок": {
         "instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "докту": {
         "instruction": "🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "32топ": {
         "instruction": "🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "zoon": {
         "instruction": (
@@ -101,17 +93,11 @@ PLATFORM_TEMPLATES = {
             "1. Переходим по ссылке, прокладываем маршрут и просматриваем всю информацию.\n"
             "2. Через 30 минут оставляем отзыв."
         ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "яу": {
-        "instruction": (
-            "🔥 Яндекс Услуги\n\n"
-            "1. Переходим по ссылке.\n"
-            "2. Оставляем отзыв."
-        ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "instruction": "🔥 Яндекс Услуги\n\n1. Переходим по ссылке.\n2. Оставляем отзыв.",
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "яб": {
         "instruction": (
@@ -120,8 +106,7 @@ PLATFORM_TEMPLATES = {
             "2. Открывается сайт компании — в нижнем или верхнем правом углу жмём 3 точки.\n"
             "3. Жмём на количество отзывов и оставляем отзыв с текстом."
         ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "h": {
         "instruction": (
@@ -130,8 +115,7 @@ PLATFORM_TEMPLATES = {
             "2. Просматриваем фото/видео, лайкаем хорошие отзывы.\n"
             "3. Оставить отзыв."
         ),
-        "extra_text": SNIPPET_REQ,
-        "warning": WARNING
+        "extra_text": SNIPPET_REQ, "warning": WARNING
     },
 }
 
@@ -143,7 +127,6 @@ DEFAULT_MAPPING = {
 
 
 def get_safe_mapping(request: dict, platform: str) -> dict:
-    """Возвращает mapping с fallback, если его нет в request."""
     mapping = request.get("mapping")
     if not mapping or "status_col" not in mapping:
         mapping = get_column_mapping(platform)
@@ -151,7 +134,6 @@ def get_safe_mapping(request: dict, platform: str) -> dict:
     return mapping
 
 
-# ============ ИНСТРУКЦИЯ ============
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -193,7 +175,6 @@ async def check_limit(user_id: int, platform: str) -> bool:
     return count_review_takes_last_24h(user_id, platform) < get_limit(platform)
 
 
-# ============ CANCEL ============
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -243,7 +224,6 @@ async def cancel_task(message: Message):
     )
 
 
-# ============ RESUME ============
 @router.message(Command("resume"))
 @router.message(Command("слот"))
 async def cmd_resume(message: Message):
@@ -315,7 +295,8 @@ async def cmd_resume(message: Message):
         "state": "slot_selection", "assigned_rows": row_ids, "current_index": 0,
         "row_ids": [], "from_menu": False, "mapping": mapping, "sheet_title": sheet_title,
         "ordered_reviews": ordered_reviews, "completed_reviews": [],
-        "active_review_row": None, "extra_messages": []
+        "active_review_row": None, "extra_messages": [],
+        "created_business_day": business_day_key()
     }
     await message.answer(
         f"✅ Сессия восстановлена!\n\n"
@@ -327,7 +308,6 @@ async def cmd_resume(message: Message):
     )
 
 
-# ============ ВВОД КОЛИЧЕСТВА ============
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     if message.text and message.text.startswith('/'):
@@ -453,6 +433,7 @@ async def handle_quantity_input(message: Message):
     request["assigned_rows"] = assigned_rows
     request["extra_messages"] = []
     request["mapping"] = mapping
+    request["created_business_day"] = business_day_key()
     slot_requests[user_id] = request
 
     for _ in range(quantity):
@@ -491,7 +472,7 @@ async def take_slot_start(callback: CallbackQuery):
     if len(parts) < 5:
         await callback.bot.send_message(user_id, "Некорректный запрос.")
         return
-    _, platform, count_str, date, time_safe = parts
+    _, platform_from_cb, count_str, date, time_safe = parts
     try:
         count = int(count_str)
     except:
@@ -501,9 +482,9 @@ async def take_slot_start(callback: CallbackQuery):
 
     logger.info(
         f"🎯 take_slot: user={user_id}, msg_id={slot_msg_id}, "
-        f"platform={platform}, count={count}, date={date}, time={time}"
+        f"platform_cb={platform_from_cb}, count={count}, date={date}, time={time}"
     )
-    logger.info(f"🎯 active_slots ключи в памяти: {sorted(active_slots.keys())}")
+    logger.info(f"🎯 active_slots ключи: {sorted(active_slots.keys())}")
 
     slot_info = active_slots.get(slot_msg_id)
     logger.info(f"🎯 по msg_id найдено: {slot_info is not None}")
@@ -511,14 +492,12 @@ async def take_slot_start(callback: CallbackQuery):
     if not slot_info:
         platform_slots = [
             (m, s) for m, s in active_slots.items()
-            if s.get("platform") == platform and s.get("count", 0) > 0
+            if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
         ]
-        logger.info(f"🎯 fallback по platform='{platform}': {len(platform_slots)}")
+        logger.info(f"🎯 fallback по platform='{platform_from_cb}': {len(platform_slots)}")
         if platform_slots:
             slot_msg_id, slot_info = platform_slots[0]
-            logger.info(f"🎯 используем слот msg {slot_msg_id} из памяти")
         else:
-            # Последняя попытка — читаем напрямую из БД
             from bot.database import get_all_active_slots
             db_slots = get_all_active_slots()
             logger.info(f"🎯 в БД слотов: {len(db_slots)}, ключи: {sorted(db_slots.keys())}")
@@ -529,13 +508,12 @@ async def take_slot_start(callback: CallbackQuery):
             else:
                 platform_db = [
                     (m, s) for m, s in db_slots.items()
-                    if s.get("platform") == platform and s.get("count", 0) > 0
+                    if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
                 ]
-                logger.info(f"🎯 в БД по platform='{platform}': {len(platform_db)}")
+                logger.info(f"🎯 в БД по platform='{platform_from_cb}': {len(platform_db)}")
                 if platform_db:
                     slot_msg_id, slot_info = platform_db[0]
                     active_slots[slot_msg_id] = slot_info
-                    logger.info(f"🎯 используем слот msg {slot_msg_id} из БД")
                 else:
                     await callback.bot.send_message(
                         user_id,
@@ -547,6 +525,27 @@ async def take_slot_start(callback: CallbackQuery):
     if slot_info.get("count", 0) == 0:
         await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
         return
+
+    # === КРИТИЧЕСКАЯ ПРОВЕРКА: источник истины — sheet_title, а не callback ===
+    sheet_title = slot_info.get("sheet_title")
+    real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
+
+    if real_platform is None:
+        logger.error(
+            f"❌ take_slot: sheet_title='{sheet_title}' не распознан, "
+            f"использую platform из callback '{platform_from_cb}'"
+        )
+        platform = platform_from_cb
+    elif real_platform != platform_from_cb:
+        logger.warning(
+            f"⚠️ take_slot: РАССИНХРОН! callback говорит '{platform_from_cb}', "
+            f"а sheet_title='{sheet_title}' соответствует '{real_platform}'. "
+            f"Использую '{real_platform}'."
+        )
+        platform = real_platform
+    else:
+        platform = real_platform
+
     if not await check_limit(user_id, platform):
         await callback.bot.send_message(user_id, f"❌ Лимит на {platform}.")
         return
@@ -558,7 +557,8 @@ async def take_slot_start(callback: CallbackQuery):
         "state": "waiting_quantity", "assigned_rows": [], "current_index": 0,
         "row_ids": slot_info["row_ids"], "from_menu": False,
         "mapping": mapping,
-        "sheet_title": slot_info.get("sheet_title")
+        "sheet_title": sheet_title,
+        "created_business_day": business_day_key()
     }
     await callback.bot.send_message(
         chat_id=user_id,
@@ -609,7 +609,6 @@ async def show_slot_buttons(message: Message, user_id: int):
     await message.edit_text("📋 Выберите номер отзыва:", reply_markup=builder.as_markup())
 
 
-# ============ ВЫБОР ОТЗЫВА ============
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -622,6 +621,20 @@ async def select_review(callback: CallbackQuery):
         return
 
     platform = request.get("platform", "яндекс")
+    sheet_title = request.get("sheet_title")
+
+    # Сверка: если sheet_title даёт другую платформу — принудительно пересобираем
+    real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
+    if real_platform and real_platform != platform:
+        logger.warning(
+            f"⚠️ select_review: рассинхрон! request.platform='{platform}', "
+            f"sheet_title='{sheet_title}' => '{real_platform}'. Исправляю."
+        )
+        platform = real_platform
+        request["platform"] = platform
+        request["mapping"] = get_column_mapping(platform)
+        slot_requests[user_id] = request
+
     mapping = get_safe_mapping(request, platform)
     slot_requests[user_id] = request
 
@@ -645,7 +658,6 @@ async def select_review(callback: CallbackQuery):
         return
     spreadsheet = client.open_by_key(SHEET_ID)
     sheet = None
-    sheet_title = request.get("sheet_title")
     if sheet_title:
         try:
             sheet = spreadsheet.worksheet(sheet_title)
@@ -666,7 +678,6 @@ async def select_review(callback: CallbackQuery):
     await callback.answer()
 
 
-# ============ ПОКАЗ ОТЗЫВА ============
 async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, mapping, platform):
     request = slot_requests[user_id]
 
@@ -676,12 +687,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         slot_requests[user_id] = request
 
     row = sheet.row_values(row_idx)
-    # ВАЖНО: добиваем до 30 колонок, чтобы не терять текст и данные справа
     if len(row) < 30:
         row = row + [""] * (30 - len(row))
 
     extra_ids = []
-
     logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, длина row={len(row)}")
 
     if platform == "про докторов":
@@ -699,7 +708,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
-        # ВАЖНО: сначала требования к скриншоту, потом инфа по врачу
         info_msg = (
             f"{SNIPPET_REQ}\n\n"
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
@@ -754,7 +762,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
-        # ВАЖНО: сначала требования к скриншоту, потом инструкция
         final_msg = (
             f"{extra_text}\n\n"
             f"{instruction_text}\n\n"
@@ -794,7 +801,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     slot_requests[user_id] = request
 
 
-# ============ ВЕРНУТЬСЯ К СЛОТУ ============
 @router.callback_query(F.data == "back_to_slot")
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -819,7 +825,6 @@ async def back_to_slot(callback: CallbackQuery):
     await show_slot_buttons(callback.message, user_id)
 
 
-# ============ СКРИНШОТ ============
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
