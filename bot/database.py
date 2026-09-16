@@ -121,8 +121,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # Хранение сессий в БД
         cur.execute("""
             CREATE TABLE IF NOT EXISTS active_slots (
                 msg_id INTEGER PRIMARY KEY,
@@ -152,9 +150,15 @@ def init_db():
                 completed_reviews TEXT,
                 active_review_row INTEGER,
                 extra_messages TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_business_day TEXT
             )
         """)
+        cur.execute("PRAGMA table_info(slot_requests_db)")
+        _cols = [c[1] for c in cur.fetchall()]
+        if "created_business_day" not in _cols:
+            cur.execute("ALTER TABLE slot_requests_db ADD COLUMN created_business_day TEXT")
+            print("✅ Добавлена колонка slot_requests_db.created_business_day")
 
         if OWNER_ID:
             cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
@@ -362,7 +366,6 @@ def get_all_registered_users():
         return [dict(row) for row in cur.fetchall()]
 
 
-# ============ СООБЩЕНИЯ КАНАЛА ============
 def save_channel_message(message_id: int, chat_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -388,7 +391,6 @@ def delete_channel_message(record_id: int):
         conn.commit()
 
 
-# ============ ХРАНЕНИЕ СЕССИЙ ============
 def save_active_slot(msg_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -446,8 +448,8 @@ def save_slot_request(user_id: int, data: dict):
             INSERT OR REPLACE INTO slot_requests_db 
             (user_id, platform, count, date, time, slot_msg_id, state, assigned_rows,
              row_ids, sheet_title, ordered_reviews, completed_reviews, active_review_row,
-             extra_messages, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             extra_messages, updated_at, created_business_day)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             data.get("platform"),
@@ -463,7 +465,8 @@ def save_slot_request(user_id: int, data: dict):
             json.dumps(data.get("completed_reviews", [])),
             data.get("active_review_row"),
             json.dumps(data.get("extra_messages", [])),
-            datetime.now()
+            datetime.now(),
+            data.get("created_business_day")
         ))
         conn.commit()
 
