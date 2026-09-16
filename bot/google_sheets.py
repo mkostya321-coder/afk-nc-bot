@@ -14,7 +14,8 @@ from bot.database import (
 from bot.state import active_slots, slot_requests
 from bot.helpers import (
     platform_from_sheet_name, get_column_mapping, match_platform,
-    PRICES, PLATFORM_ALIASES, SHEET_NAME_TO_PLATFORM
+    PRICES, PLATFORM_ALIASES, SHEET_NAME_TO_PLATFORM,
+    business_day_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,16 +95,8 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
     return post_text, builder.as_markup()
 
 
-def _business_day_key(now: datetime) -> date:
-    """Бизнес-день начинается в 4:30 МСК."""
-    if now.hour < 4 or (now.hour == 4 and now.minute < 30):
-        return (now.date() - timedelta(days=1))
-    return now.date()
-
-
 async def monitor_schedule(bot):
     logger.info("📅 Планировщик слотов запущен")
-    closed_business_day = None
     while True:
         try:
             client = get_client()
@@ -187,6 +180,10 @@ async def monitor_schedule(bot):
                             slot_time = moscow_tz.localize(slot_time)
                         except Exception:
                             stats["bad_date_format"] += 1
+                            _d = (date_str or "").lower()
+                            _t = (time_str or "").lower()
+                            if "дата" in _d or "впл" in _d or "время" in _t or "пбл" in _t:
+                                continue
                             logger.warning(f"  [{sheet_name}] строка {row_idx}: не парсится '{date_str} {time_str}'")
                             continue
 
@@ -209,7 +206,6 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
-                # Публикация / дополнение слота
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -265,21 +261,38 @@ async def monitor_schedule(bot):
 
                 if existing_msg_id is not None and slot is not None:
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
-                    slot["row_ids"].extend(new_rows)
-                    slot["count"] = len(slot["row_ids"])
-                    slot["date"] = date_str
-                    slot["time"] = time_str
-                    active_slots[existing_msg_id] = slot
 
-                    new_text, kb = build_slot_message(platform, slot["count"], date_str, time_str)
+                    candidate_row_ids = list(slot["row_ids"]) + new_rows
+                    candidate_count = len(candidate_row_ids)
+                    new_text, kb = build_slot_message(platform, candidate_count, date_str, time_str)
+
+                    edit_ok = False
                     try:
                         await bot.edit_message_text(
                             chat_id=CHANNEL_ID, message_id=existing_msg_id,
                             text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
                         )
-                        logger.info(f"✅ Слот {platform} дополнен до {slot['count']} шт")
+                        edit_ok = True
+                        logger.info(f"✅ Слот {platform} дополнен до {candidate_count} шт (msg {existing_msg_id})")
                     except Exception as e:
-                        logger.warning(f"⚠️ Не удалось отредактировать сообщение слота: {e}")
+                        err = str(e).lower()
+                        if "message is not modified" in err:
+                            edit_ok = True
+                        else:
+                            logger.warning(
+                                f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e} — "
+                                f"флаги НЕ ставлю, повторю на след. итерации"
+                            )
+
+                    if not edit_ok:
+                        await asyncio.sleep(0.5)
+                        continue
+
+                    slot["row_ids"] = candidate_row_ids
+                    slot["count"] = candidate_count
+                    slot["date"] = date_str
+                    slot["time"] = time_str
+                    active_slots[existing_msg_id] = slot
 
                     batch = []
                     for row_idx in new_rows:
@@ -334,12 +347,24 @@ async def monitor_schedule(bot):
 
             await _check_republish(bot, client, now)
 
-            # Закрытие дня в окне 23:30–04:30 (и при рестарте в этом окне)
-            business_day = _business_day_key(now)
-            if after_close and closed_business_day != business_day:
-                logger.info(f"🕒 Триггер закрытия дня: бизнес-день {business_day}, now={now.strftime('%d.%m %H:%M')}")
-                await _close_day(bot, client, now)
-                closed_business_day = business_day
+            # === Закрытие вчерашних сессий при смене бизнес-дня ===
+            current_bd = business_day_key(now)
+            last_closed_bd = get_setting("last_closed_business_day")
+
+            if last_closed_bd is None:
+                set_setting("last_closed_business_day", current_bd)
+                logger.info(f"🕒 Первый запуск: зафиксирован бизнес-день {current_bd}")
+            elif current_bd > last_closed_bd:
+                logger.info(f"🕒 Смена бизнес-дня: {last_closed_bd} → {current_bd}, закрываю прошлые сессии")
+                ok = await _close_day(bot, client, now, current_bd)
+                if ok:
+                    set_setting("last_closed_business_day", current_bd)
+                    logger.info(f"🕒 last_closed_business_day обновлён на {current_bd}")
+                else:
+                    logger.warning(
+                        f"⚠️ _close_day завершился с ошибками — НЕ обновляю last_closed_business_day, "
+                        f"повторю на следующей итерации"
+                    )
 
         except Exception as e:
             logger.error(f"❌ Ошибка планировщика: {e}", exc_info=True)
@@ -350,7 +375,6 @@ async def _check_republish(bot, client, now):
     spreadsheet = client.open_by_key(SHEET_ID)
     expired_slots = []
 
-    # Диагностика: что вообще лежит в active_slots
     logger.info(f"🔄 _check_republish: слотов в памяти {len(active_slots)}")
     for _mid, _slot in list(active_slots.items()):
         _pt = _slot.get("publish_time")
@@ -457,51 +481,49 @@ async def _check_republish(bot, client, now):
             logger.error(f"❌ Ошибка: {e}")
 
 
-async def _close_day(bot, client, now):
-    logger.info("🕒 Закрытие дня (старт)")
+async def _close_day(bot, client, now, current_business_day: str) -> bool:
+    logger.info(f"🕒 Закрытие дня (текущий бизнес-день {current_business_day})")
 
     all_requests = list(slot_requests.items())
-    logger.info(f"🕒 Активных сессий для закрытия: {len(all_requests)}")
-
-    if not all_requests:
-        logger.info("ℹ️ Нет активных сессий — закрывать нечего")
+    logger.info(f"🕒 Сессий в БД: {len(all_requests)}")
 
     spreadsheet = client.open_by_key(SHEET_ID)
+    any_critical_error = False
+    to_remove = []
 
     for user_id, request in all_requests:
+        created_bd = (request.get("created_business_day") or "").strip()
+        if created_bd and created_bd >= current_business_day:
+            logger.info(f"⏭️ user {user_id}: сессия создана в {created_bd} — не трогаю")
+            continue
+
         assigned_rows = request.get("assigned_rows", [])
         sheet_title = request.get("sheet_title")
         platform_key = request.get("platform") or "яндекс"
 
         if not assigned_rows:
-            logger.info(f"⏭️ user {user_id}: нет assigned_rows — удаляю сессию")
-            try:
-                del slot_requests[user_id]
-            except KeyError:
-                pass
+            logger.info(f"⏭️ user {user_id} ({platform_key}): нет assigned_rows — удаляю сессию")
+            to_remove.append(user_id)
             continue
 
         if not sheet_title:
-            logger.warning(f"⚠️ user {user_id}: нет sheet_title — удаляю сессию, строки в таблице не чищу")
-            try:
-                del slot_requests[user_id]
-            except KeyError:
-                pass
+            logger.warning(f"⚠️ user {user_id} ({platform_key}): нет sheet_title — не могу чистить строки, только удалю сессию")
+            to_remove.append(user_id)
             continue
 
-        # ВАЖНО: mapping после рестарта может отсутствовать — восстанавливаем из платформы
         mapping = request.get("mapping")
         if not mapping or "status_col" not in mapping:
             mapping = get_column_mapping(platform_key)
             request["mapping"] = mapping
             slot_requests[user_id] = request
-            logger.info(f"🔧 user {user_id}: восстановлен mapping для платформы '{platform_key}'")
+            logger.info(f"🔧 user {user_id}: восстановлен mapping для '{platform_key}'")
 
         try:
             sheet = spreadsheet.worksheet(sheet_title)
             records = await retry_api_call(sheet.get_all_values)
         except Exception as e:
             logger.error(f"❌ user {user_id}: не открыть лист '{sheet_title}': {e}")
+            any_critical_error = True
             continue
 
         batch = []
@@ -529,8 +551,10 @@ async def _close_day(bot, client, now):
                 batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
                 to_format.append((row_idx, col_i))
 
-        logger.info(f"🕒 user {user_id} ({platform_key}), строк {len(assigned_rows)}, статусы: {statuses_seen}, "
-                    f"к обновлению {len(batch)}")
+        logger.info(
+            f"🕒 user {user_id} ({platform_key}, лист '{sheet_title}'): "
+            f"строк {len(assigned_rows)}, статусы: {statuses_seen}, к обновлению {len(batch)}"
+        )
 
         if batch:
             try:
@@ -544,16 +568,20 @@ async def _close_day(bot, client, now):
                         })
                     except Exception as e:
                         logger.warning(f"⚠️ Не удалось закрасить {col_i}{row_idx}: {e}")
-                logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек в '{sheet_title}'")
+                logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек")
             except Exception as e:
-                logger.error(f"❌ user {user_id}: ошибка batch_update: {e} — сессию НЕ удаляю, попробуем в след. итерации")
+                logger.error(f"❌ user {user_id}: ошибка batch_update: {e} — оставляю сессию для повтора")
+                any_critical_error = True
                 continue
 
         try:
             await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
         except Exception as e:
-            logger.warning(f"⚠️ user {user_id}: не удалось отправить уведомление: {e}")
+            logger.warning(f"⚠️ user {user_id}: уведомление не отправилось: {e}")
 
+        to_remove.append(user_id)
+
+    for user_id in to_remove:
         try:
             del slot_requests[user_id]
             logger.info(f"🗑️ user {user_id}: сессия удалена")
@@ -561,17 +589,26 @@ async def _close_day(bot, client, now):
             pass
 
     active_ids = list(active_slots.keys())
-    logger.info(f"🕒 Активных слотов к закрытию: {len(active_ids)}")
+    logger.info(f"🕒 Сообщений-слотов к закрытию: {len(active_ids)}")
     for msg_id in active_ids:
         try:
-            await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=msg_id, text="Рабочий день завершён. Все слоты закрыты.")
+            await bot.edit_message_text(
+                chat_id=CHANNEL_ID, message_id=msg_id,
+                text="Рабочий день завершён. Все слоты закрыты."
+            )
         except Exception as e:
-            logger.warning(f"⚠️ msg {msg_id}: не удалось закрыть ({e})")
+            logger.warning(f"⚠️ msg {msg_id}: не закрыть ({e})")
         try:
             del active_slots[msg_id]
         except KeyError:
             pass
-    logger.info("✅ День закрыт")
+
+    if any_critical_error:
+        logger.warning("🕒 День закрыт ЧАСТИЧНО — верну False для повтора")
+        return False
+
+    logger.info("✅ День закрыт полностью")
+    return True
 
 
 async def update_stats_from_sheet():
@@ -695,21 +732,25 @@ async def update_stats_from_sheet_once():
                 elif status == "удален":
                     if user:
                         uid = user["user_id"]
-                        price = PRICES.get(platform, 0)
+                        field_map = {
+                            "яндекс": "yandex", "google": "google", "2гис": "gis",
+                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
+                            "доктору": "doctoru", "докдок": "dokdok",
+                            "про докторов": "prodoctors", "докту": "doctu",
+                            "32топ": "top32", "zoon": "zoon",
+                            "яу": "yau", "яб": "yab", "h": "hh",
+                        }
+                        fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
-                            cur.execute("UPDATE users SET payout = payout - ?, total_earned = total_earned - ? WHERE user_id = ?", (price, price, uid))
-                            field_map = {
-                                "яндекс": "yandex", "google": "google", "2гис": "gis",
-                                "авито": "avito", "вк": "vk", "отзовик": "otzovik",
-                                "доктору": "doctoru", "докдок": "dokdok",
-                                "про докторов": "prodoctors", "докту": "doctu",
-                                "32топ": "top32", "zoon": "zoon",
-                                "яу": "yau", "яб": "yab", "h": "hh",
-                            }
-                            fp = field_map.get(platform)
                             if fp:
-                                cur.execute(f"UPDATE users SET {fp}_total = {fp}_total - 1, {fp}_passed = {fp}_passed - 1 WHERE user_id = ? AND {fp}_total > 0", (uid,))
+                                cur.execute(
+                                    f"UPDATE users SET "
+                                    f"  {fp}_total = CASE WHEN {fp}_total > 0 THEN {fp}_total - 1 ELSE 0 END, "
+                                    f"  {fp}_passed = CASE WHEN {fp}_passed > 0 THEN {fp}_passed - 1 ELSE 0 END "
+                                    f"WHERE user_id = ?",
+                                    (uid,)
+                                )
                             conn.commit()
                         e_value = 7
                     else:
@@ -817,7 +858,6 @@ async def mark_as_paid_in_table(user_ids: list):
         logger.error(f"❌ mark_as_paid: {e}")
 
 
-# ============ АВТООЧИСТКА КАНАЛА В 4:30 МСК ============
 async def cleanup_channel(bot):
     logger.info("🧹 Автоочистка канала (4:30 МСК)")
 
