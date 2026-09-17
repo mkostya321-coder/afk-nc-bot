@@ -206,6 +206,7 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
+                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПЕРЕОПУБЛИКАЦИЯ ============
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -221,8 +222,11 @@ async def monitor_schedule(bot):
 
                 if existing_msg_id is not None and slot is not None:
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
+
                     if not new_rows:
+                        # Слот уже полный — проверим, жив ли он, и если нет — пересоздадим
                         slot_alive = False
+                        dead = False
                         try:
                             text_check, kb_check = build_slot_message(
                                 platform, slot.get("count", 0),
@@ -238,11 +242,16 @@ async def monitor_schedule(bot):
                             err = str(e).lower()
                             if "message is not modified" in err:
                                 slot_alive = True
-                            else:
+                            elif ("message to edit not found" in err
+                                  or "message_id_invalid" in err
+                                  or "message can't be edited" in err):
+                                dead = True
                                 logger.warning(
                                     f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
                                     f"Удаляю запись и публикую заново."
                                 )
+                            else:
+                                logger.warning(f"⚠️ Проверка слота {platform} (msg {existing_msg_id}): {e}")
 
                         if slot_alive:
                             logger.info(
@@ -251,22 +260,55 @@ async def monitor_schedule(bot):
                             )
                             await asyncio.sleep(0.3)
                             continue
-                        else:
+
+                        if dead:
+                            # Публикуем новый слот со всеми строками, которые уже были в слоте
                             try:
                                 del active_slots[existing_msg_id]
                             except KeyError:
                                 pass
-                            existing_msg_id = None
-                            slot = None
 
-                if existing_msg_id is not None and slot is not None:
-                    new_rows = [r for r in row_ids if r not in slot["row_ids"]]
+                            new_text, kb = build_slot_message(
+                                platform, slot.get("count", 0),
+                                slot.get("date") or date_str,
+                                slot.get("time") or time_str
+                            )
+                            try:
+                                sent_msg = await bot.send_message(
+                                    chat_id=CHANNEL_ID, text=new_text,
+                                    reply_markup=kb, parse_mode=ParseMode.HTML
+                                )
+                                save_channel_message(sent_msg.message_id, CHANNEL_ID)
+                                active_slots[sent_msg.message_id] = {
+                                    "platform": platform, "count": slot.get("count", 0),
+                                    "initial_count": slot.get("count", 0),
+                                    "row_ids": list(slot.get("row_ids", [])),
+                                    "date": slot.get("date") or date_str,
+                                    "time": slot.get("time") or time_str,
+                                    "publish_time": datetime.now(moscow_tz),
+                                    "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
+                                }
+                                logger.info(
+                                    f"✅ Переопубликован {platform} "
+                                    f"({slot.get('count', 0)} шт, msg {sent_msg.message_id})"
+                                )
+                            except Exception as e:
+                                logger.error(f"❌ Не удалось переопубликовать слот {platform}: {e}")
 
+                            await asyncio.sleep(0.5)
+                            continue
+                        else:
+                            # edit не удался, но сообщение, возможно, живое — попробуем позже
+                            await asyncio.sleep(0.5)
+                            continue
+
+                    # Есть новые строки → дополняем
                     candidate_row_ids = list(slot["row_ids"]) + new_rows
                     candidate_count = len(candidate_row_ids)
                     new_text, kb = build_slot_message(platform, candidate_count, date_str, time_str)
 
                     edit_ok = False
+                    edit_failed_dead = False
                     try:
                         await bot.edit_message_text(
                             chat_id=CHANNEL_ID, message_id=existing_msg_id,
@@ -278,11 +320,59 @@ async def monitor_schedule(bot):
                         err = str(e).lower()
                         if "message is not modified" in err:
                             edit_ok = True
+                        elif ("message to edit not found" in err
+                              or "message_id_invalid" in err
+                              or "message can't be edited" in err):
+                            logger.warning(
+                                f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
+                                f"Удаляю запись и публикую новый слот со всеми строками ({candidate_count} шт)."
+                            )
+                            edit_failed_dead = True
                         else:
                             logger.warning(
                                 f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e} — "
-                                f"флаги НЕ ставлю, повторю на след. итерации"
+                                f"повторю на след. итерации"
                             )
+
+                    if edit_failed_dead:
+                        try:
+                            del active_slots[existing_msg_id]
+                        except KeyError:
+                            pass
+
+                        try:
+                            sent_msg = await bot.send_message(
+                                chat_id=CHANNEL_ID, text=new_text,
+                                reply_markup=kb, parse_mode=ParseMode.HTML
+                            )
+                            save_channel_message(sent_msg.message_id, CHANNEL_ID)
+                            active_slots[sent_msg.message_id] = {
+                                "platform": platform, "count": candidate_count,
+                                "initial_count": candidate_count, "row_ids": candidate_row_ids,
+                                "date": date_str, "time": time_str,
+                                "publish_time": datetime.now(moscow_tz),
+                                "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
+                            }
+                            logger.info(f"✅ Переопубликован {platform} ({candidate_count} шт, msg {sent_msg.message_id})")
+
+                            batch = []
+                            for row_idx in new_rows:
+                                review_id = secrets.token_hex(4)
+                                col_q = chr(64 + mapping["flag_first_col"])
+                                batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+                                col_s = chr(64 + mapping["id_col"])
+                                batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
+                            try:
+                                for i in range(0, len(batch), 50):
+                                    await retry_api_call(sheet.batch_update, batch[i:i+50])
+                                    await asyncio.sleep(0.5)
+                            except Exception as e:
+                                logger.error(f"❌ Q/S: {e}")
+                        except Exception as e:
+                            logger.error(f"❌ Не удалось переопубликовать слот {platform}: {e}")
+
+                        await asyncio.sleep(0.5)
+                        continue
 
                     if not edit_ok:
                         await asyncio.sleep(0.5)
@@ -308,6 +398,7 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
                 else:
+                    # Новый слот
                     new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
@@ -347,7 +438,7 @@ async def monitor_schedule(bot):
 
             await _check_republish(bot, client, now)
 
-            # === Закрытие вчерашних сессий при смене бизнес-дня ===
+            # === Смена бизнес-дня — закрытие вчерашних сессий ===
             current_bd = business_day_key(now)
             last_closed_bd = get_setting("last_closed_business_day")
 
