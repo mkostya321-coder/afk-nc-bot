@@ -224,7 +224,6 @@ async def monitor_schedule(bot):
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
 
                     if not new_rows:
-                        # Слот уже полный — проверим, жив ли он, и если нет — пересоздадим
                         slot_alive = False
                         dead = False
                         try:
@@ -262,7 +261,6 @@ async def monitor_schedule(bot):
                             continue
 
                         if dead:
-                            # Публикуем новый слот со всеми строками, которые уже были в слоте
                             try:
                                 del active_slots[existing_msg_id]
                             except KeyError:
@@ -298,11 +296,9 @@ async def monitor_schedule(bot):
                             await asyncio.sleep(0.5)
                             continue
                         else:
-                            # edit не удался, но сообщение, возможно, живое — попробуем позже
                             await asyncio.sleep(0.5)
                             continue
 
-                    # Есть новые строки → дополняем
                     candidate_row_ids = list(slot["row_ids"]) + new_rows
                     candidate_count = len(candidate_row_ids)
                     new_text, kb = build_slot_message(platform, candidate_count, date_str, time_str)
@@ -398,7 +394,6 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
                 else:
-                    # Новый слот
                     new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
@@ -438,13 +433,18 @@ async def monitor_schedule(bot):
 
             await _check_republish(bot, client, now)
 
-            # === Смена бизнес-дня — закрытие вчерашних сессий ===
+            # === Смена бизнес-дня ===
             current_bd = business_day_key(now)
             last_closed_bd = get_setting("last_closed_business_day")
 
             if last_closed_bd is None:
-                set_setting("last_closed_business_day", current_bd)
-                logger.info(f"🕒 Первый запуск: зафиксирован бизнес-день {current_bd}")
+                logger.info(f"🕒 Первый запуск: current_bd={current_bd}, закрываю все старые сессии")
+                ok = await _close_day(bot, client, now, current_bd)
+                if ok:
+                    set_setting("last_closed_business_day", current_bd)
+                    logger.info(f"🕒 last_closed_business_day установлен на {current_bd}")
+                else:
+                    logger.warning("⚠️ Первый запуск: _close_day с ошибками — повторю на след. итерации")
             elif current_bd > last_closed_bd:
                 logger.info(f"🕒 Смена бизнес-дня: {last_closed_bd} → {current_bd}, закрываю прошлые сессии")
                 ok = await _close_day(bot, client, now, current_bd)
@@ -582,6 +582,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
     any_critical_error = False
     to_remove = []
 
+    # ============ ЗАКРЫТИЕ СЕССИЙ ПОЛЬЗОВАТЕЛЕЙ ============
     for user_id, request in all_requests:
         created_bd = (request.get("created_business_day") or "").strip()
         if created_bd and created_bd >= current_business_day:
@@ -679,6 +680,86 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         except KeyError:
             pass
 
+    # ============ ПОМЕТКА НЕРАЗОБРАННЫХ СТРОК ФЛАГОМ 888 в I ============
+    # Собираем row_idx, которые хоть кто-то взял (по каждому листу)
+    taken_rows_by_sheet = {}
+    for _uid, _req in all_requests:
+        _st = _req.get("sheet_title")
+        if not _st:
+            continue
+        taken_rows_by_sheet.setdefault(_st, set()).update(_req.get("assigned_rows", []))
+
+    logger.info(f"🕒 Обрабатываю неразобранные строки в {len(active_slots)} слотах")
+    for msg_id, slot in list(active_slots.items()):
+        sheet_title = slot.get("sheet_title")
+        if not sheet_title:
+            continue
+        platform_key = slot.get("platform") or "яндекс"
+        mapping = slot.get("mapping")
+        if not mapping or "status_col" not in mapping:
+            mapping = get_column_mapping(platform_key)
+
+        slot_rows = slot.get("row_ids", [])
+        taken = taken_rows_by_sheet.get(sheet_title, set())
+        not_taken = [r for r in slot_rows if r not in taken]
+
+        if not not_taken:
+            logger.info(f"⏭️ msg {msg_id} ({platform_key}): все {len(slot_rows)} строк были взяты — не трогаю")
+            continue
+
+        try:
+            sheet = spreadsheet.worksheet(sheet_title)
+            records = await retry_api_call(sheet.get_all_values)
+        except Exception as e:
+            logger.error(f"❌ _close_day: не открыть '{sheet_title}' для неразобранных: {e}")
+            any_critical_error = True
+            continue
+
+        batch = []
+        to_format = []
+        skipped_by_status = 0
+
+        for row_idx in not_taken:
+            if row_idx - 1 >= len(records):
+                continue
+            row = records[row_idx - 1]
+            if not row:
+                continue
+            j_val = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+            # Пропускаем строки, которые уже кто-то обработал
+            if j_val in ("в работе", "на модерации", "на модерации с опз",
+                         "опубликован", "опубликовано", "опубликован опз", "оплачено",
+                         "в отчете испол", "удален"):
+                skipped_by_status += 1
+                continue
+            col_i = chr(64 + mapping["flag_final_col"])
+            batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
+            to_format.append((row_idx, col_i))
+
+        logger.info(
+            f"🕒 msg {msg_id} ({platform_key}, лист '{sheet_title}'): "
+            f"строк в слоте {len(slot_rows)}, неразобрано {len(not_taken)}, "
+            f"пропущено по статусу {skipped_by_status}, ставить 888: {len(batch)}"
+        )
+
+        if batch:
+            try:
+                for i in range(0, len(batch), 50):
+                    await retry_api_call(sheet.batch_update, batch[i:i+50])
+                    await asyncio.sleep(0.5)
+                for row_idx, col_i in to_format:
+                    try:
+                        sheet.format(f"{col_i}{row_idx}", {
+                            "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
+                        })
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не удалось закрасить {col_i}{row_idx}: {e}")
+                logger.info(f"✅ msg {msg_id}: помечено 888 в I: {len(batch)}")
+            except Exception as e:
+                logger.error(f"❌ msg {msg_id}: ошибка batch_update неразобранных: {e}")
+                any_critical_error = True
+
+    # ============ ЗАКРЫТИЕ СООБЩЕНИЙ СЛОТОВ ============
     active_ids = list(active_slots.keys())
     logger.info(f"🕒 Сообщений-слотов к закрытию: {len(active_ids)}")
     for msg_id in active_ids:
