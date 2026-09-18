@@ -9,6 +9,7 @@ from bot.database import (
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout
 )
+from bot.helpers import match_platform, PRICES
 import sqlite3
 import asyncio
 import logging
@@ -63,6 +64,8 @@ async def cmd_helpadm(message: Message):
             "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
             "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
             "💸 /pay @username <сумма> — пополнить баланс пользователю\n"
+            "➖ /subtract platform @user <платформа> <N> [ШТ] [...] — списать N отзывов по платформам\n"
+            "➖ /subtract many @user <сумма> — списать N рублей с баланса\n"
             "ℹ️ /info <username> — краткий профиль пользователя\n"
             "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
             "🔄 /update_stats — обновить статистику\n"
@@ -387,6 +390,161 @@ async def cmd_pay(message: Message):
         f"📊 Пополнение адм за неделю: {new_topup}₽"
     )
     log_action(message, f"Пополнение {amount}₽ пользователю {user_id} ({target})")
+
+
+@router.message(Command("subtract"))
+async def cmd_subtract(message: Message):
+    """
+    /subtract platform @user <платформа> <N> [ШТ] [<платформа2> <N2> ШТ ...]
+    /subtract many @user <сумма>
+    """
+    if not is_ga(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 4:
+        await message.answer(
+            "❌ Использование:\n"
+            "• /subtract platform @user <платформа> <N> [ШТ] [<платформа2> <N2> ШТ ...]\n"
+            "• /subtract many @user <сумма>\n\n"
+            "Примеры:\n"
+            "• /subtract platform @ivan 2ГИС 10 ШТ\n"
+            "• /subtract platform @ivan 2ГИС 10 ШТ Яндекс 5 ШТ\n"
+            "• /subtract many @ivan 300"
+        )
+        return
+
+    mode = parts[1].lower()
+    target = parts[2].lstrip("@").lower()
+    user = get_user_by_username(target)
+    if not user:
+        await message.answer(f"❌ Пользователь @{target} не найден.")
+        return
+
+    uid = user["user_id"]
+    username = user.get("tg_username") or target
+
+    # ============ РЕЖИМ many: списать X рублей ============
+    if mode == "many":
+        try:
+            amount = int(parts[3])
+            if amount <= 0:
+                raise ValueError
+        except (ValueError, IndexError):
+            await message.answer("❌ Сумма должна быть положительным числом.\nПример: /subtract many @ivan 300")
+            return
+
+        new_payout = (user.get("payout") or 0) - amount
+        new_earned = (user.get("total_earned") or 0) - amount
+        new_topup = (user.get("admin_topup") or 0) - amount
+
+        update_user_field(uid, "payout", new_payout)
+        update_user_field(uid, "total_earned", new_earned)
+        update_user_field(uid, "admin_topup", new_topup)
+
+        await message.answer(
+            f"✅ Списано {amount}₽ с @{username}\n\n"
+            f"💰 К выплате: {new_payout}₽\n"
+            f"💵 Заработано ЗВВ: {new_earned}₽\n"
+            f"📊 Поправка баланса: {new_topup}₽"
+        )
+        log_action(message, f"Списано {amount}₽ (many) у {uid} ({target})")
+        return
+
+    # ============ РЕЖИМ platform: списать N штук платформ ============
+    if mode == "platform":
+        tokens = parts[3:]
+        ops = []
+        i = 0
+        while i < len(tokens):
+            plat_raw = tokens[i]
+            i += 1
+            if i >= len(tokens):
+                await message.answer(f"❌ После '{plat_raw}' ожидалось число.\nПример: /subtract platform @ivan 2ГИС 10 ШТ")
+                return
+            try:
+                cnt = int(tokens[i])
+                if cnt <= 0:
+                    raise ValueError
+            except ValueError:
+                await message.answer(f"❌ Ожидалось положительное число после '{plat_raw}', получено '{tokens[i]}'.")
+                return
+            i += 1
+            ops.append((plat_raw, cnt))
+            if i < len(tokens) and tokens[i].lower() in ("шт", "штук", "штуки", "штука"):
+                i += 1
+
+        if not ops:
+            await message.answer("❌ Не указаны платформы и количество.")
+            return
+
+        field_map = {
+            "яндекс": "yandex", "google": "google", "2гис": "gis",
+            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
+            "доктору": "doctoru", "докдок": "dokdok",
+            "про докторов": "prodoctors", "докту": "doctu",
+            "32топ": "top32", "zoon": "zoon",
+            "яу": "yau", "яб": "yab", "h": "hh",
+        }
+
+        # Свежие данные юзера
+        user = get_user(uid)
+        total_deducted = 0
+        details = []
+        updates = {}
+
+        for plat_raw, cnt in ops:
+            plat = match_platform(plat_raw)
+            if not plat:
+                await message.answer(
+                    f"❌ Не распознал платформу '{plat_raw}'.\n"
+                    f"Допустимые: Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, "
+                    f"ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, ЯУ, ЯБ, HH."
+                )
+                return
+            fp = field_map[plat]
+            price = PRICES.get(plat, 0)
+            delta_rub = cnt * price
+
+            cur_passed = user.get(f"{fp}_passed") or 0
+            cur_total = user.get(f"{fp}_total") or 0
+
+            new_passed = max(0, cur_passed - cnt)
+            new_total = max(0, cur_total - cnt)
+
+            updates[f"{fp}_passed"] = new_passed
+            updates[f"{fp}_total"] = new_total
+            user[f"{fp}_passed"] = new_passed
+            user[f"{fp}_total"] = new_total
+
+            total_deducted += delta_rub
+            details.append(f"• {plat}: -{cnt} шт × {price}₽ = -{delta_rub}₽")
+
+        new_payout = (user.get("payout") or 0) - total_deducted
+        new_earned = (user.get("total_earned") or 0) - total_deducted
+
+        for field, value in updates.items():
+            update_user_field(uid, field, value)
+        update_user_field(uid, "payout", new_payout)
+        update_user_field(uid, "total_earned", new_earned)
+
+        details_text = "\n".join(details)
+        await message.answer(
+            f"✅ Списано с @{username}:\n\n"
+            f"{details_text}\n\n"
+            f"💸 Итого списано: {total_deducted}₽\n"
+            f"💰 К выплате: {new_payout}₽\n"
+            f"💵 Заработано ЗВВ: {new_earned}₽"
+        )
+        log_action(message, f"Списано с {uid} ({target}): {details_text}")
+        return
+
+    await message.answer(
+        "❌ Первый аргумент должен быть 'platform' или 'many'.\n"
+        "Пример: /subtract platform @ivan 2ГИС 10 ШТ\n"
+        "Или:    /subtract many @ivan 300"
+    )
 
 
 @router.message(Command("update_stats"))
