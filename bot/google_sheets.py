@@ -33,6 +33,8 @@ BLOCKED_STATUSES = (
     "удален",
 )
 
+BLUE_BG = {"red": 0, "green": 0, "blue": 0.8}
+
 
 def get_credentials():
     path = get_credentials_path()
@@ -66,6 +68,39 @@ async def retry_api_call(func, *args, max_attempts=8, **kwargs):
             logger.error(f"❌ Ошибка API: {e}")
             raise
     raise Exception(f"Не удалось выполнить после {max_attempts} попыток")
+
+
+async def _batch_format_cells(spreadsheet, sheet_id: int, cells: list, bg_color: dict):
+    """
+    Красит N ячеек ОДНИМ запросом через Spreadsheet.batch_update.
+    cells: список (row_idx, col_idx) 1-based.
+    """
+    if not cells:
+        return
+    requests = []
+    for row_idx, col_idx in cells:
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_idx - 1,
+                    "endRowIndex": row_idx,
+                    "startColumnIndex": col_idx - 1,
+                    "endColumnIndex": col_idx,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": bg_color
+                    }
+                },
+                "fields": "userEnteredFormat.backgroundColor"
+            }
+        })
+    # Google принимает до ~100 requests за раз
+    for i in range(0, len(requests), 100):
+        chunk = requests[i:i+100]
+        await retry_api_call(spreadsheet.batch_update, {"requests": chunk})
+        await asyncio.sleep(1.0)
 
 
 def build_slot_message(platform: str, count: int, date: str, time: str):
@@ -206,7 +241,7 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
-                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПЕРЕОПУБЛИКАЦИЯ ============
+                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ ============
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -249,13 +284,11 @@ async def monitor_schedule(bot):
                                     f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
                                     f"Удаляю запись и публикую заново."
                                 )
-                            else:
-                                logger.warning(f"⚠️ Проверка слота {platform} (msg {existing_msg_id}): {e}")
 
                         if slot_alive:
                             logger.info(
                                 f"ℹ️ '{sheet_name}' (platform={platform}): все {len(row_ids)} строк "
-                                f"уже в активном слоте (msg {existing_msg_id}, count {slot.get('count', 0)})"
+                                f"уже в активном слоте (msg {existing_msg_id})"
                             )
                             await asyncio.sleep(0.3)
                             continue
@@ -321,13 +354,12 @@ async def monitor_schedule(bot):
                               or "message can't be edited" in err):
                             logger.warning(
                                 f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
-                                f"Удаляю запись и публикую новый слот со всеми строками ({candidate_count} шт)."
+                                f"Публикую новый слот ({candidate_count} шт)."
                             )
                             edit_failed_dead = True
                         else:
                             logger.warning(
-                                f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e} — "
-                                f"повторю на след. итерации"
+                                f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e}"
                             )
 
                     if edit_failed_dead:
@@ -599,7 +631,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             continue
 
         if not sheet_title:
-            logger.warning(f"⚠️ user {user_id} ({platform_key}): нет sheet_title — не могу чистить строки, только удалю сессию")
+            logger.warning(f"⚠️ user {user_id} ({platform_key}): нет sheet_title")
             to_remove.append(user_id)
             continue
 
@@ -619,7 +651,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             continue
 
         batch = []
-        to_format = []
+        cells_to_blue = []
         statuses_seen = {}
 
         for row_idx in assigned_rows:
@@ -633,38 +665,42 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
             col_j = chr(64 + mapping["status_col"])
             col_k = chr(64 + mapping["executor_col"])
-            col_i = chr(64 + mapping["flag_final_col"])
+            col_i_letter = chr(64 + mapping["flag_final_col"])
 
             if j_val == "на модерации":
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif j_val == "в работе":
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                 batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
-                batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
-                to_format.append((row_idx, col_i))
+                batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[888]]})
+                cells_to_blue.append((row_idx, mapping["flag_final_col"]))
 
         logger.info(
-            f"🕒 user {user_id} ({platform_key}, лист '{sheet_title}'): "
-            f"строк {len(assigned_rows)}, статусы: {statuses_seen}, к обновлению {len(batch)}"
+            f"🕒 user {user_id} ({platform_key}, '{sheet_title}'): "
+            f"строк {len(assigned_rows)}, статусы: {statuses_seen}, к обновлению {len(batch)}, "
+            f"закрасить {len(cells_to_blue)}"
         )
 
         if batch:
             try:
                 for i in range(0, len(batch), 50):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
-                    await asyncio.sleep(0.5)
-                for row_idx, col_i in to_format:
-                    try:
-                        sheet.format(f"{col_i}{row_idx}", {
-                            "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
-                        })
-                    except Exception as e:
-                        logger.warning(f"⚠️ Не удалось закрасить {col_i}{row_idx}: {e}")
-                logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек")
+                    await asyncio.sleep(0.6)
             except Exception as e:
                 logger.error(f"❌ user {user_id}: ошибка batch_update: {e} — оставляю сессию для повтора")
                 any_critical_error = True
                 continue
+
+        if cells_to_blue:
+            try:
+                sheet_id = sheet.id
+                await _batch_format_cells(spreadsheet, sheet_id, cells_to_blue, BLUE_BG)
+            except Exception as e:
+                logger.warning(f"⚠️ user {user_id}: не удалось закрасить {len(cells_to_blue)} ячеек: {e}")
+                # не критично — 888 уже проставлен
+
+        if batch:
+            logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек, покрашено {len(cells_to_blue)}")
 
         try:
             await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
@@ -673,15 +709,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         to_remove.append(user_id)
 
-    for user_id in to_remove:
-        try:
-            del slot_requests[user_id]
-            logger.info(f"🗑️ user {user_id}: сессия удалена")
-        except KeyError:
-            pass
-
-    # ============ ПОМЕТКА НЕРАЗОБРАННЫХ СТРОК ФЛАГОМ 888 в I ============
-    # Собираем row_idx, которые хоть кто-то взял (по каждому листу)
+    # ============ ПОМЕТКА НЕРАЗОБРАННЫХ 888 ============
     taken_rows_by_sheet = {}
     for _uid, _req in all_requests:
         _st = _req.get("sheet_title")
@@ -690,6 +718,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         taken_rows_by_sheet.setdefault(_st, set()).update(_req.get("assigned_rows", []))
 
     logger.info(f"🕒 Обрабатываю неразобранные строки в {len(active_slots)} слотах")
+    ok_slots_to_delete = []
     for msg_id, slot in list(active_slots.items()):
         sheet_title = slot.get("sheet_title")
         if not sheet_title:
@@ -704,7 +733,8 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         not_taken = [r for r in slot_rows if r not in taken]
 
         if not not_taken:
-            logger.info(f"⏭️ msg {msg_id} ({platform_key}): все {len(slot_rows)} строк были взяты — не трогаю")
+            logger.info(f"⏭️ msg {msg_id} ({platform_key}): все {len(slot_rows)} строк были взяты")
+            ok_slots_to_delete.append(msg_id)
             continue
 
         try:
@@ -716,8 +746,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             continue
 
         batch = []
-        to_format = []
+        cells_to_blue = []
         skipped_by_status = 0
+        already_888 = 0
 
         for row_idx in not_taken:
             if row_idx - 1 >= len(records):
@@ -726,43 +757,70 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if not row:
                 continue
             j_val = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
-            # Пропускаем строки, которые уже кто-то обработал
-            if j_val in ("в работе", "на модерации", "на модерации с опз",
-                         "опубликован", "опубликовано", "опубликован опз", "оплачено",
-                         "в отчете испол", "удален"):
+            if j_val in BLOCKED_STATUSES:
                 skipped_by_status += 1
                 continue
-            col_i = chr(64 + mapping["flag_final_col"])
-            batch.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
-            to_format.append((row_idx, col_i))
+            i_val = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
+            col_i_letter = chr(64 + mapping["flag_final_col"])
+            if i_val == "888":
+                already_888 += 1
+                # Всё равно красим (могло не пройти в прошлый раз)
+                cells_to_blue.append((row_idx, mapping["flag_final_col"]))
+                continue
+            batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[888]]})
+            cells_to_blue.append((row_idx, mapping["flag_final_col"]))
 
         logger.info(
-            f"🕒 msg {msg_id} ({platform_key}, лист '{sheet_title}'): "
-            f"строк в слоте {len(slot_rows)}, неразобрано {len(not_taken)}, "
-            f"пропущено по статусу {skipped_by_status}, ставить 888: {len(batch)}"
+            f"🕒 msg {msg_id} ({platform_key}, '{sheet_title}'): "
+            f"в слоте {len(slot_rows)}, неразобрано {len(not_taken)}, "
+            f"уже 888: {already_888}, по статусу пропуск: {skipped_by_status}, "
+            f"проставить 888: {len(batch)}, покрасить: {len(cells_to_blue)}"
         )
+
+        slot_ok = True
 
         if batch:
             try:
                 for i in range(0, len(batch), 50):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
-                    await asyncio.sleep(0.5)
-                for row_idx, col_i in to_format:
-                    try:
-                        sheet.format(f"{col_i}{row_idx}", {
-                            "backgroundColor": {"red": 0, "green": 0, "blue": 0.8}
-                        })
-                    except Exception as e:
-                        logger.warning(f"⚠️ Не удалось закрасить {col_i}{row_idx}: {e}")
-                logger.info(f"✅ msg {msg_id}: помечено 888 в I: {len(batch)}")
+                    await asyncio.sleep(0.6)
+                logger.info(f"✅ msg {msg_id}: 888 проставлен в {len(batch)} строк")
             except Exception as e:
-                logger.error(f"❌ msg {msg_id}: ошибка batch_update неразобранных: {e}")
+                logger.error(f"❌ msg {msg_id}: ошибка batch_update 888: {e} — слот оставлю для повтора")
                 any_critical_error = True
+                slot_ok = False
+
+        if cells_to_blue:
+            try:
+                sheet_id = sheet.id
+                await _batch_format_cells(spreadsheet, sheet_id, cells_to_blue, BLUE_BG)
+                logger.info(f"✅ msg {msg_id}: закрашено {len(cells_to_blue)} ячеек одним запросом")
+            except Exception as e:
+                logger.warning(f"⚠️ msg {msg_id}: не удалось закрасить: {e}")
+                # закраска не критична — 888 уже проставлен
+
+        if slot_ok:
+            ok_slots_to_delete.append(msg_id)
+
+    # Удаляем успешно закрытые слоты
+    for msg_id in ok_slots_to_delete:
+        try:
+            del active_slots[msg_id]
+        except KeyError:
+            pass
+
+    # Удаляем успешно закрытые сессии
+    for user_id in to_remove:
+        try:
+            del slot_requests[user_id]
+            logger.info(f"🗑️ user {user_id}: сессия удалена")
+        except KeyError:
+            pass
 
     # ============ ЗАКРЫТИЕ СООБЩЕНИЙ СЛОТОВ ============
-    active_ids = list(active_slots.keys())
-    logger.info(f"🕒 Сообщений-слотов к закрытию: {len(active_ids)}")
-    for msg_id in active_ids:
+    # Закрываем только те, которые успешно обработались
+    logger.info(f"🕒 Сообщений-слотов к закрытию: {len(ok_slots_to_delete)}")
+    for msg_id in ok_slots_to_delete:
         try:
             await bot.edit_message_text(
                 chat_id=CHANNEL_ID, message_id=msg_id,
@@ -770,13 +828,12 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             )
         except Exception as e:
             logger.warning(f"⚠️ msg {msg_id}: не закрыть ({e})")
-        try:
-            del active_slots[msg_id]
-        except KeyError:
-            pass
 
     if any_critical_error:
-        logger.warning("🕒 День закрыт ЧАСТИЧНО — верну False для повтора")
+        logger.warning(
+            f"🕒 День закрыт ЧАСТИЧНО — есть ошибки. "
+            f"Осталось слотов: {len(active_slots)}, сессий: {len(slot_requests)}. Верну False для повтора."
+        )
         return False
 
     logger.info("✅ День закрыт полностью")
@@ -942,7 +999,7 @@ async def update_stats_from_sheet_once():
             try:
                 for i in range(0, len(batch), 50):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.6)
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
@@ -1023,7 +1080,7 @@ async def mark_as_paid_in_table(user_ids: list):
                 try:
                     for i in range(0, len(batch), 50):
                         await retry_api_call(sheet.batch_update, batch[i:i+50])
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.6)
                 except Exception as e:
                     logger.error(f"❌ Статус: {e}")
     except Exception as e:
