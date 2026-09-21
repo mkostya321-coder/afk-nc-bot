@@ -13,7 +13,7 @@ from bot.database import (
     is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
     add_review_take, count_review_takes_last_24h, get_limit
 )
-from bot.google_sheets import get_client
+from bot.google_sheets import get_client, build_slot_message
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
 from bot.state import active_slots, slot_requests
 import pytz
@@ -390,6 +390,22 @@ async def handle_quantity_input(message: Message):
         slot_info["count"] = len(slot_info["row_ids"])
         active_slots[slot_msg_id] = slot_info
 
+        # Обновляем сообщение слота сразу, чтобы count в чате совпадал с реальным
+        try:
+            new_text, kb = build_slot_message(
+                slot_info.get("platform", platform),
+                slot_info["count"],
+                slot_info.get("date") or "",
+                slot_info.get("time") or ""
+            )
+            await message.bot.edit_message_text(
+                chat_id=CHANNEL_ID, message_id=slot_msg_id,
+                text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
+            )
+            logger.info(f"🔄 Слот {slot_info.get('platform', platform)} обновлён до {slot_info['count']} шт после взятия")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось обновить сообщение слота после взятия: {e}")
+
         if slot_info["count"] == 0:
             try:
                 await message.bot.edit_message_text(
@@ -450,7 +466,6 @@ async def handle_quantity_input(message: Message):
     await send_instruction(user_id, message.bot)
 
 
-# ============ ВЗЯТЬ СЛОТ ============
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     try:
@@ -526,7 +541,7 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
         return
 
-    # === КРИТИЧЕСКАЯ ПРОВЕРКА: источник истины — sheet_title, а не callback ===
+    # === Источник истины — sheet_title, а не callback ===
     sheet_title = slot_info.get("sheet_title")
     real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
 
@@ -623,7 +638,6 @@ async def select_review(callback: CallbackQuery):
     platform = request.get("platform", "яндекс")
     sheet_title = request.get("sheet_title")
 
-    # Сверка: если sheet_title даёт другую платформу — принудительно пересобираем
     real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
     if real_platform and real_platform != platform:
         logger.warning(
