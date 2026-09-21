@@ -96,7 +96,6 @@ async def _batch_format_cells(spreadsheet, sheet_id: int, cells: list, bg_color:
                 "fields": "userEnteredFormat.backgroundColor"
             }
         })
-    # Google принимает до ~100 requests за раз
     for i in range(0, len(requests), 100):
         chunk = requests[i:i+100]
         await retry_api_call(spreadsheet.batch_update, {"requests": chunk})
@@ -241,7 +240,7 @@ async def monitor_schedule(bot):
                         await asyncio.sleep(0.3)
                         continue
 
-                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ ============
+                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПЕРЕОПУБЛИКАЦИЯ ============
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -256,14 +255,59 @@ async def monitor_schedule(bot):
                 time_str = first_row[mapping["time_col"]-1].strip()
 
                 if existing_msg_id is not None and slot is not None:
+                    # === СИНХРОНИЗАЦИЯ COUNT И ROW_IDS ===
+                    real_count = len(slot.get("row_ids", []))
+                    stored_count = slot.get("count", 0)
+                    if real_count != stored_count:
+                        logger.warning(
+                            f"⚠️ РАССИНХРОН count у {platform} (msg {existing_msg_id}): "
+                            f"slot.count={stored_count}, row_ids={real_count}. Исправляю на {real_count}."
+                        )
+                        slot["count"] = real_count
+                        active_slots[existing_msg_id] = slot
+
+                    # === СИНХРОНИЗАЦИЯ Q/S: строки в row_ids должны иметь Q=1 и S=id ===
+                    sync_batch = []
+                    try:
+                        for row_idx in slot["row_ids"]:
+                            if row_idx - 1 >= len(records):
+                                continue
+                            rrow = records[row_idx - 1]
+                            if not rrow:
+                                continue
+                            q_val = rrow[mapping["flag_first_col"]-1].strip() if len(rrow) >= mapping["flag_first_col"] else ""
+                            s_val = rrow[mapping["id_col"]-1].strip() if len(rrow) >= mapping["id_col"] else ""
+                            if q_val != "1" or not s_val:
+                                review_id = s_val or secrets.token_hex(4)
+                                col_q = chr(64 + mapping["flag_first_col"])
+                                col_s = chr(64 + mapping["id_col"])
+                                sync_batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+                                sync_batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
+                                logger.info(
+                                    f"🔧 Синхронизирую строку {row_idx}: Q было '{q_val}' → 1, "
+                                    f"S было '{s_val or '—'}' → {review_id}"
+                                )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Ошибка синхронизации Q/S для {platform}: {e}")
+
+                    if sync_batch:
+                        try:
+                            for i in range(0, len(sync_batch), 50):
+                                await retry_api_call(sheet.batch_update, sync_batch[i:i+50])
+                                await asyncio.sleep(0.6)
+                            logger.info(f"✅ Синхронизировано {len(sync_batch)//2} строк в '{sheet_name}'")
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка синхронизации Q/S batch: {e}")
+
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
 
                     if not new_rows:
                         slot_alive = False
                         dead = False
+                        current_count = len(slot.get("row_ids", []))
                         try:
                             text_check, kb_check = build_slot_message(
-                                platform, slot.get("count", 0),
+                                platform, current_count,
                                 slot.get("date") or "", slot.get("time") or ""
                             )
                             await bot.edit_message_text(
@@ -272,24 +316,30 @@ async def monitor_schedule(bot):
                                 parse_mode=ParseMode.HTML
                             )
                             slot_alive = True
+                            logger.info(
+                                f"ℹ️ '{sheet_name}' (platform={platform}): "
+                                f"слот живой, {current_count} шт (msg {existing_msg_id})"
+                            )
                         except Exception as e:
                             err = str(e).lower()
                             if "message is not modified" in err:
                                 slot_alive = True
+                                logger.info(
+                                    f"ℹ️ '{sheet_name}' (platform={platform}): сообщение не изменилось, "
+                                    f"{current_count} шт (msg {existing_msg_id})"
+                                )
                             elif ("message to edit not found" in err
                                   or "message_id_invalid" in err
                                   or "message can't be edited" in err):
                                 dead = True
                                 logger.warning(
                                     f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
-                                    f"Удаляю запись и публикую заново."
+                                    f"Пересоздаю с {current_count} строками."
                                 )
+                            else:
+                                logger.warning(f"⚠️ Проверка слота {platform} (msg {existing_msg_id}): {e}")
 
                         if slot_alive:
-                            logger.info(
-                                f"ℹ️ '{sheet_name}' (platform={platform}): все {len(row_ids)} строк "
-                                f"уже в активном слоте (msg {existing_msg_id})"
-                            )
                             await asyncio.sleep(0.3)
                             continue
 
@@ -300,7 +350,7 @@ async def monitor_schedule(bot):
                                 pass
 
                             new_text, kb = build_slot_message(
-                                platform, slot.get("count", 0),
+                                platform, current_count,
                                 slot.get("date") or date_str,
                                 slot.get("time") or time_str
                             )
@@ -311,8 +361,8 @@ async def monitor_schedule(bot):
                                 )
                                 save_channel_message(sent_msg.message_id, CHANNEL_ID)
                                 active_slots[sent_msg.message_id] = {
-                                    "platform": platform, "count": slot.get("count", 0),
-                                    "initial_count": slot.get("count", 0),
+                                    "platform": platform, "count": current_count,
+                                    "initial_count": current_count,
                                     "row_ids": list(slot.get("row_ids", [])),
                                     "date": slot.get("date") or date_str,
                                     "time": slot.get("time") or time_str,
@@ -321,7 +371,7 @@ async def monitor_schedule(bot):
                                 }
                                 logger.info(
                                     f"✅ Переопубликован {platform} "
-                                    f"({slot.get('count', 0)} шт, msg {sent_msg.message_id})"
+                                    f"({current_count} шт, msg {sent_msg.message_id})"
                                 )
                             except Exception as e:
                                 logger.error(f"❌ Не удалось переопубликовать слот {platform}: {e}")
@@ -393,7 +443,7 @@ async def monitor_schedule(bot):
                             try:
                                 for i in range(0, len(batch), 50):
                                     await retry_api_call(sheet.batch_update, batch[i:i+50])
-                                    await asyncio.sleep(0.5)
+                                    await asyncio.sleep(0.6)
                             except Exception as e:
                                 logger.error(f"❌ Q/S: {e}")
                         except Exception as e:
@@ -422,7 +472,7 @@ async def monitor_schedule(bot):
                     try:
                         for i in range(0, len(batch), 50):
                             await retry_api_call(sheet.batch_update, batch[i:i+50])
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.6)
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
                 else:
@@ -457,7 +507,7 @@ async def monitor_schedule(bot):
                     try:
                         for i in range(0, len(batch), 50):
                             await retry_api_call(sheet.batch_update, batch[i:i+50])
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.6)
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
 
@@ -583,7 +633,7 @@ async def _check_republish(bot, client, now):
                     batch.append({"range": f"{chr(64+col)}{row_idx}", "values": [[1]]})
                 for i in range(0, len(batch), 50):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.6)
             except Exception as e:
                 logger.error(f"❌ Флаги: {e}")
 
@@ -697,7 +747,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 await _batch_format_cells(spreadsheet, sheet_id, cells_to_blue, BLUE_BG)
             except Exception as e:
                 logger.warning(f"⚠️ user {user_id}: не удалось закрасить {len(cells_to_blue)} ячеек: {e}")
-                # не критично — 888 уже проставлен
 
         if batch:
             logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек, покрашено {len(cells_to_blue)}")
@@ -764,7 +813,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             col_i_letter = chr(64 + mapping["flag_final_col"])
             if i_val == "888":
                 already_888 += 1
-                # Всё равно красим (могло не пройти в прошлый раз)
                 cells_to_blue.append((row_idx, mapping["flag_final_col"]))
                 continue
             batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[888]]})
@@ -797,19 +845,16 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 logger.info(f"✅ msg {msg_id}: закрашено {len(cells_to_blue)} ячеек одним запросом")
             except Exception as e:
                 logger.warning(f"⚠️ msg {msg_id}: не удалось закрасить: {e}")
-                # закраска не критична — 888 уже проставлен
 
         if slot_ok:
             ok_slots_to_delete.append(msg_id)
 
-    # Удаляем успешно закрытые слоты
     for msg_id in ok_slots_to_delete:
         try:
             del active_slots[msg_id]
         except KeyError:
             pass
 
-    # Удаляем успешно закрытые сессии
     for user_id in to_remove:
         try:
             del slot_requests[user_id]
@@ -818,7 +863,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             pass
 
     # ============ ЗАКРЫТИЕ СООБЩЕНИЙ СЛОТОВ ============
-    # Закрываем только те, которые успешно обработались
     logger.info(f"🕒 Сообщений-слотов к закрытию: {len(ok_slots_to_delete)}")
     for msg_id in ok_slots_to_delete:
         try:
