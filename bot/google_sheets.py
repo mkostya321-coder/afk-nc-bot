@@ -214,9 +214,15 @@ async def monitor_schedule(bot):
                             slot_time = moscow_tz.localize(slot_time)
                         except Exception:
                             stats["bad_date_format"] += 1
-                            _d = (date_str or "").lower()
-                            _t = (time_str or "").lower()
-                            if "дата" in _d or "впл" in _d or "время" in _t or "пбл" in _t:
+                            _d = (date_str or "").strip()
+                            _t = (time_str or "").strip()
+                            _dl = _d.lower()
+                            _tl = _t.lower()
+                            if "дата" in _dl or "впл" in _dl or "время" in _tl or "пбл" in _tl:
+                                continue
+                            if _d in ("", "0") or _t in ("", "0"):
+                                continue
+                            if _d == _t:
                                 continue
                             logger.warning(f"  [{sheet_name}] строка {row_idx}: не парсится '{date_str} {time_str}'")
                             continue
@@ -237,10 +243,11 @@ async def monitor_schedule(bot):
                             f"битый формат {stats['bad_date_format']}, "
                             f"коротких {stats['too_short']}"
                         )
-                        await asyncio.sleep(0.3)
-                        continue
+                        # Даже если публиковать нечего — сделаем прунинг существующего слота
+                        # (вдруг строки стали невалидными — стёрли дату/время и т.п.)
+                        pass
 
-                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПЕРЕОПУБЛИКАЦИЯ ============
+                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПРУНИНГ / ПЕРЕОПУБЛИКАЦИЯ ============
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -250,9 +257,13 @@ async def monitor_schedule(bot):
                         break
 
                 row_ids = [r[0] for r in to_publish]
-                first_row = to_publish[0][1]
-                date_str = first_row[mapping["date_col"]-1].strip()
-                time_str = first_row[mapping["time_col"]-1].strip()
+                if to_publish:
+                    first_row = to_publish[0][1]
+                    date_str = first_row[mapping["date_col"]-1].strip()
+                    time_str = first_row[mapping["time_col"]-1].strip()
+                else:
+                    date_str = ""
+                    time_str = ""
 
                 if existing_msg_id is not None and slot is not None:
                     # === СИНХРОНИЗАЦИЯ COUNT И ROW_IDS ===
@@ -283,10 +294,6 @@ async def monitor_schedule(bot):
                                 col_s = chr(64 + mapping["id_col"])
                                 sync_batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                                 sync_batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
-                                logger.info(
-                                    f"🔧 Синхронизирую строку {row_idx}: Q было '{q_val}' → 1, "
-                                    f"S было '{s_val or '—'}' → {review_id}"
-                                )
                     except Exception as e:
                         logger.warning(f"⚠️ Ошибка синхронизации Q/S для {platform}: {e}")
 
@@ -299,9 +306,49 @@ async def monitor_schedule(bot):
                         except Exception as e:
                             logger.error(f"❌ Ошибка синхронизации Q/S batch: {e}")
 
+                    # === ПРУНИНГ: убираем из слота строки, потерявшие валидность ===
+                    # (юзер стёр дату/время в таблице, или строка стала флагом/блок-статусом).
+                    # НЕ убираем строки, которые кто-то уже взял в работу.
+                    taken_now = set()
+                    for _uid, _req in list(slot_requests.items()):
+                        if _req.get("sheet_title") == sheet_title:
+                            taken_now.update(_req.get("assigned_rows", []))
+
+                    valid_now = set(row_ids)
+                    pruned = [
+                        r for r in list(slot["row_ids"])
+                        if r not in valid_now and r not in taken_now
+                    ]
+
+                    if pruned:
+                        logger.info(
+                            f"✂️ {platform} (msg {existing_msg_id}): прунинг {len(pruned)} невалидных строк: {pruned}"
+                        )
+                        slot["row_ids"] = [r for r in slot["row_ids"] if r not in pruned]
+                        slot["count"] = len(slot["row_ids"])
+                        active_slots[existing_msg_id] = slot
+
+                    # Если после прунинга слот пустой — закрываем его
+                    if not slot["row_ids"]:
+                        logger.info(f"🗑️ {platform} (msg {existing_msg_id}): слот пуст после прунинга, закрываю")
+                        try:
+                            await bot.edit_message_text(
+                                chat_id=CHANNEL_ID, message_id=existing_msg_id,
+                                text="🔥 Слот полностью разобран. Ожидайте следующий."
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Не удалось обновить пустой слот: {e}")
+                        try:
+                            del active_slots[existing_msg_id]
+                        except KeyError:
+                            pass
+                        await asyncio.sleep(0.5)
+                        continue
+
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
 
-                    if not new_rows:
+                    # Если ни новых, ни прунинга — просто проверяем, что слот живой
+                    if not new_rows and not pruned:
                         slot_alive = False
                         dead = False
                         current_count = len(slot.get("row_ids", []))
@@ -382,6 +429,7 @@ async def monitor_schedule(bot):
                             await asyncio.sleep(0.5)
                             continue
 
+                    # Есть изменения (новые или прунинг) — обновляем сообщение
                     candidate_row_ids = list(slot["row_ids"]) + new_rows
                     candidate_count = len(candidate_row_ids)
                     new_text, kb = build_slot_message(platform, candidate_count, date_str, time_str)
@@ -394,7 +442,7 @@ async def monitor_schedule(bot):
                             text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
                         )
                         edit_ok = True
-                        logger.info(f"✅ Слот {platform} дополнен до {candidate_count} шт (msg {existing_msg_id})")
+                        logger.info(f"✅ Слот {platform} обновлён до {candidate_count} шт (msg {existing_msg_id})")
                     except Exception as e:
                         err = str(e).lower()
                         if "message is not modified" in err:
@@ -458,8 +506,10 @@ async def monitor_schedule(bot):
 
                     slot["row_ids"] = candidate_row_ids
                     slot["count"] = candidate_count
-                    slot["date"] = date_str
-                    slot["time"] = time_str
+                    if date_str:
+                        slot["date"] = date_str
+                    if time_str:
+                        slot["time"] = time_str
                     active_slots[existing_msg_id] = slot
 
                     batch = []
@@ -476,6 +526,12 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Q/S: {e}")
                 else:
+                    # Нового слота нет
+                    if not row_ids:
+                        # Публиковать нечего
+                        await asyncio.sleep(0.3)
+                        continue
+
                     new_text, kb = build_slot_message(platform, len(row_ids), date_str, time_str)
                     try:
                         sent_msg = await bot.send_message(
