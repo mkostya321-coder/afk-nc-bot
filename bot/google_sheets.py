@@ -126,34 +126,22 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
 
 
 def _is_row_invalid_now(row: list, mapping: dict) -> bool:
-    """
-    Возвращает True, если строка больше не валидна для слота:
-    нет даты/времени, статус стал блок-статусом, есть исполнитель,
-    либо дата/время не парсятся.
-    НЕ считает невалидными строки с Q=1 — это нормальное состояние
-    опубликованной строки.
-    """
     if not row:
         return True
-
     d = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
     t = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
     if not d or not t:
         return True
-
     status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
     if status in BLOCKED_STATUSES:
         return True
-
     executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
     if executor:
         return True
-
     try:
         datetime.strptime(f"{d} {t}", "%d.%m.%Y %H:%M")
     except Exception:
         return True
-
     return False
 
 
@@ -292,7 +280,6 @@ async def monitor_schedule(bot):
                     time_str = ""
 
                 if existing_msg_id is not None and slot is not None:
-                    # === СИНХРОНИЗАЦИЯ COUNT И ROW_IDS ===
                     real_count = len(slot.get("row_ids", []))
                     stored_count = slot.get("count", 0)
                     if real_count != stored_count:
@@ -303,7 +290,6 @@ async def monitor_schedule(bot):
                         slot["count"] = real_count
                         active_slots[existing_msg_id] = slot
 
-                    # === СИНХРОНИЗАЦИЯ Q/S ===
                     sync_batch = []
                     try:
                         for row_idx in slot["row_ids"]:
@@ -332,13 +318,10 @@ async def monitor_schedule(bot):
                         except Exception as e:
                             logger.error(f"❌ Ошибка синхронизации Q/S batch: {e}")
 
-                    # === ПРУНИНГ (новая логика) ===
-                    # Удаляем из слота ТОЛЬКО те строки, чьи данные реально пропали
-                    # (нет даты/времени, статус блок-статус, есть исполнитель, дата не парсится).
-                    # Строки с Q=1 (опубликованные ботом) — НЕ трогаем.
+                    # === ПРУНИНГ: только реально невалидные строки ===
                     taken_now = set()
                     for _uid, _req in list(slot_requests.items()):
-                        if _req.get("sheet_title") == sheet_title:
+                        if _req.get("sheet_title") == sheet_name:
                             taken_now.update(_req.get("assigned_rows", []))
 
                     pruned = []
@@ -360,7 +343,6 @@ async def monitor_schedule(bot):
                         slot["count"] = len(slot["row_ids"])
                         active_slots[existing_msg_id] = slot
 
-                    # Если после прунинга слот пустой — закрываем
                     if not slot["row_ids"]:
                         logger.info(f"🗑️ {platform} (msg {existing_msg_id}): слот пуст после прунинга, закрываю")
                         try:
@@ -380,7 +362,6 @@ async def monitor_schedule(bot):
                     new_rows = [r for r in row_ids if r not in slot["row_ids"]]
 
                     if not new_rows and not pruned:
-                        # Просто проверяем, что слот живой
                         slot_alive = False
                         dead = False
                         current_count = len(slot.get("row_ids", []))
@@ -461,7 +442,6 @@ async def monitor_schedule(bot):
                             await asyncio.sleep(0.5)
                             continue
 
-                    # Есть изменения — обновляем сообщение
                     candidate_row_ids = list(slot["row_ids"]) + new_rows
                     candidate_count = len(candidate_row_ids)
                     new_text, kb = build_slot_message(platform, candidate_count, date_str, time_str)
@@ -601,7 +581,6 @@ async def monitor_schedule(bot):
 
             await _check_republish(bot, client, now)
 
-            # === Смена бизнес-дня ===
             current_bd = business_day_key(now)
             last_closed_bd = get_setting("last_closed_business_day")
 
@@ -750,7 +729,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
     any_critical_error = False
     to_remove = []
 
-    # ============ ЗАКРЫТИЕ СЕССИЙ ПОЛЬЗОВАТЕЛЕЙ ============
     for user_id, request in all_requests:
         created_bd = (request.get("created_business_day") or "").strip()
         if created_bd and created_bd >= current_business_day:
@@ -844,7 +822,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         to_remove.append(user_id)
 
-    # ============ ПОМЕТКА НЕРАЗОБРАННЫХ 888 ============
     taken_rows_by_sheet = {}
     for _uid, _req in all_requests:
         _st = _req.get("sheet_title")
@@ -935,7 +912,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         if slot_ok:
             ok_slots_to_delete.append(msg_id)
 
-    # ============ СИРОТСКИЕ СТРОКИ ============
     logger.info("🧹 Проверяю сиротские строки 'в работе'...")
     for sheet in spreadsheet.worksheets():
         sheet_name_s = sheet.title
@@ -1010,7 +986,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         except KeyError:
             pass
 
-    # ============ ЗАКРЫТИЕ СООБЩЕНИЙ СЛОТОВ ============
     logger.info(f"🕒 Сообщений-слотов к закрытию: {len(ok_slots_to_delete)}")
     for msg_id in ok_slots_to_delete:
         try:
