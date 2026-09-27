@@ -259,9 +259,7 @@ async def monitor_schedule(bot):
                             f"битый формат {stats['bad_date_format']}, "
                             f"коротких {stats['too_short']}"
                         )
-                        pass
 
-                # ============ ПУБЛИКАЦИЯ / ДОПОЛНЕНИЕ / ПРУНИНГ ============
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
@@ -318,7 +316,6 @@ async def monitor_schedule(bot):
                         except Exception as e:
                             logger.error(f"❌ Ошибка синхронизации Q/S batch: {e}")
 
-                    # === ПРУНИНГ: только реально невалидные строки ===
                     taken_now = set()
                     for _uid, _req in list(slot_requests.items()):
                         if _req.get("sheet_title") == sheet_name:
@@ -729,6 +726,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
     any_critical_error = False
     to_remove = []
 
+    # ============ ЗАКРЫТИЕ СЕССИЙ ПОЛЬЗОВАТЕЛЕЙ ============
     for user_id, request in all_requests:
         created_bd = (request.get("created_business_day") or "").strip()
         if created_bd and created_bd >= current_business_day:
@@ -912,6 +910,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         if slot_ok:
             ok_slots_to_delete.append(msg_id)
 
+    # ============ СИРОТСКИЕ СТРОКИ "в работе" ============
     logger.info("🧹 Проверяю сиротские строки 'в работе'...")
     for sheet in spreadsheet.worksheets():
         sheet_name_s = sheet.title
@@ -973,16 +972,24 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 logger.error(f"❌ '{sheet_name_s}': ошибка сиротских: {e}")
                 any_critical_error = True
 
-    for msg_id in ok_slots_to_delete:
-        try:
-            del active_slots[msg_id]
-        except KeyError:
-            pass
-
+    # ============ УДАЛЕНИЕ СЕССИЙ + ОТКРЕПЛЕНИЕ ИНСТРУКЦИЙ ============
     for user_id in to_remove:
+        # Открепляем инструкцию по скриншотам у всех, кого закрываем
+        try:
+            await bot.unpin_all_chat_messages(chat_id=user_id)
+            logger.info(f"📌 user {user_id}: инструкция откреплена")
+        except Exception as e:
+            logger.warning(f"⚠️ user {user_id}: не удалось открепить: {e}")
+
         try:
             del slot_requests[user_id]
             logger.info(f"🗑️ user {user_id}: сессия удалена")
+        except KeyError:
+            pass
+
+    for msg_id in ok_slots_to_delete:
+        try:
+            del active_slots[msg_id]
         except KeyError:
             pass
 
