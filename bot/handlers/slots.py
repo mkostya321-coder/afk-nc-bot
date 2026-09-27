@@ -7,7 +7,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from bot.config import (
     ADMIN_IDS, CHANNEL_ID, MANAGER_USERNAME, OTHER_JOBS_CHANNEL, SHEET_ID,
-    SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH
+    SCREENSHOT_CHANNEL_ID, get_credentials_path, INSTRUCTION_PHOTO_ID, INSTRUCTION_PHOTO_PATH,
+    REQUIRED_CHANNEL_ID,
 )
 from bot.database import (
     is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
@@ -175,6 +176,7 @@ async def check_limit(user_id: int, platform: str) -> bool:
     return count_review_takes_last_24h(user_id, platform) < get_limit(platform)
 
 
+# ============ CANCEL ============
 @router.message(Command("cancel"))
 @router.message(Command("отказ"))
 async def cancel_task(message: Message):
@@ -189,6 +191,10 @@ async def cancel_task(message: Message):
     if not remaining:
         await message.answer("✅ У вас нет невыполненных отзывов.")
         del slot_requests[user_id]
+        try:
+            await unpin_instruction(user_id, message.bot)
+        except Exception as e:
+            logger.warning(f"⚠️ cancel_task (no remaining): не удалось открепить: {e}")
         return
 
     platform = request.get("platform", "яндекс")
@@ -217,6 +223,13 @@ async def cancel_task(message: Message):
             logger.error(f"❌ Ошибка отмены: {e}")
 
     del slot_requests[user_id]
+
+    # Открепляем инструкцию по скриншотам — работа отменена
+    try:
+        await unpin_instruction(user_id, message.bot)
+    except Exception as e:
+        logger.warning(f"⚠️ cancel_task: не удалось открепить: {e}")
+
     await message.answer(
         f"✅ Отказ принят.\n\n"
         f"• Выполненные: {len(completed)} – на модерацию\n"
@@ -224,6 +237,7 @@ async def cancel_task(message: Message):
     )
 
 
+# ============ RESUME ============
 @router.message(Command("resume"))
 @router.message(Command("слот"))
 async def cmd_resume(message: Message):
@@ -308,6 +322,7 @@ async def cmd_resume(message: Message):
     )
 
 
+# ============ ВВОД КОЛИЧЕСТВА ============
 @router.message(F.text)
 async def handle_quantity_input(message: Message):
     if message.text and message.text.startswith('/'):
@@ -328,6 +343,40 @@ async def handle_quantity_input(message: Message):
         return
 
     platform = request.get("platform", "яндекс")
+
+    # === ПРОВЕРКА ДНЕВНОГО ЛИМИТА ===
+    taken_today = count_review_takes_last_24h(user_id, platform)
+    limit = get_limit(platform)
+    remaining = limit - taken_today
+
+    if remaining <= 0:
+        now_msk = datetime.now(moscow_tz)
+        next_reset = now_msk.replace(hour=10, minute=0, second=0, microsecond=0)
+        if now_msk >= next_reset:
+            next_reset += timedelta(days=1)
+        await message.answer(
+            f"❌ <b>Лимит исчерпан</b>\n\n"
+            f"По платформе <b>{platform}</b> установлен лимит <b>{limit} отзывов</b> в день.\n"
+            f"Вы уже взяли сегодня: <b>{taken_today} из {limit}</b>.\n\n"
+            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.\n"
+            f"Попробуйте взять слот на другой платформе.",
+            parse_mode="HTML"
+        )
+        del slot_requests[user_id]
+        return
+
+    if quantity > remaining:
+        await message.answer(
+            f"⚠️ <b>Превышение дневного лимита</b>\n\n"
+            f"По платформе <b>{platform}</b> лимит: <b>{limit} в день</b>.\n"
+            f"Вы уже взяли сегодня: <b>{taken_today}</b>.\n"
+            f"Можно взять ещё максимум: <b>{remaining}</b>.\n\n"
+            f"🔄 Лимит сбросится в <b>10:00 МСК</b>.\n"
+            f"Введите число от 1 до {remaining} или /cancel.",
+            parse_mode="HTML"
+        )
+        return
+
     mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
 
@@ -390,7 +439,6 @@ async def handle_quantity_input(message: Message):
         slot_info["count"] = len(slot_info["row_ids"])
         active_slots[slot_msg_id] = slot_info
 
-        # Обновляем сообщение слота сразу, чтобы count в чате совпадал с реальным
         try:
             new_text, kb = build_slot_message(
                 slot_info.get("platform", platform),
@@ -466,6 +514,7 @@ async def handle_quantity_input(message: Message):
     await send_instruction(user_id, message.bot)
 
 
+# ============ ВЗЯТЬ СЛОТ ============
 @router.callback_query(F.data.startswith("take_slot|"))
 async def take_slot_start(callback: CallbackQuery):
     try:
@@ -479,6 +528,17 @@ async def take_slot_start(callback: CallbackQuery):
     if is_blocked(user_id):
         await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
+
+    # Двойная проверка подписки
+    from bot.middlewares import is_subscribed
+    if not await is_subscribed(user_id, callback.bot):
+        await callback.bot.send_message(
+            user_id,
+            f"⚠️ Для использования бота подпишитесь на канал {REQUIRED_CHANNEL_ID}\n"
+            f"После подписки нажмите /start и попробуйте снова."
+        )
+        return
+
     if user_id in slot_requests:
         await callback.bot.send_message(user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
         return
@@ -541,7 +601,6 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
         return
 
-    # === Источник истины — sheet_title, а не callback ===
     sheet_title = slot_info.get("sheet_title")
     real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
 
@@ -562,7 +621,21 @@ async def take_slot_start(callback: CallbackQuery):
         platform = real_platform
 
     if not await check_limit(user_id, platform):
-        await callback.bot.send_message(user_id, f"❌ Лимит на {platform}.")
+        limit = get_limit(platform)
+        taken_today = count_review_takes_last_24h(user_id, platform)
+        now_msk = datetime.now(moscow_tz)
+        next_reset = now_msk.replace(hour=10, minute=0, second=0, microsecond=0)
+        if now_msk >= next_reset:
+            next_reset += timedelta(days=1)
+        await callback.bot.send_message(
+            user_id,
+            f"❌ <b>Лимит исчерпан на сегодня</b>\n\n"
+            f"Платформа: <b>{platform}</b>\n"
+            f"Установлено: <b>{limit} отзывов в день</b>\n"
+            f"Вы уже взяли: <b>{taken_today}</b>\n\n"
+            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.",
+            parse_mode="HTML"
+        )
         return
 
     mapping = slot_info.get("mapping") or get_column_mapping(platform)
