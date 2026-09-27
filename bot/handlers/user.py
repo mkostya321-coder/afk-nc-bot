@@ -58,7 +58,6 @@ class SupportForm(StatesGroup):
     problem = State()
 
 
-# ============= ПРАВИЛА =============
 RULES_1 = (
     "Информация о работе⚡️\n\n"
     "🔖Вы получаете\n"
@@ -149,7 +148,15 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
     if is_registered(user_id):
-        await message.answer("👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями.", reply_markup=main_menu_keyboard(is_registered=True))
+        user = get_user(user_id)
+        text = "👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями."
+        if user and not user.get("tg_username"):
+            text += (
+                "\n\n🚨 <b>У вас нет @username!</b>\n"
+                "Без него выплаты <b>не начисляются</b>.\n"
+                "Установите: Настройки Telegram → Изменить профиль → Имя пользователя."
+            )
+        await message.answer(text, parse_mode="HTML", reply_markup=main_menu_keyboard(is_registered=True))
     else:
         await show_intro(message, state)
 
@@ -206,7 +213,21 @@ async def menu_profile(message: Message):
     else:
         warn_text = "⚠️ Предупреждений нет."
 
+    username_warning = ""
+    if not user.get("tg_username"):
+        username_warning = (
+            "🚨 <b>ВНИМАНИЕ!</b> 🚨\n"
+            "У вас <b>отсутствует Telegram @username</b>.\n"
+            "Без него бот <b>НЕ СМОЖЕТ</b> сопоставить ваши отзывы с аккаунтом — "
+            "деньги <b>НЕ будут начислены</b>!\n\n"
+            "👉 <b>Как поставить @username:</b>\n"
+            "Настройки Telegram → Изменить профиль → Имя пользователя\n\n"
+            "После установки вернитесь в бота и нажмите /start.\n\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+        )
+
     text = (
+        username_warning +
         "🤖 Версия бота 1.0.0\n\n"
         f"📋 Профиль\n\n"
         f"Имя: {user['name']}\n"
@@ -237,7 +258,7 @@ async def menu_profile(message: Message):
         f"{warn_text}\n\n"
         f"Чтобы посмотреть общие отзывы за всё время, используйте /myotz"
     )
-    await message.answer(text)
+    await message.answer(text, parse_mode="HTML")
 
 
 # ---------- /myotz ----------
@@ -294,7 +315,12 @@ async def menu_help(message: Message):
     )
     user = get_user(message.from_user.id)
     is_reg = user and user.get("name") is not None
-    await message.answer(text, reply_markup=main_menu_keyboard(is_registered=is_reg))
+    if user and user.get("name") and not user.get("tg_username"):
+        text += (
+            "\n\n🚨 <b>Внимание!</b> У вас нет @username — "
+            "установите его, иначе выплаты не будут начисляться."
+        )
+    await message.answer(text, parse_mode="HTML", reply_markup=main_menu_keyboard(is_registered=is_reg))
 
 
 # ---------- /manual ----------
@@ -498,7 +524,14 @@ async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     tg_username = message.from_user.username
     if not tg_username:
-        await message.answer("❌ У вас не установлен username в Telegram.\nПожалуйста, перейдите в Настройки Telegram → Изменить профиль и задайте имя пользователя (username).\nПосле этого вернитесь сюда и снова нажмите /reg или кнопку «📝 Регистрация».")
+        await message.answer(
+            "❌ У вас не установлен @username в Telegram.\n\n"
+            "🚨 Без @username регистрация НЕВОЗМОЖНА и выплаты НЕ начисляются.\n\n"
+            "Как установить:\n"
+            "Настройки Telegram → Изменить профиль → Имя пользователя\n\n"
+            "После установки нажмите /reg или кнопку «📝 Регистрация».",
+            parse_mode="HTML"
+        )
         await state.clear()
         return
     clean_username = tg_username.lstrip("@").lower()
@@ -564,8 +597,11 @@ async def process_bank(message: Message, state: FSMContext):
     update_user_field(user_id, "registered_at", datetime.now().isoformat())
     await state.clear()
     await message.answer(
-        "✅ Отлично, регистрация успешно пройдена! Используйте кнопки ниже для навигации.\n"
-        "Хорошей работы и больших заработков!",
+        "✅ Отлично, регистрация успешно пройдена!\n\n"
+        "⚠️ Напоминаем: один человек = один аккаунт. "
+        "За дубль-аккаунты — обнуление баланса и блокировка. "
+        "Подробнее: /dupe\n\n"
+        "Используйте кнопки ниже для навигации. Хорошей работы!",
         reply_markup=main_menu_keyboard(is_registered=True)
     )
 
