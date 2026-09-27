@@ -21,13 +21,29 @@ logger = logging.getLogger(__name__)
 class AutoMenuMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, CallbackQuery):
+            user_id = event.from_user.id
+            role = get_admin_role(user_id)
+            cb_data = event.data or ""
+
+            if cb_data == "check_sub":
+                return await handler(event, data)
+
+            if not role:
+                if not await is_subscribed(user_id, event.bot):
+                    try:
+                        await event.answer(
+                            "⚠️ Подпишитесь на канал, чтобы пользоваться ботом",
+                            show_alert=True
+                        )
+                    except Exception:
+                        pass
+                    return
             return await handler(event, data)
 
         if isinstance(event, Message):
             chat_id = event.chat.id
             thread_id = event.message_thread_id or 0
 
-            # Сообщения из отчётных чатов не трогаем вообще
             if REPORT_CHAT_ID and chat_id == REPORT_CHAT_ID:
                 return
 
@@ -39,11 +55,9 @@ class AutoMenuMiddleware(BaseMiddleware):
                 if COLLABORATION_THREAD_ID == 0 or thread_id == COLLABORATION_THREAD_ID:
                     return
 
-            # Команды пропускаем в роутеры
             if event.text and event.text.startswith('/'):
                 return await handler(event, data)
 
-            # Кнопки меню
             if event.text in [
                 "📋 Профиль", "❓ Помощь", "📝 Регистрация",
                 "👥 Реферальная система", "👥 Мои рефералы",
@@ -51,16 +65,13 @@ class AutoMenuMiddleware(BaseMiddleware):
             ]:
                 return await handler(event, data)
 
-            # Активная сессия слота
             if event.from_user.id in slot_requests:
                 return await handler(event, data)
 
-            # FSM
             state = data.get("state")
             if state and await state.get_state():
                 return await handler(event, data)
 
-            # Остальное — меню
             user_id = event.from_user.id
             role = get_admin_role(user_id)
             if not role:
@@ -81,19 +92,15 @@ class AutoMenuMiddleware(BaseMiddleware):
 
 
 async def is_subscribed(user_id: int, bot) -> bool:
-    """
-    True = доступ разрешён.
-    Если проверить не удалось (бот не админ в канале, канал неверный и т.п.) —
-    разрешаем, но громко логируем. Иначе один сбойный канал заблокирует всех.
-    """
+    """True = доступ разрешён. При ошибке — False (блокируем)."""
     try:
         chat_member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id)
         return chat_member.status in ['member', 'administrator', 'creator']
     except TelegramBadRequest as e:
-        logger.warning(
-            f"⚠️ is_subscribed: не удалось проверить {REQUIRED_CHANNEL_ID}: {e}. Пропускаю пользователя {user_id}."
+        logger.error(
+            f"❌ is_subscribed: не удалось проверить {REQUIRED_CHANNEL_ID} для {user_id}: {e}"
         )
-        return True
+        return False
     except Exception as e:
-        logger.error(f"❌ is_subscribed: неожиданная ошибка: {e}")
-        return True
+        logger.error(f"❌ is_subscribed: неожиданная ошибка для {user_id}: {e}")
+        return False
