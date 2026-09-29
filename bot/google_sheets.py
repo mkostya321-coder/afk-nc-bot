@@ -107,11 +107,13 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
         "яу": "Яндекс Услуги", "яб": "Яндекс Браузер", "h": "HH.RU"
     }
     pretty_name = platform_names.get(platform, platform)
+    price = PRICES.get(platform, 0)
     post_text = (
         f"🔥 Слот: {pretty_name}\n"
         f"📅 Дата: {date}\n"
         f"⏰ Время: {time} (МСК)\n"
         f"📌 Доступно отзывов: {count} шт.\n"
+        f"💰 Оплата: {price}₽ за 1 отзыв\n"
         f"⏳ Дедлайн: Сегодня до 23:59 (МСК)\n\n"
         f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
