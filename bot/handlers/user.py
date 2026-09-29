@@ -11,14 +11,17 @@ from bot.config import (
     TIKTOK_VIDEO_ID, TIKTOK_VIDEO_PATH,
     TIKTOK_REPORT_CHAT_ID, TIKTOK_REPORT_THREAD_ID,
     COLLABORATION_CHAT_ID, COLLABORATION_THREAD_ID,
-    SUPPORT_CHAT_ID, SUPPORT_THREAD_ID
+    SUPPORT_CHAT_ID, SUPPORT_THREAD_ID,
+    REQUIRED_CHANNEL_ID,
 )
 from bot.database import (
     add_user, get_user, get_user_by_username,
     is_registered, update_user_field, is_blocked,
-    get_active_warnings, get_setting, set_setting
+    get_active_warnings, get_setting, set_setting,
+    get_admin_role,
 )
 from bot.keyboards.reply import main_menu_keyboard
+from bot.middlewares import is_subscribed
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -96,6 +99,57 @@ RULES_2 = (
 )
 
 
+def _channel_link() -> str:
+    """Ссылка на канал из REQUIRED_CHANNEL_ID."""
+    cid = (REQUIRED_CHANNEL_ID or "").strip()
+    if cid.startswith("http"):
+        return cid
+    if cid.startswith("@"):
+        return f"https://t.me/{cid.lstrip('@')}"
+    if cid.startswith("-100"):
+        return f"https://t.me/{cid}"
+    return f"https://t.me/{cid.lstrip('@')}"
+
+
+def _subscribe_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📢 Подписаться на канал", url=_channel_link())
+    kb.button(text="✅ Проверить подписку", callback_data="check_sub")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+SUBSCRIBE_TEXT_FIRST = (
+    "👋 <b>Добро пожаловать в New Chapter!</b>\n\n"
+    "Здесь ты можешь зарабатывать на написании отзывов — "
+    "сам выбираешь, когда и сколько работать.\n\n"
+    "💰 <b>Что тебя ждёт:</b>\n"
+    "• Гибкий график — работаешь в удобное время\n"
+    "• Оплата приходит на баланс сразу после проверки\n"
+    "• Можно совмещать с учёбой или основной работой\n\n"
+    "━━━━━━━━━━━━━━━━━━\n\n"
+    "📢 <b>Перед началом работы подпишись на канал:</b>\n\n"
+    "Там ты найдёшь:\n"
+    "• 🔥 Свежие слоты с заданиями\n"
+    "• 📰 Новости и обновления проекта\n"
+    "• 💡 Советы для успешной работы\n\n"
+    "После подписки нажми <b>«✅ Проверить подписку»</b> — и мы продолжим."
+)
+
+SUBSCRIBE_TEXT_NOT_YET = (
+    "❌ <b>Подписка не найдена</b>\n\n"
+    "Ты всё ещё <b>не подписан</b> на наш канал.\n"
+    "Без подписки начать работу <b>нельзя</b> — это обязательное условие.\n\n"
+    "👉 Подпишись и нажми кнопку <b>«✅ Проверить подписку»</b> ещё раз.\n\n"
+    "После подписки тебе откроется регистрация и доступ к слотам."
+)
+
+
+async def show_subscribe_prompt(message: Message, not_subscribed: bool = False):
+    text = SUBSCRIBE_TEXT_NOT_YET if not_subscribed else SUBSCRIBE_TEXT_FIRST
+    await message.answer(text, reply_markup=_subscribe_kb(), parse_mode="HTML")
+
+
 async def show_intro(message: Message, state: FSMContext):
     await state.set_state(IntroState.first)
     kb = InlineKeyboardBuilder()
@@ -147,6 +201,13 @@ async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
 async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, message.from_user.username, message.from_user.full_name)
+
+    role = get_admin_role(user_id)
+    if not role:
+        if not await is_subscribed(user_id, message.bot):
+            await show_subscribe_prompt(message, not_subscribed=False)
+            return
+
     if is_registered(user_id):
         user = get_user(user_id)
         text = "👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями."
@@ -159,6 +220,59 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer(text, parse_mode="HTML", reply_markup=main_menu_keyboard(is_registered=True))
     else:
         await show_intro(message, state)
+
+
+# ---------- Проверка подписки ----------
+@router.callback_query(F.data == "check_sub")
+async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+
+    if not await is_subscribed(user_id, callback.bot):
+        try:
+            await callback.answer("❌ Подписка не найдена", show_alert=True)
+        except Exception:
+            pass
+
+        try:
+            await callback.message.edit_text(
+                SUBSCRIBE_TEXT_NOT_YET,
+                reply_markup=_subscribe_kb(),
+                parse_mode="HTML"
+            )
+        except Exception:
+            await callback.message.answer(
+                SUBSCRIBE_TEXT_NOT_YET,
+                reply_markup=_subscribe_kb(),
+                parse_mode="HTML"
+            )
+        return
+
+    try:
+        await callback.answer("✅ Подписка подтверждена!", show_alert=False)
+    except Exception:
+        pass
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    if is_registered(user_id):
+        user = get_user(user_id)
+        text = "👋 Привет!\n\nЯ бот для работы со слотами и другими заданиями."
+        if user and not user.get("tg_username"):
+            text += (
+                "\n\n🚨 <b>У вас нет @username!</b>\n"
+                "Без него выплаты <b>не начисляются</b>.\n"
+                "Установите: Настройки Telegram → Изменить профиль → Имя пользователя."
+            )
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=main_menu_keyboard(is_registered=True)
+        )
+    else:
+        await show_intro(callback.message, state)
 
 
 # ---------- Профиль ----------
