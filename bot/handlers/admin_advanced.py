@@ -81,7 +81,7 @@ async def show_user_info(message: Message, user: dict, is_new_message: bool = Tr
         f"  Авито: {user['avito_total']}, ВК: {user['vk_total']}, Отзовик: {user['otzovik_total']}\n"
         f"  Doctoru: {user['doctoru_total']}, ДокДок: {user['dokdok_total']}\n"
         f"  Про Докторов: {user['prodoctors_total']}, ДокТу: {user['doctu_total']}\n"
-        f"  32ТОП: {user['top32_total']}, ZOON: {user.get('zoon_total', 0)}\n\n"
+             f"  32ТОП: {user['top32_passed']}, ZOON: {user.get('zoon_passed', 0)}, Yell: {user.get('yell_passed', 0)}\n\n"
         f"👥 Рефералка: {user['referrer'] if user['referrer'] != '0' else 'нет'}\n"
         f"💳 Телефон/карта: {user['phone_card']}\n"
         f"🏦 Банк: {user['bank']}\n"
