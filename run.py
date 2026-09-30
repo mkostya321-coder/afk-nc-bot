@@ -175,6 +175,7 @@ async def weekly_payout_report(bot):
                                 doctu_passed = 0,
                                 top32_passed = 0,
                                 zoon_passed = 0,
+                                yell_passed = 0,
                                 yau_passed = 0,
                                 yab_passed = 0,
                                 hh_passed = 0
