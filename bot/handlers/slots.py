@@ -118,6 +118,10 @@ PLATFORM_TEMPLATES = {
         ),
         "extra_text": SNIPPET_REQ, "warning": WARNING
     },
+    "yell": {
+        "instruction": "🔥 Yell\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ, "warning": WARNING
+    },
 }
 
 DEFAULT_MAPPING = {
@@ -224,7 +228,6 @@ async def cancel_task(message: Message):
 
     del slot_requests[user_id]
 
-    # Открепляем инструкцию по скриншотам — работа отменена
     try:
         await unpin_instruction(user_id, message.bot)
     except Exception as e:
@@ -344,7 +347,6 @@ async def handle_quantity_input(message: Message):
 
     platform = request.get("platform", "яндекс")
 
-    # === ПРОВЕРКА ДНЕВНОГО ЛИМИТА ===
     taken_today = count_review_takes_last_24h(user_id, platform)
     limit = get_limit(platform)
     remaining = limit - taken_today
@@ -529,7 +531,6 @@ async def take_slot_start(callback: CallbackQuery):
         await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
         return
 
-    # Двойная проверка подписки
     from bot.middlewares import is_subscribed
     if not await is_subscribed(user_id, callback.bot):
         await callback.bot.send_message(
@@ -686,7 +687,7 @@ async def show_slot_buttons(message: Message, user_id: int):
         "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС", "авито": "Авито",
         "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
         "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП",
-        "zoon": "ZOON", "яу": "ЯУ", "яб": "ЯБ", "h": "HH"
+        "zoon": "ZOON", "яу": "ЯУ", "яб": "ЯБ", "h": "HH", "yell": "Yell"
     }
     name = names.get(platform, platform.capitalize())
     builder = InlineKeyboardBuilder()
@@ -697,6 +698,7 @@ async def show_slot_buttons(message: Message, user_id: int):
     await message.edit_text("📋 Выберите номер отзыва:", reply_markup=builder.as_markup())
 
 
+# ============ ВЫБОР ОТЗЫВА ============
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -912,6 +914,7 @@ async def back_to_slot(callback: CallbackQuery):
     await show_slot_buttons(callback.message, user_id)
 
 
+# ============ СКРИНШОТ ============
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
