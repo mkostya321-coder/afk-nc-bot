@@ -39,10 +39,6 @@ async def delete_message_safe(message: Message):
 
 # ============ ПОКАЗ ПРОФИЛЯ ============
 async def show_user_info(message: Message, user: dict, is_new_message: bool = True):
-    """
-    is_new_message=True — отправляем новое сообщение
-    is_new_message=False — редактируем существующее
-    """
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
     days, seconds = delta.days, delta.seconds
@@ -68,20 +64,20 @@ async def show_user_info(message: Message, user: dict, is_new_message: bool = Tr
         f"🏙️ Город: {user['city']}\n"
         f"📅 С нами: {time_str}\n"
         f"💰 К выплате чт: {user['payout']}₽\n"
-        f"💵 Заработано ЗВВ: {user['total_earned']}₽\n\n"
+        f"💵 Заработано ЗВВ: {user['total_earned']}₽\n"
         f"📊 Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"📊 Текущая статистика (passed):\n"
         f"  Яндекс: {user['yandex_passed']}, Google: {user['google_passed']}, 2ГИС: {user['gis_passed']}\n"
         f"  Авито: {user['avito_passed']}, ВК: {user['vk_passed']}, Отзовик: {user['otzovik_passed']}\n"
         f"  Doctoru: {user['doctoru_passed']}, ДокДок: {user['dokdok_passed']}\n"
         f"  Про Докторов: {user['prodoctors_passed']}, ДокТу: {user['doctu_passed']}\n"
-        f"  32ТОП: {user['top32_passed']}, ZOON: {user.get('zoon_passed', 0)}\n\n"
+        f"  32ТОП: {user['top32_passed']}, ZOON: {user.get('zoon_passed', 0)}, Yell: {user.get('yell_passed', 0)}\n\n"
         f"📊 Общая статистика (total):\n"
         f"  Яндекс: {user['yandex_total']}, Google: {user['google_total']}, 2ГИС: {user['gis_total']}\n"
         f"  Авито: {user['avito_total']}, ВК: {user['vk_total']}, Отзовик: {user['otzovik_total']}\n"
         f"  Doctoru: {user['doctoru_total']}, ДокДок: {user['dokdok_total']}\n"
         f"  Про Докторов: {user['prodoctors_total']}, ДокТу: {user['doctu_total']}\n"
-             f"  32ТОП: {user['top32_passed']}, ZOON: {user.get('zoon_passed', 0)}, Yell: {user.get('yell_passed', 0)}\n\n"
+        f"  32ТОП: {user['top32_total']}, ZOON: {user.get('zoon_total', 0)}, Yell: {user.get('yell_total', 0)}\n\n"
         f"👥 Рефералка: {user['referrer'] if user['referrer'] != '0' else 'нет'}\n"
         f"💳 Телефон/карта: {user['phone_card']}\n"
         f"🏦 Банк: {user['bank']}\n"
@@ -186,7 +182,7 @@ async def infoga_stats(callback: CallbackQuery):
     target_user_id = selected_user[user_id]
     user = get_user(target_user_id)
 
-        platforms = [
+    platforms = [
         ("Яндекс", "yandex"),
         ("Google", "google"),
         ("2ГИС", "gis"),
@@ -238,7 +234,6 @@ async def infoga_ban(callback: CallbackQuery):
     else:
         await callback.answer("🔓 Пользователь разблокирован", show_alert=True)
 
-    # Обновляем профиль
     try:
         await show_user_info(callback.message, user, is_new_message=False)
     except Exception as e:
