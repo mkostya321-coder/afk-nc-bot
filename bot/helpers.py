@@ -53,16 +53,29 @@ SHEET_NAME_TO_PLATFORM = {
 }
 
 
-def get_column_mapping(platform: str):
-    standard = {
-        "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
-        "link_col": 7, "status_col": 10, "executor_col": 11, "gender_col": 13,
-        "text_col": 14, "flag_first_col": 17, "flag_second_col": 16,
-        "flag_third_col": 15, "flag_final_col": 9, "id_col": 19,
-        "update_col": 5, "order_col": 20,
-    }
+def _find_col(headers: list, *keys, default_idx: int) -> int:
+    """
+    Ищет номер колонки (1-based) по подстроке в заголовке.
+    Возвращает default_idx, если ничего не найдено.
+    """
+    if not headers:
+        return default_idx
+    for i, cell in enumerate(headers):
+        cell_l = str(cell or "").strip().lower()
+        for k in keys:
+            if k in cell_l:
+                return i + 1
+    return default_idx
+
+
+def get_column_mapping(platform: str, headers: list = None):
+    """
+    Если headers передан — определяем колонки по названиям в первой строке таблицы.
+    Иначе — стандартный маппинг.
+    """
+    # === Базовый маппинг (fallback) ===
     if platform == "про докторов":
-        return {
+        default = {
             "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
             "link_col": 11, "status_col": 14, "executor_col": 15, "gender_col": 16,
             "text_col": None, "flag_first_col": 22, "flag_second_col": 21,
@@ -71,7 +84,52 @@ def get_column_mapping(platform: str):
             "text_like_col": 18, "text_minus_col": 19, "tz_col": 10,
             "doctor_name_col": 12, "doctor_direction_col": 9, "photo_doc_col": 8,
         }
-    return standard
+    else:
+        default = {
+            "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
+            "link_col": 7, "status_col": 10, "executor_col": 11, "gender_col": 13,
+            "text_col": 14, "flag_first_col": 17, "flag_second_col": 16,
+            "flag_third_col": 15, "flag_final_col": 9, "id_col": 19,
+            "update_col": 5, "order_col": 20,
+        }
+
+    if not headers:
+        return default
+
+    if platform == "про докторов":
+        # Про докторов — тоже пробуем автодетект по заголовкам, но осторожно
+        detected = dict(default)
+        detected["date_col"]     = _find_col(headers, "дата", default=default["date_col"])
+        detected["time_col"]     = _find_col(headers, "время", default=default["time_col"])
+        detected["stars_col"]    = _find_col(headers, "звезд", "звёзд", "оценк", default=default["stars_col"])
+        detected["platform_col"] = _find_col(headers, "платформ", default=default["platform_col"])
+        detected["link_col"]     = _find_col(headers, "ссылк", default=default["link_col"])
+        detected["status_col"]   = _find_col(headers, "статус", default=default["status_col"])
+        detected["executor_col"] = _find_col(headers, "исполнител", default=default["executor_col"])
+        detected["gender_col"]   = _find_col(headers, "пол", default=default["gender_col"])
+        detected["update_col"]   = _find_col(headers, "обновлен", "e-", default=default["update_col"])
+        return detected
+
+    # === Стандартные платформы: автодетект ===
+    detected = {
+        "date_col":     _find_col(headers, "дата", default=default["date_col"]),
+        "time_col":     _find_col(headers, "время", default=default["time_col"]),
+        "stars_col":    _find_col(headers, "звезд", "звёзд", "оценк", default=default["stars_col"]),
+        "platform_col": _find_col(headers, "платформ", default=default["platform_col"]),
+        "link_col":     _find_col(headers, "ссылк", default=default["link_col"]),
+        "status_col":   _find_col(headers, "статус", default=default["status_col"]),
+        "executor_col": _find_col(headers, "исполнител", default=default["executor_col"]),
+        "gender_col":   _find_col(headers, "пол", default=default["gender_col"]),
+        "text_col":     _find_col(headers, "текст", default=default["text_col"]),
+        "update_col":   _find_col(headers, "обновлен", "e-", default=default["update_col"]),
+        "flag_first_col":  default["flag_first_col"],
+        "flag_second_col": default["flag_second_col"],
+        "flag_third_col":  default["flag_third_col"],
+        "flag_final_col":  default["flag_final_col"],
+        "id_col":          default["id_col"],
+        "order_col":       default["order_col"],
+    }
+    return detected
 
 
 def match_platform(raw_name: str):
