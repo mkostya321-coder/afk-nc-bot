@@ -173,13 +173,15 @@ async def monitor_schedule(bot):
                     logger.info(f"⏭️ Лист '{sheet_name}' — платформа не определена")
                     continue
 
-                mapping = get_column_mapping(platform)
-
                 try:
                     records = await retry_api_call(sheet.get_all_values)
                 except Exception as e:
                     logger.error(f"❌ Чтение '{sheet_name}': {e}")
                     continue
+
+                # Автодетект колонок по первой строке
+                headers_row = records[0] if records else None
+                mapping = get_column_mapping(platform, headers_row)
 
                 if not records or len(records) < 2:
                     logger.info(f"ℹ️ '{sheet_name}' ({platform}): пусто / только заголовок")
@@ -290,6 +292,10 @@ async def monitor_schedule(bot):
                         )
                         slot["count"] = real_count
                         active_slots[existing_msg_id] = slot
+
+                    # обновляем mapping слота на актуальный (вдруг колонки сдвинулись)
+                    slot["mapping"] = mapping
+                    active_slots[existing_msg_id] = slot
 
                     sync_batch = []
                     try:
@@ -636,20 +642,26 @@ async def _check_republish(bot, client, now):
         if (now - publish_time).total_seconds() < 7200:
             continue
 
+        platform = slot.get("platform", "яндекс")
+        sheet_title = slot.get("sheet_title")
         slot_mapping = slot.get("mapping")
         if not slot_mapping or "status_col" not in slot_mapping:
-            platform = slot.get("platform", "яндекс")
             slot_mapping = get_column_mapping(platform)
             slot["mapping"] = slot_mapping
             active_slots[msg_id] = slot
             logger.warning(f"⚠️ mapping восстановлен для слота {msg_id}, платформа {platform}")
 
-        sheet_title = slot.get("sheet_title")
         try:
             sheet = spreadsheet.worksheet(sheet_title)
             records = await retry_api_call(sheet.get_all_values)
         except:
             continue
+
+        # Обновляем mapping по актуальным заголовкам
+        if records:
+            slot_mapping = get_column_mapping(platform, records[0])
+            slot["mapping"] = slot_mapping
+            active_slots[msg_id] = slot
 
         available = []
         for row_idx in slot["row_ids"]:
@@ -749,13 +761,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             to_remove.append(user_id)
             continue
 
-        mapping = request.get("mapping")
-        if not mapping or "status_col" not in mapping:
-            mapping = get_column_mapping(platform_key)
-            request["mapping"] = mapping
-            slot_requests[user_id] = request
-            logger.info(f"🔧 user {user_id}: восстановлен mapping для '{platform_key}'")
-
         try:
             sheet = spreadsheet.worksheet(sheet_title)
             records = await retry_api_call(sheet.get_all_values)
@@ -763,6 +768,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             logger.error(f"❌ user {user_id}: не открыть лист '{sheet_title}': {e}")
             any_critical_error = True
             continue
+
+        headers_row = records[0] if records else None
+        mapping = get_column_mapping(platform_key, headers_row)
 
         batch = []
         cells_to_blue = []
@@ -836,9 +844,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         if not sheet_title:
             continue
         platform_key = slot.get("platform") or "яндекс"
-        mapping = slot.get("mapping")
-        if not mapping or "status_col" not in mapping:
-            mapping = get_column_mapping(platform_key)
 
         slot_rows = slot.get("row_ids", [])
         taken = taken_rows_by_sheet.get(sheet_title, set())
@@ -856,6 +861,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             logger.error(f"❌ _close_day: не открыть '{sheet_title}' для неразобранных: {e}")
             any_critical_error = True
             continue
+
+        headers_row = records[0] if records else None
+        mapping = get_column_mapping(platform_key, headers_row)
 
         batch = []
         cells_to_blue = []
@@ -918,7 +926,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         platform_s = platform_from_sheet_name(sheet_name_s)
         if not platform_s:
             continue
-        mapping_s = get_column_mapping(platform_s)
 
         try:
             records_s = await retry_api_call(sheet.get_all_values)
@@ -926,6 +933,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             logger.error(f"❌ Сироты '{sheet_name_s}': {e}")
             any_critical_error = True
             continue
+
+        headers_s = records_s[0] if records_s else None
+        mapping_s = get_column_mapping(platform_s, headers_s)
 
         covered_s = set()
         for _uid, _req in all_requests:
@@ -1059,7 +1069,8 @@ async def update_stats_from_sheet_once():
                 continue
             sheet_name = sheet.title
             platform = platform_from_sheet_name(sheet_name)
-            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
+            headers_row = records[0] if records else None
+            mapping = get_column_mapping(platform, headers_row) if platform else get_column_mapping("яндекс", headers_row)
             sheet_updates = []
 
             for row_idx, row in enumerate(records[1:], start=2):
@@ -1232,7 +1243,8 @@ async def mark_as_paid_in_table(user_ids: list):
             if len(records) < 2:
                 continue
             platform = platform_from_sheet_name(sheet.title)
-            mapping = get_column_mapping(platform) if platform else get_column_mapping("яндекс")
+            headers_row = records[0] if records else None
+            mapping = get_column_mapping(platform, headers_row) if platform else get_column_mapping("яндекс", headers_row)
             batch = []
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
