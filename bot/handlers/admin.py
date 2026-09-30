@@ -283,7 +283,8 @@ async def cmd_info(message: Message):
         f"Про Докторов: {user['prodoctors_passed']}\n"
         f"ДокТу: {user['doctu_passed']}\n"
         f"32ТОП: {user['top32_passed']}\n"
-        f"ZOON: {user.get('zoon_passed', 0)}\n\n"
+        f"ZOON: {user.get('zoon_passed', 0)}\n"
+        f"Yell: {user.get('yell_passed', 0)}\n\n"
         f"Рефералка: {ref if ref != '0' else 'нет'} ({ref_status})\n"
         f"Реквизиты: {user['phone_card']} / {user['bank']}\n"
         f"{warn_text}"
@@ -298,7 +299,7 @@ async def user_edit(message: Message):
         return
     parts = message.text.split()
     if len(parts) < 4:
-        await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-11")
+        await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-13")
         return
     target = parts[1]
     if target.isdigit():
@@ -322,17 +323,18 @@ async def user_edit(message: Message):
         update_user_field(user_id, "bank", value)
     elif field == "myotz":
         if len(parts) < 5:
-            await message.answer("❌ Укажите номер платформы (1-11) и значение.")
+            await message.answer("❌ Укажите номер платформы (1-13) и значение.")
             return
         platform_num = int(parts[3])
         new_value = int(parts[4])
         platform_map = {
             1: "yandex_total", 2: "google_total", 3: "gis_total", 4: "avito_total",
             5: "vk_total", 6: "otzovik_total", 7: "doctoru_total", 8: "dokdok_total",
-            9: "prodoctors_total", 10: "doctu_total", 11: "top32_total"
+            9: "prodoctors_total", 10: "doctu_total", 11: "top32_total",
+            12: "zoon_total", 13: "yell_total"
         }
         if platform_num not in platform_map:
-            await message.answer("❌ Номер платформы от 1 до 11.")
+            await message.answer("❌ Номер платформы от 1 до 13.")
             return
         update_user_field(user_id, platform_map[platform_num], new_value)
         await message.answer(f"✅ Общий счётчик платформы {platform_num} обновлён.")
@@ -425,7 +427,6 @@ async def cmd_subtract(message: Message):
     uid = user["user_id"]
     username = user.get("tg_username") or target
 
-    # ============ РЕЖИМ many: списать X рублей ============
     if mode == "many":
         try:
             amount = int(parts[3])
@@ -452,7 +453,6 @@ async def cmd_subtract(message: Message):
         log_action(message, f"Списано {amount}₽ (many) у {uid} ({target})")
         return
 
-    # ============ РЕЖИМ platform: списать N штук платформ ============
     if mode == "platform":
         tokens = parts[3:]
         ops = []
@@ -486,9 +486,9 @@ async def cmd_subtract(message: Message):
             "про докторов": "prodoctors", "докту": "doctu",
             "32топ": "top32", "zoon": "zoon",
             "яу": "yau", "яб": "yab", "h": "hh",
+            "yell": "yell",
         }
 
-        # Свежие данные юзера
         user = get_user(uid)
         total_deducted = 0
         details = []
@@ -500,7 +500,7 @@ async def cmd_subtract(message: Message):
                 await message.answer(
                     f"❌ Не распознал платформу '{plat_raw}'.\n"
                     f"Допустимые: Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, "
-                    f"ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, ЯУ, ЯБ, HH."
+                    f"ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, Yell, ЯУ, ЯБ, HH."
                 )
                 return
             fp = field_map[plat]
@@ -555,7 +555,7 @@ async def cmd_update_stats(message: Message):
     log_action(message, "Запущено обновление статистики")
     try:
         from bot.google_sheets import update_stats_from_sheet_once
-        await update_stats_from_sheet_once()
+        await update_stats_from_sheet_once(message.bot)
         await message.answer("✅ Статистика успешно обновлена!")
     except Exception as e:
         logger.error(f"Ошибка в /update_stats: {e}")
@@ -581,7 +581,7 @@ async def reset_balance(message: Message):
                 admin_topup = 0,
                 yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
-                doctu_passed=0, top32_passed=0, zoon_passed=0,
+                doctu_passed=0, top32_passed=0, zoon_passed=0, yell_passed=0,
                 yau_passed=0, yab_passed=0, hh_passed=0
                 WHERE user_id IN ({placeholders})
             """, user_ids)
@@ -656,6 +656,7 @@ async def cmd_payout_report(message: Message):
                         doctu_passed = 0,
                         top32_passed = 0,
                         zoon_passed = 0,
+                        yell_passed = 0,
                         yau_passed = 0,
                         yab_passed = 0,
                         hh_passed = 0
