@@ -68,19 +68,20 @@ SHEET_NAME_TO_PLATFORM = {
 }
 
 
-def _find_col(headers: list, *keys, default_idx: int) -> int:
+def _find_col(headers: list, *keys, default: int = 0, default_idx: int = None) -> int:
     """
     Ищет номер колонки (1-based) по подстроке в заголовке.
-    Возвращает default_idx, если ничего не найдено.
+    Принимает и `default`, и `default_idx` — оба работают одинаково.
     """
+    fallback = default if default else (default_idx if default_idx else 1)
     if not headers:
-        return default_idx
+        return fallback
     for i, cell in enumerate(headers):
         cell_l = str(cell or "").strip().lower()
         for k in keys:
             if k in cell_l:
                 return i + 1
-    return default_idx
+    return fallback
 
 
 def get_column_mapping(platform: str, headers: list = None):
