@@ -39,6 +39,7 @@ def init_db():
                 doctu_passed INTEGER DEFAULT 0,
                 top32_passed INTEGER DEFAULT 0,
                 zoon_passed INTEGER DEFAULT 0,
+                yell_passed INTEGER DEFAULT 0,
                 yau_passed INTEGER DEFAULT 0,
                 yab_passed INTEGER DEFAULT 0,
                 hh_passed INTEGER DEFAULT 0,
@@ -54,6 +55,7 @@ def init_db():
                 doctu_total INTEGER DEFAULT 0,
                 top32_total INTEGER DEFAULT 0,
                 zoon_total INTEGER DEFAULT 0,
+                yell_total INTEGER DEFAULT 0,
                 yau_total INTEGER DEFAULT 0,
                 yab_total INTEGER DEFAULT 0,
                 hh_total INTEGER DEFAULT 0
