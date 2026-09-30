@@ -100,7 +100,6 @@ RULES_2 = (
 
 
 def _channel_link() -> str:
-    """Ссылка на канал из REQUIRED_CHANNEL_ID."""
     cid = (REQUIRED_CHANNEL_ID or "").strip()
     if cid.startswith("http"):
         return cid
@@ -362,7 +361,8 @@ async def menu_profile(message: Message):
         f"Про Докторов: {user['prodoctors_passed']}\n"
         f"ДокТу: {user['doctu_passed']}\n"
         f"32ТОП: {user['top32_passed']}\n"
-        f"ZOON: {user.get('zoon_passed', 0)}\n\n"
+        f"ZOON: {user.get('zoon_passed', 0)}\n"
+        f"Yell: {user.get('yell_passed', 0)}\n\n"
         f"💰 Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"ℹ️ Статистика обновляется каждый день в 10:00 и 20:00 МСК.\n\n"
         f"👥 Рефералка: {referrer if referrer != '0' else 'нет'} ({ref_status})\n\n"
@@ -400,6 +400,7 @@ async def cmd_myotz(message: Message):
         f"ДокТу: {user.get('doctu_total', 0)}\n"
         f"32ТОП: {user.get('top32_total', 0)}\n"
         f"ZOON: {user.get('zoon_total', 0)}\n"
+        f"Yell: {user.get('yell_total', 0)}\n"
         f"Яндекс Услуги: {user.get('yau_total', 0)}\n"
         f"Яндекс Браузер: {user.get('yab_total', 0)}\n"
         f"HH.RU: {user.get('hh_total', 0)}"
@@ -463,6 +464,7 @@ async def cmd_money(message: Message):
         "• ДокТу — 100₽\n"
         "• 32ТОП — 125₽\n"
         "• ZOON — 50₽\n"
+        "• Yell — 50₽\n"
         "• Яндекс Услуги — 100₽\n"
         "• Яндекс Браузер — 100₽\n"
         "• HH.RU — 50₽\n\n"
@@ -477,7 +479,7 @@ async def cmd_money(message: Message):
         "Пожалуйста, будьте внимательны: либо доделывайте все отзывы, либо отказывайтесь заранее!\n\n"
         "<b>📊 Лимиты на взятие отзывов:</b>\n"
         "На старте проекта для каждой платформы установлен лимит: <b>10 отзывов на человека за 24 часа</b>.\n"
-        "Лимит считается отдельно для каждой платформы (Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, ЯУ, ЯБ, HH).\n"
+        "Лимит считается отдельно для каждой платформы (Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, Yell, ЯУ, ЯБ, HH).\n"
         "Сброс лимита каждый день в <b>10:00 МСК</b>.\n"
         "Можно брать по частям: например, 3 + 5 + 2 = 10.\n"
         "Когда лимит достигнут — бот напишет, что на этой платформе больше взять нельзя, попробуйте другую.\n\n"
