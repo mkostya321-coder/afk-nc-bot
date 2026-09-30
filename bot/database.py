@@ -67,6 +67,8 @@ def init_db():
         needed_columns = {
             "zoon_passed": "INTEGER DEFAULT 0",
             "zoon_total": "INTEGER DEFAULT 0",
+            "yell_passed": "INTEGER DEFAULT 0",
+            "yell_total": "INTEGER DEFAULT 0",
             "admin_topup": "INTEGER DEFAULT 0",
             "yau_passed": "INTEGER DEFAULT 0",
             "yau_total": "INTEGER DEFAULT 0",
