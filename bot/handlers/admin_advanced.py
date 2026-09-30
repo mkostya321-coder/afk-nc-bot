@@ -16,6 +16,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 router = Router()
 
+
 class EditUserStates(StatesGroup):
     menu = State()
     edit_name = State()
@@ -26,10 +27,10 @@ class EditUserStates(StatesGroup):
     edit_phone = State()
     edit_bank = State()
 
+
 selected_user = {}
 
 
-# ============ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ============
 async def delete_message_safe(message: Message):
     try:
         await message.delete()
@@ -37,7 +38,6 @@ async def delete_message_safe(message: Message):
         logger.warning(f"Не удалось удалить сообщение: {e}")
 
 
-# ============ ПОКАЗ ПРОФИЛЯ ============
 async def show_user_info(message: Message, user: dict, is_new_message: bool = True):
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
@@ -108,7 +108,6 @@ async def show_user_info(message: Message, user: dict, is_new_message: bool = Tr
             await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-# ============ КОМАНДА /infoga ============
 @router.message(Command("infoga"))
 async def cmd_infoga(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -132,7 +131,6 @@ async def cmd_infoga(message: Message, state: FSMContext):
     await show_user_info(message, user, is_new_message=True)
 
 
-# ============ РЕФЕРАЛЫ ============
 @router.callback_query(F.data == "infoga:referrals")
 async def infoga_referrals(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -171,7 +169,6 @@ async def infoga_referrals(callback: CallbackQuery):
     await callback.answer()
 
 
-# ============ ПРОХОД (только те платформы, где > 0) ============
 @router.callback_query(F.data == "infoga:stats")
 async def infoga_stats(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -217,7 +214,6 @@ async def infoga_stats(callback: CallbackQuery):
     await callback.answer()
 
 
-# ============ BAN / UNBAN ============
 @router.callback_query(F.data == "infoga:ban")
 async def infoga_ban(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -240,7 +236,6 @@ async def infoga_ban(callback: CallbackQuery):
         logger.warning(f"Не удалось обновить профиль: {e}")
 
 
-# ============ ЗАВЕРШИТЬ ПРОСМОТР ============
 @router.callback_query(F.data == "infoga:exit")
 async def infoga_exit(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -252,7 +247,6 @@ async def infoga_exit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ МЕНЮ РЕДАКТИРОВАНИЯ ============
 @router.callback_query(F.data == "infoga:edit")
 async def infoga_edit(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -276,7 +270,6 @@ async def infoga_edit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ ОБРАБОТКА КНОПОК edit:* ============
 @router.callback_query(F.data.startswith("edit:"))
 async def edit_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -382,7 +375,6 @@ async def edit_menu(callback: CallbackQuery, state: FSMContext):
         return
 
 
-# ============ ОБРАБОТЧИКИ ВВОДА ============
 @router.message(EditUserStates.edit_name)
 async def edit_name(message: Message, state: FSMContext):
     user_id = message.from_user.id
