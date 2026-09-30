@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def find_user_by_target(target: str):
+    """Ищет пользователя по ID или @username. Возвращает dict или None."""
+    if not target:
+        return None
+    t = target.strip()
+    if t.isdigit():
+        return get_user(int(t))
+    return get_user_by_username(t.lstrip("@"))
+
+
 def log_action(message: Message, action: str):
     if not LOG_CHANNEL_ID:
         return
@@ -58,37 +68,37 @@ async def cmd_helpadm(message: Message):
     if is_owner(user_id):
         text += "👑 /setrole <user_id или username> <owner|ga|moderator|comoderator> — назначить роль\n"
         text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
-        text += "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
+        text += "🔍 /infoga <@username или user_id> — полная информация о пользователе + редактирование\n"
     if is_ga(user_id):
         text += (
             "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
             "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
-            "💸 /pay @username <сумма> — пополнить баланс пользователю\n"
-            "➖ /subtract platform @user <платформа> <N> [ШТ] [...] — списать N отзывов по платформам\n"
-            "➖ /subtract many @user <сумма> — списать N рублей с баланса\n"
-            "ℹ️ /info <username> — краткий профиль пользователя\n"
-            "🔍 /infoga @username — полная информация о пользователе + редактирование\n"
+            "💸 /pay <@username или user_id> <сумма> — пополнить баланс пользователю\n"
+            "➖ /subtract platform <@username или user_id> <платформа> <N> [ШТ] [...] — списать N отзывов\n"
+            "➖ /subtract many <@username или user_id> <сумма> — списать N рублей с баланса\n"
+            "ℹ️ /info <username или user_id> — краткий профиль пользователя\n"
+            "🔍 /infoga <@username или user_id> — полная информация о пользователе + редактирование\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
             "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
             "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
             "▶️ /start_tiktok — возобновить участие в Tik Tok\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение пользователю\n"
+            "📨 /smsuser <username или user_id> <текст> — отправить сообщение пользователю\n"
             "📊 /set_limit <platform> <limit> — установить лимит отзывов\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
-            "ℹ️ /info <username> — профиль пользователя\n"
+            "ℹ️ /info <username или user_id> — профиль пользователя\n"
             "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение\n"
+            "📨 /smsuser <username или user_id> <текст> — отправить сообщение\n"
         )
     if is_comoderator(user_id) and not is_ga(user_id):
         text += (
             "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
-            "ℹ️ /info <username> — профиль пользователя\n"
+            "ℹ️ /info <username или user_id> — профиль пользователя\n"
             "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
-            "📨 /smsuser <username> <текст> — отправить сообщение\n"
+            "📨 /smsuser <username или user_id> <текст> — отправить сообщение\n"
         )
     await message.answer(text)
     log_action(message, "Просмотр списка админ-команд")
@@ -108,18 +118,13 @@ async def set_role(message: Message):
         if role not in ['owner', 'ga', 'moderator', 'comoderator']:
             await message.answer("❌ Неверная роль. Допустимо: owner, ga, moderator, comoderator")
             return
-        if target.isdigit():
-            user_id = int(target)
-        else:
-            clean_username = target.lstrip('@')
-            user = get_user_by_username(clean_username)
-            if not user:
-                await message.answer(f"❌ Пользователь с username '{target}' не найден.")
-                return
-            user_id = user["user_id"]
-        set_admin_role(user_id, role)
-        await message.answer(f"✅ Роль {role} назначена пользователю {user_id}")
-        log_action(message, f"Назначена роль {role} пользователю {user_id}")
+        user = find_user_by_target(target)
+        if not user:
+            await message.answer(f"❌ Пользователь '{target}' не найден.")
+            return
+        set_admin_role(user["user_id"], role)
+        await message.answer(f"✅ Роль {role} назначена пользователю {user['user_id']}")
+        log_action(message, f"Назначена роль {role} пользователю {user['user_id']}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -135,10 +140,7 @@ async def warn_user(message: Message):
             return
         target = parts[1]
         reason = parts[2]
-        if target.isdigit():
-            user = get_user(int(target))
-        else:
-            user = get_user_by_username(target)
+        user = find_user_by_target(target)
         if not user:
             await message.answer("❌ Пользователь не найден")
             return
@@ -173,11 +175,11 @@ async def sms_user(message: Message):
     try:
         parts = message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await message.answer("Использование: /smsuser <username> <текст сообщения>")
+            await message.answer("Использование: /smsuser <username или user_id> <текст сообщения>")
             return
         target = parts[1]
         text = parts[2]
-        user = get_user_by_username(target)
+        user = find_user_by_target(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
             return
@@ -204,21 +206,17 @@ async def user_block(message: Message):
             await message.answer("Использование: /userblock <user_id или username>")
             return
         target = parts[1]
-        if target.isdigit():
-            user_id = int(target)
-        else:
-            user = get_user_by_username(target)
-            if not user:
-                await message.answer("❌ Пользователь не найден.")
-                return
-            user_id = user["user_id"]
-        new_status = toggle_block(user_id)
+        user = find_user_by_target(target)
+        if not user:
+            await message.answer("❌ Пользователь не найден.")
+            return
+        new_status = toggle_block(user["user_id"])
         if new_status is None:
             await message.answer("❌ Пользователь не найден.")
         else:
             status_text = "заблокирован" if new_status else "разблокирован"
-            await message.answer(f"✅ Пользователь {user_id} {status_text}.")
-            log_action(message, f"Пользователь {user_id} {status_text}")
+            await message.answer(f"✅ Пользователь {user['user_id']} {status_text}.")
+            log_action(message, f"Пользователь {user['user_id']} {status_text}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -229,11 +227,11 @@ async def cmd_info(message: Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("❌ Использование: /info <username>")
+        await message.answer("❌ Использование: /info <username или user_id>")
         return
-    user = get_user_by_username(args[1])
+    user = find_user_by_target(args[1])
     if not user:
-        await message.answer(f"❌ Пользователь с username '{args[1]}' не найден.")
+        await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
         return
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
@@ -263,7 +261,8 @@ async def cmd_info(message: Message):
         warn_text = "\n⚠️ Предупреждений нет."
 
     text = (
-        f"🕵️ Профиль пользователя @{user.get('tg_username', args[1])}:\n\n"
+        f"🕵️ Профиль пользователя @{user.get('tg_username', user['user_id'])}:\n\n"
+        f"ID: {user['user_id']}\n"
         f"Имя: {user['name']}\n"
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n"
@@ -302,14 +301,11 @@ async def user_edit(message: Message):
         await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-13")
         return
     target = parts[1]
-    if target.isdigit():
-        user_id = int(target)
-    else:
-        user = get_user_by_username(target)
-        if not user:
-            await message.answer("❌ Пользователь не найден.")
-            return
-        user_id = user["user_id"]
+    user = find_user_by_target(target)
+    if not user:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    user_id = user["user_id"]
 
     field = parts[2].lower()
     value = parts[3]
@@ -356,12 +352,13 @@ async def cmd_pay(message: Message):
     parts = message.text.split()
     if len(parts) < 3:
         await message.answer(
-            "❌ Использование: /pay @username <сумма>\n"
-            "Пример: /pay @ivan 500"
+            "❌ Использование: /pay <@username или user_id> <сумма>\n"
+            "Пример: /pay @ivan 500\n"
+            "Пример: /pay 8635115842 500"
         )
         return
 
-    target = parts[1].lstrip("@").lower()
+    target = parts[1]
     try:
         amount = int(parts[2])
         if amount <= 0:
@@ -371,9 +368,9 @@ async def cmd_pay(message: Message):
         await message.answer("❌ Сумма должна быть числом.")
         return
 
-    user = get_user_by_username(target)
+    user = find_user_by_target(target)
     if not user:
-        await message.answer(f"❌ Пользователь с username '{target}' не найден.")
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
 
     user_id = user["user_id"]
@@ -386,7 +383,7 @@ async def cmd_pay(message: Message):
     update_user_field(user_id, "admin_topup", new_topup)
 
     await message.answer(
-        f"✅ Пользователю @{user.get('tg_username')} начислено {amount}₽\n\n"
+        f"✅ Пользователю @{user.get('tg_username') or user_id} начислено {amount}₽\n\n"
         f"💰 К выплате: {new_payout}₽\n"
         f"💵 Заработано ЗВВ: {new_earned}₽\n"
         f"📊 Пополнение адм за неделю: {new_topup}₽"
@@ -397,8 +394,8 @@ async def cmd_pay(message: Message):
 @router.message(Command("subtract"))
 async def cmd_subtract(message: Message):
     """
-    /subtract platform @user <платформа> <N> [ШТ] [<платформа2> <N2> ШТ ...]
-    /subtract many @user <сумма>
+    /subtract platform <@username или user_id> <платформа> <N> [ШТ] [...]
+    /subtract many <@username или user_id> <сумма>
     """
     if not is_ga(message.from_user.id):
         await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
@@ -408,24 +405,26 @@ async def cmd_subtract(message: Message):
     if len(parts) < 4:
         await message.answer(
             "❌ Использование:\n"
-            "• /subtract platform @user <платформа> <N> [ШТ] [<платформа2> <N2> ШТ ...]\n"
-            "• /subtract many @user <сумма>\n\n"
+            "• /subtract platform <@username или user_id> <платформа> <N> [ШТ] [...]\n"
+            "• /subtract many <@username или user_id> <сумма>\n\n"
             "Примеры:\n"
             "• /subtract platform @ivan 2ГИС 10 ШТ\n"
-            "• /subtract platform @ivan 2ГИС 10 ШТ Яндекс 5 ШТ\n"
-            "• /subtract many @ivan 300"
+            "• /subtract platform 8635115842 2ГИС 10 ШТ Яндекс 5 ШТ\n"
+            "• /subtract many @ivan 300\n"
+            "• /subtract many 8635115842 300"
         )
         return
 
     mode = parts[1].lower()
-    target = parts[2].lstrip("@").lower()
-    user = get_user_by_username(target)
+    target = parts[2]
+
+    user = find_user_by_target(target)
     if not user:
-        await message.answer(f"❌ Пользователь @{target} не найден.")
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
 
     uid = user["user_id"]
-    username = user.get("tg_username") or target
+    username = user.get("tg_username") or str(uid)
 
     if mode == "many":
         try:
@@ -688,13 +687,9 @@ async def cmd_tiktok_pay(message: Message):
     except ValueError:
         await message.answer("❌ Количество просмотров должно быть числом.")
         return
-    if target.isdigit():
-        user_id = int(target)
-        user = get_user(user_id)
-    else:
-        user = get_user_by_username(target)
+    user = find_user_by_target(target)
     if not user:
-        await message.answer(f"❌ Пользователь с идентификатором '{target}' не найден.")
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
     user_id = user["user_id"]
     amount = calculate_tiktok_payout(views)
