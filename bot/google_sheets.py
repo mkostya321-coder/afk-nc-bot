@@ -104,7 +104,8 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
         "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
         "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу",
         "32топ": "32ТОП", "zoon": "ZOON",
-        "яу": "Яндекс Услуги", "яб": "Яндекс Браузер", "h": "HH.RU"
+        "яу": "Яндекс Услуги", "яб": "Яндекс Браузер", "h": "HH.RU",
+        "yell": "Yell"
     }
     pretty_name = platform_names.get(platform, platform)
     price = PRICES.get(platform, 0)
@@ -728,7 +729,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
     any_critical_error = False
     to_remove = []
 
-    # ============ ЗАКРЫТИЕ СЕССИЙ ПОЛЬЗОВАТЕЛЕЙ ============
     for user_id, request in all_requests:
         created_bd = (request.get("created_business_day") or "").strip()
         if created_bd and created_bd >= current_business_day:
@@ -912,7 +912,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         if slot_ok:
             ok_slots_to_delete.append(msg_id)
 
-    # ============ СИРОТСКИЕ СТРОКИ "в работе" ============
     logger.info("🧹 Проверяю сиротские строки 'в работе'...")
     for sheet in spreadsheet.worksheets():
         sheet_name_s = sheet.title
@@ -974,9 +973,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 logger.error(f"❌ '{sheet_name_s}': ошибка сиротских: {e}")
                 any_critical_error = True
 
-    # ============ УДАЛЕНИЕ СЕССИЙ + ОТКРЕПЛЕНИЕ ИНСТРУКЦИЙ ============
     for user_id in to_remove:
-        # Открепляем инструкцию по скриншотам у всех, кого закрываем
         try:
             await bot.unpin_all_chat_messages(chat_id=user_id)
             logger.info(f"📌 user {user_id}: инструкция откреплена")
@@ -1098,6 +1095,7 @@ async def update_stats_from_sheet_once():
                             "про докторов": "prodoctors", "докту": "doctu",
                             "32топ": "top32", "zoon": "zoon",
                             "яу": "yau", "яб": "yab", "h": "hh",
+                            "yell": "yell",
                         }
                         fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -1122,6 +1120,7 @@ async def update_stats_from_sheet_once():
                             "про докторов": "prodoctors", "докту": "doctu",
                             "32топ": "top32", "zoon": "zoon",
                             "яу": "yau", "яб": "yab", "h": "hh",
+                            "yell": "yell",
                         }
                         fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -1144,6 +1143,7 @@ async def update_stats_from_sheet_once():
                             "про докторов": "prodoctors", "докту": "doctu",
                             "32топ": "top32", "zoon": "zoon",
                             "яу": "yau", "яб": "yab", "h": "hh",
+                            "yell": "yell",
                         }
                         fp = field_map.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
@@ -1184,7 +1184,8 @@ async def update_stats_from_sheet_once():
             cur.execute("""
                 SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
-                       doctu_passed, top32_passed, zoon_passed, yau_passed, yab_passed, hh_passed,
+                       doctu_passed, top32_passed, zoon_passed, yell_passed,
+                       yau_passed, yab_passed, hh_passed,
                        admin_topup
                 FROM users
             """)
@@ -1197,10 +1198,11 @@ async def update_stats_from_sheet_once():
                     ur[7] * PRICES.get("доктору", 0) + ur[8] * PRICES.get("докдок", 0) +
                     ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("докту", 0) +
                     ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0) +
-                    ur[13] * PRICES.get("яу", 0) + ur[14] * PRICES.get("яб", 0) +
-                    ur[15] * PRICES.get("h", 0)
+                    ur[13] * PRICES.get("yell", 0) +
+                    ur[14] * PRICES.get("яу", 0) + ur[15] * PRICES.get("яб", 0) +
+                    ur[16] * PRICES.get("h", 0)
                 )
-                admin_topup = ur[16] or 0
+                admin_topup = ur[17] or 0
                 total += admin_topup
                 cur.execute("UPDATE users SET payout = ? WHERE user_id = ?", (total, uid))
             conn.commit()
