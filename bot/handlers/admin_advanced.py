@@ -186,7 +186,7 @@ async def infoga_stats(callback: CallbackQuery):
     target_user_id = selected_user[user_id]
     user = get_user(target_user_id)
 
-    platforms = [
+        platforms = [
         ("Яндекс", "yandex"),
         ("Google", "google"),
         ("2ГИС", "gis"),
@@ -199,6 +199,7 @@ async def infoga_stats(callback: CallbackQuery):
         ("ДокТу", "doctu"),
         ("32ТОП", "top32"),
         ("ZOON", "zoon"),
+        ("Yell", "yell"),
     ]
 
     text = "📊 <b>Проход пользователя:</b>\n\n"
