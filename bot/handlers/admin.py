@@ -7,7 +7,8 @@ from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
-    get_limit, set_limit, get_all_registered_users, get_all_users_with_payout
+    get_limit, set_limit, get_all_registered_users, get_all_users_with_payout,
+    get_user_limit, set_user_limit, reset_user_limit, get_effective_limit
 )
 from bot.helpers import match_platform, PRICES
 import sqlite3
@@ -84,7 +85,8 @@ async def cmd_helpadm(message: Message):
             "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
             "▶️ /start_tiktok — возобновить участие в Tik Tok\n"
             "📨 /smsuser <username или user_id> <текст> — отправить сообщение пользователю\n"
-            "📊 /set_limit <platform> <limit> — установить лимит отзывов\n"
+            "📊 /set_limit <platform> <limit> — установить общий лимит отзывов\n"
+            "👤 /user_limit <username/user_id> <platform> <limit|reset> — персональный лимит\n"
         )
     if is_moderator(user_id) and not is_ga(user_id):
         text += (
@@ -344,7 +346,6 @@ async def user_edit(message: Message):
 
 @router.message(Command("pay"))
 async def cmd_pay(message: Message):
-    """GA и владелец: пополняет payout, total_earned и admin_topup пользователю."""
     if not is_ga(message.from_user.id):
         await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
         return
@@ -393,10 +394,6 @@ async def cmd_pay(message: Message):
 
 @router.message(Command("subtract"))
 async def cmd_subtract(message: Message):
-    """
-    /subtract platform <@username или user_id> <платформа> <N> [ШТ] [...]
-    /subtract many <@username или user_id> <сумма>
-    """
     if not is_ga(message.from_user.id):
         await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
         return
@@ -823,3 +820,82 @@ async def cmd_set_limit(message: Message):
         log_action(message, f"Установлен лимит {limit} для платформы {platform}")
     except ValueError:
         await message.answer("❌ Лимит должен быть числом.")
+
+
+@router.message(Command("user_limit"))
+async def cmd_user_limit(message: Message):
+    """
+    /user_limit <@username или user_id> <platform> <limit>   — установить персональный лимит
+    /user_limit <@username или user_id> <platform> reset    — сбросить персональный лимит платформы
+    /user_limit <@username или user_id> reset               — сбросить все персональные лимиты
+    """
+    if not is_ga(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer(
+            "❌ Использование:\n"
+            "• /user_limit <@username или user_id> <platform> <limit>\n"
+            "• /user_limit <@username или user_id> <platform> reset\n"
+            "• /user_limit <@username или user_id> reset\n\n"
+            "Примеры:\n"
+            "• /user_limit @ivan яндекс 20\n"
+            "• /user_limit 8635115842 2ГИС 50\n"
+            "• /user_limit @ivan яндекс reset\n"
+            "• /user_limit @ivan reset"
+        )
+        return
+
+    target = parts[1]
+    user = find_user_by_target(target)
+    if not user:
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
+        return
+
+    uid = user["user_id"]
+
+    if len(parts) == 3 and parts[2].lower() == "reset":
+        reset_user_limit(uid)
+        await message.answer(
+            f"✅ Все персональные лимиты @{user.get('tg_username') or uid} сброшены.\n"
+            f"Теперь действуют общие лимиты (по платформам)."
+        )
+        log_action(message, f"Сброшены все персональные лимиты у {uid}")
+        return
+
+    if len(parts) < 4:
+        await message.answer("❌ Укажите платформу и значение (или reset).\nПример: /user_limit @ivan яндекс 20")
+        return
+
+    platform = parts[2].lower()
+    value = parts[3].lower()
+
+    if value == "reset":
+        reset_user_limit(uid, platform)
+        await message.answer(
+            f"✅ Персональный лимит на '{platform}' для @{user.get('tg_username') or uid} сброшен.\n"
+            f"Теперь действует общий лимит: {get_limit(platform)} отзывов в день."
+        )
+        log_action(message, f"Сброшен персональный лимит '{platform}' у {uid}")
+        return
+
+    try:
+        limit = int(value)
+        if limit < 1:
+            await message.answer("❌ Лимит должен быть положительным числом.")
+            return
+    except ValueError:
+        await message.answer("❌ Лимит должен быть числом или 'reset'.")
+        return
+
+    set_user_limit(uid, platform, limit)
+    await message.answer(
+        f"✅ Для @{user.get('tg_username') or uid} установлен персональный лимит:\n"
+        f"• Платформа: <b>{platform}</b>\n"
+        f"• Лимит: <b>{limit} отзывов в день</b>\n\n"
+        f"<i>Общий лимит на эту платформу: {get_limit(platform)}</i>",
+        parse_mode="HTML"
+    )
+    log_action(message, f"Установлен персональный лимит {limit} '{platform}' для {uid}")
