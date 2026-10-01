@@ -179,7 +179,6 @@ async def monitor_schedule(bot):
                     logger.error(f"❌ Чтение '{sheet_name}': {e}")
                     continue
 
-                # Автодетект колонок по первой строке
                 headers_row = records[0] if records else None
                 mapping = get_column_mapping(platform, headers_row)
 
@@ -230,13 +229,14 @@ async def monitor_schedule(bot):
                             stats["has_executor"] += 1
                             continue
 
+                        _d = (date_str or "").strip().replace("..", ".")
+                        _t = (time_str or "").strip().replace("..", ":")
+
                         try:
-                            slot_time = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
+                            slot_time = datetime.strptime(f"{_d} {_t}", "%d.%m.%Y %H:%M")
                             slot_time = moscow_tz.localize(slot_time)
                         except Exception:
                             stats["bad_date_format"] += 1
-                            _d = (date_str or "").strip()
-                            _t = (time_str or "").strip()
                             _dl = _d.lower()
                             _tl = _t.lower()
                             if "дата" in _dl or "впл" in _dl or "время" in _tl or "пбл" in _tl:
@@ -245,7 +245,7 @@ async def monitor_schedule(bot):
                                 continue
                             if _d == _t:
                                 continue
-                            logger.warning(f"  [{sheet_name}] строка {row_idx}: не парсится '{date_str} {time_str}'")
+                            logger.warning(f"  [{sheet_name}] строка {row_idx}: не парсится '{_d} {_t}'")
                             continue
 
                         if now >= slot_time:
@@ -276,8 +276,8 @@ async def monitor_schedule(bot):
                 row_ids = [r[0] for r in to_publish]
                 if to_publish:
                     first_row = to_publish[0][1]
-                    date_str = first_row[mapping["date_col"]-1].strip()
-                    time_str = first_row[mapping["time_col"]-1].strip()
+                    date_str = first_row[mapping["date_col"]-1].strip().replace("..", ".")
+                    time_str = first_row[mapping["time_col"]-1].strip().replace("..", ":")
                 else:
                     date_str = ""
                     time_str = ""
@@ -293,7 +293,6 @@ async def monitor_schedule(bot):
                         slot["count"] = real_count
                         active_slots[existing_msg_id] = slot
 
-                    # обновляем mapping слота на актуальный (вдруг колонки сдвинулись)
                     slot["mapping"] = mapping
                     active_slots[existing_msg_id] = slot
 
@@ -657,7 +656,6 @@ async def _check_republish(bot, client, now):
         except:
             continue
 
-        # Обновляем mapping по актуальным заголовкам
         if records:
             slot_mapping = get_column_mapping(platform, records[0])
             slot["mapping"] = slot_mapping
@@ -1051,7 +1049,7 @@ async def update_stats_from_sheet():
         await update_stats_from_sheet_once()
 
 
-async def update_stats_from_sheet_once():
+async def update_stats_from_sheet_once(bot=None):
     try:
         logger.info("🔄 Обновление статистики")
         client = get_client()
