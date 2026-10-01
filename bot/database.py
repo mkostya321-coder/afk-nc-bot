@@ -362,6 +362,43 @@ def set_limit(platform: str, limit: int):
         conn.commit()
 
 
+# ============ ПЕРСОНАЛЬНЫЕ ЛИМИТЫ ============
+def get_user_limit(user_id: int, platform: str):
+    """Возвращает персональный лимит или None, если его нет."""
+    val = get_setting(f"user_limit_{user_id}_{platform}")
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        return None
+
+
+def set_user_limit(user_id: int, platform: str, limit: int):
+    set_setting(f"user_limit_{user_id}_{platform}", str(limit))
+
+
+def reset_user_limit(user_id: int, platform: str = None):
+    """Сбрасывает персональный лимит (для одной платформы или для всех)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        if platform:
+            cur.execute("DELETE FROM settings WHERE key = ?", (f"user_limit_{user_id}_{platform}",))
+        else:
+            cur.execute("DELETE FROM settings WHERE key LIKE ?", (f"user_limit_{user_id}_%",))
+        conn.commit()
+
+
+def get_effective_limit(user_id: int, platform: str) -> int:
+    """
+    Приоритет: персональный лимит → общий лимит.
+    """
+    personal = get_user_limit(user_id, platform)
+    if personal is not None:
+        return personal
+    return get_limit(platform)
+
+
 def get_all_registered_users():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
