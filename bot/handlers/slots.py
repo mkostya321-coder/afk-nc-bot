@@ -12,7 +12,7 @@ from bot.config import (
 )
 from bot.database import (
     is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
-    add_review_take, count_review_takes_last_24h, get_limit
+    add_review_take, count_review_takes_last_24h, get_limit, get_effective_limit
 )
 from bot.google_sheets import get_client, build_slot_message
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
@@ -177,7 +177,8 @@ async def unpin_instruction(user_id: int, bot):
 
 
 async def check_limit(user_id: int, platform: str) -> bool:
-    return count_review_takes_last_24h(user_id, platform) < get_limit(platform)
+    limit = get_effective_limit(user_id, platform)
+    return count_review_takes_last_24h(user_id, platform) < limit
 
 
 # ============ CANCEL ============
@@ -348,7 +349,7 @@ async def handle_quantity_input(message: Message):
     platform = request.get("platform", "яндекс")
 
     taken_today = count_review_takes_last_24h(user_id, platform)
-    limit = get_limit(platform)
+    limit = get_effective_limit(user_id, platform)
     remaining = limit - taken_today
 
     if remaining <= 0:
@@ -622,7 +623,7 @@ async def take_slot_start(callback: CallbackQuery):
         platform = real_platform
 
     if not await check_limit(user_id, platform):
-        limit = get_limit(platform)
+        limit = get_effective_limit(user_id, platform)
         taken_today = count_review_takes_last_24h(user_id, platform)
         now_msk = datetime.now(moscow_tz)
         next_reset = now_msk.replace(hour=10, minute=0, second=0, microsecond=0)
@@ -698,7 +699,6 @@ async def show_slot_buttons(message: Message, user_id: int):
     await message.edit_text("📋 Выберите номер отзыва:", reply_markup=builder.as_markup())
 
 
-# ============ ВЫБОР ОТЗЫВА ============
 @router.callback_query(F.data.startswith("select_review|"))
 async def select_review(callback: CallbackQuery):
     user_id = callback.from_user.id
