@@ -9,7 +9,7 @@ moscow_tz = pytz.timezone("Europe/Moscow")
 PRICES = {
     "яндекс": 150, "google": 50, "2гис": 50, "авито": 700, "вк": 50,
     "отзовик": 100, "доктору": 100, "докдок": 100, "про докторов": 200,
-    "докту": 100, "32топ": 125, "zoon": 50, "яу": 100, "яб": 100, "h": 50,
+    "докту": 100, "32топ": 125, "zoon": 85, "яу": 100, "яб": 100, "h": 50,
     "yell": 50,
 }
 
@@ -89,7 +89,6 @@ def get_column_mapping(platform: str, headers: list = None):
     Если headers передан — определяем колонки по названиям в первой строке таблицы.
     Иначе — стандартный маппинг.
     """
-    # === Базовый маппинг (fallback) ===
     if platform == "про докторов":
         default = {
             "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
@@ -125,7 +124,6 @@ def get_column_mapping(platform: str, headers: list = None):
         detected["update_col"]   = _find_col(headers, "обновлен", "e-", default=default["update_col"])
         return detected
 
-    # === Стандартные платформы: автодетект ===
     detected = {
         "date_col":     _find_col(headers, "дата", default=default["date_col"]),
         "time_col":     _find_col(headers, "время", default=default["time_col"]),
