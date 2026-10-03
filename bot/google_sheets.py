@@ -31,9 +31,11 @@ BLOCKED_STATUSES = (
     "оплачено",
     "в отчете испол",
     "удален",
+    "222",
 )
 
 BLUE_BG = {"red": 0, "green": 0, "blue": 0.8}
+RED_BG = {"red": 0.9, "green": 0.2, "blue": 0.2}
 
 
 def get_credentials():
@@ -759,6 +761,13 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             to_remove.append(user_id)
             continue
 
+        completed_count = len(request.get("completed_reviews", []))
+        no_show = (completed_count == 0)
+        logger.info(
+            f"🕒 user {user_id} ({platform_key}): выполнено отзывов {completed_count} → "
+            f"{'NO-SHOW (K красный)' if no_show else 'частично (K обнулим)'}"
+        )
+
         try:
             sheet = spreadsheet.worksheet(sheet_title)
             records = await retry_api_call(sheet.get_all_values)
@@ -772,6 +781,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         batch = []
         cells_to_blue = []
+        cells_to_red = []
         statuses_seen = {}
 
         for row_idx in assigned_rows:
@@ -790,15 +800,19 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if j_val == "на модерации":
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif j_val == "в работе":
-                batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
-                batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
+                batch.append({"range": f"{col_j}{row_idx}", "values": [[222]]})
+                if no_show:
+                    # Ни одного отзыва не сделано — оставляем юзернейм в K, помечаем красным
+                    cells_to_red.append((row_idx, mapping["executor_col"]))
+                else:
+                    batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
                 batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[888]]})
                 cells_to_blue.append((row_idx, mapping["flag_final_col"]))
 
         logger.info(
             f"🕒 user {user_id} ({platform_key}, '{sheet_title}'): "
             f"строк {len(assigned_rows)}, статусы: {statuses_seen}, к обновлению {len(batch)}, "
-            f"закрасить {len(cells_to_blue)}"
+            f"закрасить I: {len(cells_to_blue)}, K красным: {len(cells_to_red)}"
         )
 
         if batch:
@@ -811,15 +825,21 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 any_critical_error = True
                 continue
 
+        sheet_id = sheet.id
         if cells_to_blue:
             try:
-                sheet_id = sheet.id
                 await _batch_format_cells(spreadsheet, sheet_id, cells_to_blue, BLUE_BG)
             except Exception as e:
-                logger.warning(f"⚠️ user {user_id}: не удалось закрасить {len(cells_to_blue)} ячеек: {e}")
+                logger.warning(f"⚠️ user {user_id}: не удалось закрасить I: {len(cells_to_blue)}: {e}")
+        if cells_to_red:
+            try:
+                await _batch_format_cells(spreadsheet, sheet_id, cells_to_red, RED_BG)
+                logger.warning(f"🚨 user {user_id}: NO-SHOW — K помечен красным ({len(cells_to_red)} строк)")
+            except Exception as e:
+                logger.warning(f"⚠️ user {user_id}: не удалось закрасить K красным: {e}")
 
         if batch:
-            logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек, покрашено {len(cells_to_blue)}")
+            logger.info(f"✅ user {user_id}: обновлено {len(batch)} ячеек, I покрашено {len(cells_to_blue)}, K красным {len(cells_to_red)}")
 
         try:
             await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
@@ -945,6 +965,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         batch_s = []
         cells_s = []
+        cells_red_s = []
         orphans = 0
 
         for row_idx, row in enumerate(records_s[1:], start=2):
@@ -960,14 +981,14 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 continue
 
             col_j = chr(64 + mapping_s["status_col"])
-            col_k = chr(64 + mapping_s["executor_col"])
             col_i = chr(64 + mapping_s["flag_final_col"])
-            batch_s.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
-            batch_s.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
+            # K не трогаем — оставляем юзернейм
+            batch_s.append({"range": f"{col_j}{row_idx}", "values": [[222]]})
             batch_s.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
             cells_s.append((row_idx, mapping_s["flag_final_col"]))
+            cells_red_s.append((row_idx, mapping_s["executor_col"]))
             orphans += 1
-            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', сбрасываю")
+            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', K красный, J=222")
 
         if batch_s:
             try:
@@ -976,15 +997,24 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                     await asyncio.sleep(0.6)
                 sheet_id = sheet.id
                 await _batch_format_cells(spreadsheet, sheet_id, cells_s, BLUE_BG)
+                if cells_red_s:
+                    await _batch_format_cells(spreadsheet, sheet_id, cells_red_s, RED_BG)
                 logger.info(f"✅ '{sheet_name_s}': обработано {orphans} сиротских")
             except Exception as e:
                 logger.error(f"❌ '{sheet_name_s}': ошибка сиротских: {e}")
                 any_critical_error = True
 
     for user_id in to_remove:
+        request = slot_requests.get(user_id) or {}
+        instr_id = request.get("instruction_msg_id")
+        if instr_id:
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=instr_id)
+                logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
+            except Exception as e:
+                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
         try:
             await bot.unpin_all_chat_messages(chat_id=user_id)
-            logger.info(f"📌 user {user_id}: инструкция откреплена")
         except Exception as e:
             logger.warning(f"⚠️ user {user_id}: не удалось открепить: {e}")
 
