@@ -140,6 +140,7 @@ def get_safe_mapping(request: dict, platform: str) -> dict:
 
 
 async def send_instruction(user_id: int, bot):
+    """Отправляет инструкцию и возвращает message_id (или None)."""
     try:
         caption = (
             "📸 Инструкция по отправке скриншотов:\n\n"
@@ -164,8 +165,38 @@ async def send_instruction(user_id: int, bot):
                 logger.info(f"📌 Инструкция закреплена для {user_id}")
             except Exception as e:
                 logger.warning(f"⚠️ Не удалось закрепить инструкцию: {e}")
+            return sent.message_id
+        return None
     except Exception as e:
         logger.error(f"Ошибка отправки инструкции: {e}")
+        return None
+
+
+async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int = None):
+    """
+    Удаляет все сообщения сессии: ссылки, текст, фото + закреплённую инструкцию.
+    """
+    if chat_id is None:
+        chat_id = user_id
+    # 1. extra_messages — ссылки, текст, фото, ТЗ, документ
+    for msg_id in request.get("extra_messages", []):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+    # 2. Закреплённая инструкция (фото-пример)
+    instr_id = request.get("instruction_msg_id")
+    if instr_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=instr_id)
+            logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
+        except Exception as e:
+            logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+    # 3. Открепляем всё (на всякий случай)
+    try:
+        await bot.unpin_all_chat_messages(chat_id=chat_id)
+    except Exception:
+        pass
 
 
 async def unpin_instruction(user_id: int, bot):
