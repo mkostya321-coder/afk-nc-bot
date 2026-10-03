@@ -172,19 +172,25 @@ async def send_instruction(user_id: int, bot):
         return None
 
 
+async def unpin_instruction(user_id: int, bot):
+    try:
+        await bot.unpin_all_chat_messages(chat_id=user_id)
+        logger.info(f"📌 Инструкция откреплена у {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось открепить: {e}")
+
+
 async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int = None):
     """
     Удаляет все сообщения сессии: ссылки, текст, фото + закреплённую инструкцию.
     """
     if chat_id is None:
         chat_id = user_id
-    # 1. extra_messages — ссылки, текст, фото, ТЗ, документ
     for msg_id in request.get("extra_messages", []):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass
-    # 2. Закреплённая инструкция (фото-пример)
     instr_id = request.get("instruction_msg_id")
     if instr_id:
         try:
@@ -192,19 +198,10 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
             logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
         except Exception as e:
             logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
-    # 3. Открепляем всё (на всякий случай)
     try:
         await bot.unpin_all_chat_messages(chat_id=chat_id)
     except Exception:
         pass
-
-
-async def unpin_instruction(user_id: int, bot):
-    try:
-        await bot.unpin_all_chat_messages(chat_id=user_id)
-        logger.info(f"📌 Инструкция откреплена у {user_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Не удалось открепить: {e}")
 
 
 async def check_limit(user_id: int, platform: str) -> bool:
@@ -225,12 +222,9 @@ async def cancel_task(message: Message):
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
     if not remaining:
+        await delete_session_messages(user_id, message.bot, request, message.chat.id)
         await message.answer("✅ У вас нет невыполненных отзывов.")
         del slot_requests[user_id]
-        try:
-            await unpin_instruction(user_id, message.bot)
-        except Exception as e:
-            logger.warning(f"⚠️ cancel_task (no remaining): не удалось открепить: {e}")
         return
 
     platform = request.get("platform", "яндекс")
@@ -258,12 +252,9 @@ async def cancel_task(message: Message):
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
 
-    del slot_requests[user_id]
+    await delete_session_messages(user_id, message.bot, request, message.chat.id)
 
-    try:
-        await unpin_instruction(user_id, message.bot)
-    except Exception as e:
-        logger.warning(f"⚠️ cancel_task: не удалось открепить: {e}")
+    del slot_requests[user_id]
 
     await message.answer(
         f"✅ Отказ принят.\n\n"
@@ -545,7 +536,10 @@ async def handle_quantity_input(message: Message):
         ).as_markup()
     )
 
-    await send_instruction(user_id, message.bot)
+    instr_id = await send_instruction(user_id, message.bot)
+    if instr_id:
+        request["instruction_msg_id"] = instr_id
+        slot_requests[user_id] = request
 
 
 # ============ ВЗЯТЬ СЛОТ ============
@@ -1033,6 +1027,14 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
+        # Все отзывы сданы — удаляем закреплённую инструкцию
+        instr_id = request.get("instruction_msg_id")
+        if instr_id:
+            try:
+                await message.bot.delete_message(chat_id=chat_id, message_id=instr_id)
+                logger.info(f"🗑️ user {user_id}: инструкция удалена после завершения всех отзывов")
+            except Exception as e:
+                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
