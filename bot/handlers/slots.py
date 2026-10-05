@@ -868,10 +868,17 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         extra_text = template["extra_text"]
         warning = template["warning"]
 
+        # Нормализуем: убираем пробелы, приводим к верхнему регистру,
+        # принимаем и кириллицу (М/Ж), и латиницу (M/J)
+        gender_clean = (gender or "").strip().upper()
+
         gender_text = ""
-        if gender.upper() == "М":
+        gender_kind = None  # "м", "ж" или None
+        if gender_clean in ("М", "M"):
+            gender_kind = "м"
             gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
-        elif gender.upper() == "Ж":
+        elif gender_clean in ("Ж", "J"):
+            gender_kind = "ж"
             gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
@@ -900,6 +907,28 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             extra_ids.append(sent.message_id)
         else:
             sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b>")
+            extra_ids.append(sent.message_id)
+
+        # === ОТДЕЛЬНОЕ ПРЕДУПРЕЖДЕНИЕ ПРО ПОЛ ===
+        if gender_kind == "ж":
+            sent = await message.answer(
+                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
+                "Этот текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.\n\n"
+                "Если отзыв напишет парень или с мужского имени — "
+                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
+                "Пожалуйста, будьте внимательны!",
+                parse_mode="HTML"
+            )
+            extra_ids.append(sent.message_id)
+        elif gender_kind == "м":
+            sent = await message.answer(
+                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
+                "Этот текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.\n\n"
+                "Если отзыв напишет девушка или с женского имени — "
+                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
+                "Пожалуйста, будьте внимательны!",
+                parse_mode="HTML"
+            )
             extra_ids.append(sent.message_id)
 
         if photo_link:
