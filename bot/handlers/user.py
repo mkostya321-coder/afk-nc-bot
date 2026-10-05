@@ -281,12 +281,45 @@ async def menu_profile(message: Message):
     if is_blocked(message.from_user.id):
         await message.answer("⛔ Вы заблокированы.")
         return
-    user = get_user(message.from_user.id)
+
+    user_id = message.from_user.id
+
+    # === ПРОВЕРКА 1: синхронизируем через add_user (обновляет username/first_name в БД) ===
+    user_before = get_user(user_id)
+    old_username = ((user_before or {}).get("tg_username") or "").strip().lower()
+
+    add_user(user_id, message.from_user.username, message.from_user.full_name)
+
+    # === ПРОВЕРКА 2: пробуем get_chat для точного username из Telegram ===
+    try:
+        chat = await message.bot.get_chat(user_id)
+        tg_now = (chat.username or "").lower()
+        user_check = get_user(user_id)
+        db_now = (user_check.get("tg_username") or "").lower() if user_check else ""
+        if tg_now and tg_now != db_now:
+            update_user_field(user_id, "tg_username", tg_now)
+            logger.info(f"🔄 /profile: username юзера {user_id} обновлён: @{db_now or '—'} → @{tg_now}")
+    except Exception as e:
+        logger.warning(f"⚠️ /profile get_chat({user_id}): {e}")
+
+    user_after = get_user(user_id)
+    new_username = ((user_after or {}).get("tg_username") or "").strip().lower()
+
+    # === Если username изменился — синхронизируем его в таблице ===
+    if old_username and new_username and old_username != new_username:
+        try:
+            from bot.google_sheets import sync_username_in_sheets
+            updated = await sync_username_in_sheets(old_username, new_username)
+            if updated:
+                logger.info(f"📊 /profile: обновлено {updated} строк в таблице: @{old_username} → @{new_username}")
+        except Exception as e:
+            logger.error(f"❌ /profile sync_username_in_sheets: {e}")
+
+    user = user_after
     if not user or not user.get("name"):
         await message.answer("❌ Вы ещё не зарегистрированы. Используйте кнопку «📝 Регистрация».")
         return
 
-    user_id = message.from_user.id
     reg_time = datetime.fromisoformat(user["registered_at"]) if user["registered_at"] else datetime.now()
     delta = datetime.now() - reg_time
     days = delta.days
