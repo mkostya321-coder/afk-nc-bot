@@ -182,15 +182,20 @@ async def unpin_instruction(user_id: int, bot):
 
 async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int = None):
     """
-    Удаляет все сообщения сессии: ссылки, текст, фото + закреплённую инструкцию.
+    Удаляет все сообщения сессии:
+    - ссылку, текст, фото (extra_messages)
+    - закреплённую инструкцию (instruction_msg_id)
+    - сообщение с кнопками «Активный слот»/«Выберите отзыв» (controls_msg_id)
     """
     if chat_id is None:
         chat_id = user_id
+    # 1. extra_messages — ссылки, текст, фото, ТЗ, документ
     for msg_id in request.get("extra_messages", []):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass
+    # 2. Закреплённая инструкция (фото-пример)
     instr_id = request.get("instruction_msg_id")
     if instr_id:
         try:
@@ -198,6 +203,15 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
             logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
         except Exception as e:
             logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+    # 3. Сообщение с кнопками (controls)
+    controls_id = request.get("controls_msg_id")
+    if controls_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=controls_id)
+            logger.info(f"🗑️ user {user_id}: controls удалено (msg {controls_id})")
+        except Exception as e:
+            logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
+    # 4. Открепляем всё (на всякий случай)
     try:
         await bot.unpin_all_chat_messages(chat_id=chat_id)
     except Exception:
@@ -528,13 +542,15 @@ async def handle_quantity_input(message: Message):
     for _ in range(quantity):
         add_review_take(user_id, platform)
 
-    await message.answer(
+    controls_msg = await message.answer(
         f"🎯 Вы взяли {quantity} отзывов на платформе {platform}.\n"
         "Нажмите «Активный слот», чтобы приступить.",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
         ).as_markup()
     )
+    request["controls_msg_id"] = controls_msg.message_id
+    slot_requests[user_id] = request
 
     instr_id = await send_instruction(user_id, message.bot)
     if instr_id:
@@ -697,6 +713,12 @@ async def active_slot(callback: CallbackQuery):
     if slot_requests[user_id].get("state") != "slot_selection":
         await callback.answer("❌ Уже в процессе.", show_alert=True)
         return
+
+    # Сохраняем message_id controls-сообщения (для последующего удаления)
+    request = slot_requests[user_id]
+    request["controls_msg_id"] = callback.message.message_id
+    slot_requests[user_id] = request
+
     await callback.answer()
     await show_slot_buttons(callback.message, user_id)
 
@@ -734,6 +756,10 @@ async def select_review(callback: CallbackQuery):
     if request.get("state") != "slot_selection":
         await callback.answer("❌ Уже работаете.", show_alert=True)
         return
+
+    # Продолжаем считать это же сообщение controls-сообщением
+    request["controls_msg_id"] = callback.message.message_id
+    slot_requests[user_id] = request
 
     platform = request.get("platform", "яндекс")
     sheet_title = request.get("sheet_title")
@@ -868,12 +894,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         extra_text = template["extra_text"]
         warning = template["warning"]
 
-        # Нормализуем: убираем пробелы, приводим к верхнему регистру,
-        # принимаем и кириллицу (М/Ж), и латиницу (M/J)
         gender_clean = (gender or "").strip().upper()
 
         gender_text = ""
-        gender_kind = None  # "м", "ж" или None
+        gender_kind = None
         if gender_clean in ("М", "M"):
             gender_kind = "м"
             gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
@@ -909,7 +933,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b>")
             extra_ids.append(sent.message_id)
 
-        # === ОТДЕЛЬНОЕ ПРЕДУПРЕЖДЕНИЕ ПРО ПОЛ ===
         if gender_kind == "ж":
             sent = await message.answer(
                 "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
@@ -1056,7 +1079,7 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
-        # Все отзывы сданы — удаляем закреплённую инструкцию
+        # Все отзывы сданы — удаляем закреплённую инструкцию + controls + extra
         instr_id = request.get("instruction_msg_id")
         if instr_id:
             try:
@@ -1064,6 +1087,13 @@ async def handle_screenshot(message: Message):
                 logger.info(f"🗑️ user {user_id}: инструкция удалена после завершения всех отзывов")
             except Exception as e:
                 logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+        controls_id = request.get("controls_msg_id")
+        if controls_id:
+            try:
+                await message.bot.delete_message(chat_id=chat_id, message_id=controls_id)
+                logger.info(f"🗑️ user {user_id}: controls удалено после завершения (msg {controls_id})")
+            except Exception as e:
+                logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
