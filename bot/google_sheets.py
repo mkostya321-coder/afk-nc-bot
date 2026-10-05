@@ -150,6 +150,82 @@ def _is_row_invalid_now(row: list, mapping: dict) -> bool:
     return False
 
 
+async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
+    """
+    Проходит по всем листам. Находит в столбце K (executor_col) ячейки со старым
+    username (без @), у которых в столбце E (update_col) стоит 0 или пусто.
+    Меняет K на новый @username.
+
+    Если E=1 (уже обработано/оплачено) — не трогает.
+    Возвращает количество обновлённых строк.
+    """
+    if not old_username or not new_username:
+        return 0
+    old_clean = old_username.lstrip("@").lower().strip()
+    new_clean = new_username.lstrip("@").lower().strip()
+    if not old_clean or not new_clean or old_clean == new_clean:
+        return 0
+
+    new_with_at = f"@{new_clean}"
+    total_updated = 0
+
+    try:
+        client = get_client()
+        if not client:
+            logger.warning("⚠️ sync_username_in_sheets: нет credentials")
+            return 0
+        spreadsheet = client.open_by_key(SHEET_ID)
+
+        for sheet in spreadsheet.worksheets():
+            try:
+                records = await retry_api_call(sheet.get_all_values)
+            except Exception as e:
+                logger.error(f"❌ sync_username '{sheet.title}': не читается: {e}")
+                continue
+            if len(records) < 2:
+                continue
+
+            platform = platform_from_sheet_name(sheet.title)
+            headers_row = records[0] if records else None
+            mapping = get_column_mapping(platform, headers_row) if platform else get_column_mapping("яндекс", headers_row)
+
+            batch = []
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(mapping["executor_col"], mapping["update_col"]):
+                    continue
+                executor = (row[mapping["executor_col"]-1] or "").strip().lstrip("@").lower()
+                if executor != old_clean:
+                    continue
+                e_val = (row[mapping["update_col"]-1] or "").strip()
+                if e_val not in ("", "0"):
+                    # уже помечено как обработанное — не трогаем
+                    continue
+                col_k = chr(64 + mapping["executor_col"])
+                batch.append({"range": f"{col_k}{row_idx}", "values": [[new_with_at]]})
+
+            if batch:
+                try:
+                    for i in range(0, len(batch), 50):
+                        await retry_api_call(sheet.batch_update, batch[i:i+50])
+                        await asyncio.sleep(0.6)
+                    total_updated += len(batch)
+                    logger.info(
+                        f"🔄 sync_username '{sheet.title}': обновлено {len(batch)} строк "
+                        f"'{old_clean}' → '{new_clean}'"
+                    )
+                except Exception as e:
+                    logger.error(f"❌ sync_username '{sheet.title}': {e}")
+
+        if total_updated:
+            logger.info(f"✅ sync_username: всего {total_updated} строк для @{old_clean} → @{new_clean}")
+        else:
+            logger.info(f"ℹ️ sync_username: для @{old_clean} → @{new_clean} строк не найдено")
+        return total_updated
+    except Exception as e:
+        logger.error(f"❌ sync_username_in_sheets: {e}", exc_info=True)
+        return 0
+
+
 async def monitor_schedule(bot):
     logger.info("📅 Планировщик слотов запущен")
     while True:
@@ -217,7 +293,7 @@ async def monitor_schedule(bot):
                         flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
 
                         if (flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
-                                or flag_final in ("1", "999", "333", "666", "888", "7")):
+                                or flag_final in ("1", "999", "333", "666", "888", "222", "7")):
                             stats["already_flagged"] += 1
                             continue
 
@@ -672,9 +748,12 @@ async def _check_republish(bot, client, now):
                 continue
             status = row[slot_mapping["status_col"]-1].strip().lower() if len(row) >= slot_mapping["status_col"] else ""
             executor = row[slot_mapping["executor_col"]-1].strip() if len(row) >= slot_mapping["executor_col"] else ""
+            flag_final = row[slot_mapping["flag_final_col"]-1].strip() if len(row) >= slot_mapping["flag_final_col"] else ""
             if status in BLOCKED_STATUSES:
                 continue
             if executor:
+                continue
+            if flag_final in ("222", "888"):
                 continue
             available.append(row_idx)
 
@@ -796,17 +875,21 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             col_j = chr(64 + mapping["status_col"])
             col_k = chr(64 + mapping["executor_col"])
             col_i_letter = chr(64 + mapping["flag_final_col"])
+            col_q = chr(64 + mapping["flag_first_col"])
+
+            q_val = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
+            if q_val != "1":
+                batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
 
             if j_val == "на модерации":
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif j_val == "в работе":
-                batch.append({"range": f"{col_j}{row_idx}", "values": [[222]]})
+                # J НЕ трогаем, 222 ставим в I
                 if no_show:
-                    # Ни одного отзыва не сделано — оставляем юзернейм в K, помечаем красным
                     cells_to_red.append((row_idx, mapping["executor_col"]))
                 else:
                     batch.append({"range": f"{col_k}{row_idx}", "values": [[""]]})
-                batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[888]]})
+                batch.append({"range": f"{col_i_letter}{row_idx}", "values": [[222]]})
                 cells_to_blue.append((row_idx, mapping["flag_final_col"]))
 
         logger.info(
@@ -899,7 +982,13 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 skipped_by_status += 1
                 continue
             i_val = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
+            q_val = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
             col_i_letter = chr(64 + mapping["flag_final_col"])
+            col_q = chr(64 + mapping["flag_first_col"])
+
+            if q_val != "1":
+                batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+
             if i_val == "888":
                 already_888 += 1
                 cells_to_blue.append((row_idx, mapping["flag_final_col"]))
@@ -980,15 +1069,17 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if not executor:
                 continue
 
-            col_j = chr(64 + mapping_s["status_col"])
             col_i = chr(64 + mapping_s["flag_final_col"])
-            # K не трогаем — оставляем юзернейм
-            batch_s.append({"range": f"{col_j}{row_idx}", "values": [[222]]})
-            batch_s.append({"range": f"{col_i}{row_idx}", "values": [[888]]})
+            col_q = chr(64 + mapping_s["flag_first_col"])
+            q_val = row[mapping_s["flag_first_col"]-1].strip() if len(row) >= mapping_s["flag_first_col"] else ""
+            if q_val != "1":
+                batch_s.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+            # J НЕ трогаем, 222 ставим в I
+            batch_s.append({"range": f"{col_i}{row_idx}", "values": [[222]]})
             cells_s.append((row_idx, mapping_s["flag_final_col"]))
             cells_red_s.append((row_idx, mapping_s["executor_col"]))
             orphans += 1
-            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', K красный, J=222")
+            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', K красный")
 
         if batch_s:
             try:
