@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ============ СКРЫТЫЕ ПОЛЬЗОВАТЕЛИ (только для /info) ============
+HIDDEN_USERNAMES = {
+    "new_chapterr97",
+    "molostovk",
+}
+
+
 def find_user_by_target(target: str):
     """Ищет пользователя по ID или @username. Возвращает dict или None."""
     if not target:
@@ -133,7 +140,7 @@ async def set_role(message: Message):
 
 @router.message(Command("warn"))
 async def warn_user(message: Message):
-    if not is_moderator(message.from_user.id):
+    if not is_comoderator(message.from_user.id):
         return
     try:
         parts = message.text.split(maxsplit=2)
@@ -172,7 +179,7 @@ async def warn_user(message: Message):
 
 @router.message(Command("smsuser"))
 async def sms_user(message: Message):
-    if not is_moderator(message.from_user.id):
+    if not is_comoderator(message.from_user.id):
         return
     try:
         parts = message.text.split(maxsplit=2)
@@ -200,7 +207,7 @@ async def sms_user(message: Message):
 
 @router.message(Command("userblock"))
 async def user_block(message: Message):
-    if not is_moderator(message.from_user.id):
+    if not is_comoderator(message.from_user.id):
         return
     try:
         parts = message.text.split()
@@ -225,7 +232,7 @@ async def user_block(message: Message):
 
 @router.message(Command("info"))
 async def cmd_info(message: Message):
-    if not is_moderator(message.from_user.id):
+    if not is_comoderator(message.from_user.id):
         return
     args = message.text.split()
     if len(args) < 2:
@@ -235,6 +242,12 @@ async def cmd_info(message: Message):
     if not user:
         await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
         return
+    # === СКРЫТИЕ НЕКОТОРЫХ ПОЛЬЗОВАТЕЛЕЙ ===
+    target_username = (user.get("tg_username") or "").lower().lstrip("@")
+    if target_username in HIDDEN_USERNAMES:
+        await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
+        return
+
     reg_time = datetime.fromisoformat(user["registered_at"]) if user.get("registered_at") else datetime.now()
     delta = datetime.now() - reg_time
     days, seconds = delta.days, delta.seconds
