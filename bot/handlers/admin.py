@@ -22,6 +22,7 @@ router = Router()
 # ============ СКРЫТЫЕ ПОЛЬЗОВАТЕЛИ (только для /info) ============
 HIDDEN_USERNAMES = {
     "new_chapterr24",
+    "new_chapterr97",
     "molostovk",
 }
 
