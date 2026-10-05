@@ -31,6 +31,16 @@ class EditUserStates(StatesGroup):
 selected_user = {}
 
 
+def _find_user(target: str):
+    """Ищет пользователя по ID или @username."""
+    if not target:
+        return None
+    t = target.strip()
+    if t.isdigit():
+        return get_user(int(t))
+    return get_user_by_username(t.lstrip("@"))
+
+
 async def delete_message_safe(message: Message):
     try:
         await message.delete()
@@ -117,14 +127,56 @@ async def cmd_infoga(message: Message, state: FSMContext):
 
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("❌ Использование: /infoga @username")
+        await message.answer("❌ Использование: /infoga <@username или user_id>")
         return
 
-    target = args[1].lstrip("@").lower()
-    user = get_user_by_username(target)
+    target = args[1]
+    user = _find_user(target)
     if not user:
-        await message.answer(f"❌ Пользователь с username '{target}' не найден.")
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
+
+    old_username = ((user.get("tg_username") or "")).strip().lower()
+
+    # === ПРОВЕРКА: get_chat для актуального username ===
+    new_username = old_username
+    try:
+        chat = await message.bot.get_chat(user["user_id"])
+        tg_now = (chat.username or "").lower()
+        if tg_now and tg_now != old_username:
+            update_user_field(user["user_id"], "tg_username", tg_now)
+            logger.info(
+                f"🔄 /infoga: username юзера {user['user_id']} обновлён: "
+                f"@{old_username or '—'} → @{tg_now}"
+            )
+            user = _find_user(str(user["user_id"]))
+            new_username = tg_now
+        elif not tg_now and old_username:
+            logger.warning(
+                f"⚠️ /infoga: у юзера {user['user_id']} username скрыт в Telegram, "
+                f"оставляю @{old_username}"
+            )
+    except Exception as e:
+        logger.warning(f"⚠️ /infoga get_chat({user['user_id']}): {e}")
+
+    # === Если username изменился — синхронизируем его в таблице ===
+    if old_username and new_username and old_username != new_username:
+        try:
+            from bot.google_sheets import sync_username_in_sheets
+            updated = await sync_username_in_sheets(old_username, new_username)
+            if updated:
+                logger.info(f"📊 /infoga: обновлено {updated} строк в таблице: @{old_username} → @{new_username}")
+                try:
+                    await message.answer(
+                        f"🔄 Username изменён в таблице:\n"
+                        f"@{old_username} → @{new_username}\n"
+                        f"Обновлено строк: <b>{updated}</b>",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"❌ /infoga sync_username_in_sheets: {e}")
 
     selected_user[user_id] = user["user_id"]
     await state.set_state(EditUserStates.menu)
