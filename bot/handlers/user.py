@@ -284,13 +284,11 @@ async def menu_profile(message: Message):
 
     user_id = message.from_user.id
 
-    # === ПРОВЕРКА 1: синхронизируем через add_user (обновляет username/first_name в БД) ===
     user_before = get_user(user_id)
     old_username = ((user_before or {}).get("tg_username") or "").strip().lower()
 
     add_user(user_id, message.from_user.username, message.from_user.full_name)
 
-    # === ПРОВЕРКА 2: пробуем get_chat для точного username из Telegram ===
     try:
         chat = await message.bot.get_chat(user_id)
         tg_now = (chat.username or "").lower()
@@ -305,7 +303,6 @@ async def menu_profile(message: Message):
     user_after = get_user(user_id)
     new_username = ((user_after or {}).get("tg_username") or "").strip().lower()
 
-    # === Если username изменился — синхронизируем его в таблице ===
     if old_username and new_username and old_username != new_username:
         try:
             from bot.google_sheets import sync_username_in_sheets
@@ -557,7 +554,7 @@ async def cmd_support(message: Message, state: FSMContext):
     )
 
 
-@router.message(SupportForm.problem)
+@router.message(SupportForm.problem, F.text)
 async def process_support(message: Message, state: FSMContext):
     problem = message.text.strip()
     await state.clear()
@@ -668,7 +665,7 @@ async def start_registration(message: Message, state: FSMContext):
     await message.answer("Отлично, задам вам пару вопросов.\n1. Ваше имя?", reply_markup=ReplyKeyboardRemove())
 
 
-@router.message(RegForm.name)
+@router.message(RegForm.name, F.text)
 async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     tg_username = message.from_user.username
@@ -690,14 +687,14 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer("3. Ваше время от МСК +-?\n(Например: +4, -1, 0)")
 
 
-@router.message(RegForm.timezone)
+@router.message(RegForm.timezone, F.text)
 async def process_timezone(message: Message, state: FSMContext):
     await state.update_data(timezone=message.text.strip())
     await state.set_state(RegForm.city)
     await message.answer("4. В каком городе проживаете? (Для отправки ближайших отзывов)")
 
 
-@router.message(RegForm.city)
+@router.message(RegForm.city, F.text)
 async def process_city(message: Message, state: FSMContext):
     await state.update_data(city=message.text.strip())
     await state.set_state(RegForm.referrer)
@@ -708,7 +705,7 @@ async def process_city(message: Message, state: FSMContext):
     )
 
 
-@router.message(RegForm.referrer)
+@router.message(RegForm.referrer, F.text)
 async def process_referrer(message: Message, state: FSMContext):
     referrer = message.text.strip().lstrip("@").lower()
     if referrer != "0":
@@ -725,14 +722,14 @@ async def process_referrer(message: Message, state: FSMContext):
     )
 
 
-@router.message(RegForm.phone_card)
+@router.message(RegForm.phone_card, F.text)
 async def process_phone_card(message: Message, state: FSMContext):
     await state.update_data(phone_card=message.text.strip())
     await state.set_state(RegForm.bank)
     await message.answer("7. Банк?")
 
 
-@router.message(RegForm.bank)
+@router.message(RegForm.bank, F.text)
 async def process_bank(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = message.from_user.id
@@ -966,7 +963,7 @@ async def report_tiktok_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("1. Название вашего аккаунта Tik Tok:")
 
 
-@router.message(TikTokReport.account_name)
+@router.message(TikTokReport.account_name, F.text)
 async def process_tiktok_account(message: Message, state: FSMContext):
     await state.update_data(account_name=message.text.strip())
     await state.set_state(TikTokReport.screenshot_profile)
@@ -991,7 +988,7 @@ async def process_tiktok_screenshot_profile_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота профиля.")
 
 
-@router.message(TikTokReport.video_link)
+@router.message(TikTokReport.video_link, F.text)
 async def process_tiktok_video_link(message: Message, state: FSMContext):
     await state.update_data(video_link=message.text.strip())
     await state.set_state(TikTokReport.screenshot_views)
@@ -1083,7 +1080,7 @@ async def collaboration_form_start(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(CollaborationForm.platforms)
+@router.message(CollaborationForm.platforms, F.text)
 async def collaboration_platforms(message: Message, state: FSMContext):
     await state.update_data(platforms=message.text.strip())
     await state.set_state(CollaborationForm.counts)
@@ -1093,7 +1090,7 @@ async def collaboration_platforms(message: Message, state: FSMContext):
     )
 
 
-@router.message(CollaborationForm.counts)
+@router.message(CollaborationForm.counts, F.text)
 async def collaboration_counts(message: Message, state: FSMContext):
     await state.update_data(counts=message.text.strip())
     await state.set_state(CollaborationForm.description)
@@ -1103,7 +1100,7 @@ async def collaboration_counts(message: Message, state: FSMContext):
     )
 
 
-@router.message(CollaborationForm.description)
+@router.message(CollaborationForm.description, F.text)
 async def collaboration_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text.strip())
     await state.set_state(CollaborationForm.texts)
@@ -1114,7 +1111,7 @@ async def collaboration_description(message: Message, state: FSMContext):
     )
 
 
-@router.message(CollaborationForm.texts)
+@router.message(CollaborationForm.texts, F.text)
 async def collaboration_texts(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
