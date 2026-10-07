@@ -140,7 +140,6 @@ def get_safe_mapping(request: dict, platform: str) -> dict:
 
 
 async def send_instruction(user_id: int, bot):
-    """Отправляет инструкцию и возвращает message_id (или None)."""
     try:
         caption = (
             "📸 Инструкция по отправке скриншотов:\n\n"
@@ -181,21 +180,13 @@ async def unpin_instruction(user_id: int, bot):
 
 
 async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int = None):
-    """
-    Удаляет все сообщения сессии:
-    - ссылку, текст, фото (extra_messages)
-    - закреплённую инструкцию (instruction_msg_id)
-    - сообщение с кнопками «Активный слот»/«Выберите отзыв» (controls_msg_id)
-    """
     if chat_id is None:
         chat_id = user_id
-    # 1. extra_messages — ссылки, текст, фото, ТЗ, документ
     for msg_id in request.get("extra_messages", []):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass
-    # 2. Закреплённая инструкция (фото-пример)
     instr_id = request.get("instruction_msg_id")
     if instr_id:
         try:
@@ -203,7 +194,6 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
             logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
         except Exception as e:
             logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
-    # 3. Сообщение с кнопками (controls)
     controls_id = request.get("controls_msg_id")
     if controls_id:
         try:
@@ -211,7 +201,6 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
             logger.info(f"🗑️ user {user_id}: controls удалено (msg {controls_id})")
         except Exception as e:
             logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
-    # 4. Открепляем всё (на всякий случай)
     try:
         await bot.unpin_all_chat_messages(chat_id=chat_id)
     except Exception:
@@ -602,33 +591,27 @@ async def take_slot_start(callback: CallbackQuery):
         f"🎯 take_slot: user={user_id}, msg_id={slot_msg_id}, "
         f"platform_cb={platform_from_cb}, count={count}, date={date}, time={time}"
     )
-    logger.info(f"🎯 active_slots ключи: {sorted(active_slots.keys())}")
 
     slot_info = active_slots.get(slot_msg_id)
-    logger.info(f"🎯 по msg_id найдено: {slot_info is not None}")
 
     if not slot_info:
         platform_slots = [
             (m, s) for m, s in active_slots.items()
             if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
         ]
-        logger.info(f"🎯 fallback по platform='{platform_from_cb}': {len(platform_slots)}")
         if platform_slots:
             slot_msg_id, slot_info = platform_slots[0]
         else:
             from bot.database import get_all_active_slots
             db_slots = get_all_active_slots()
-            logger.info(f"🎯 в БД слотов: {len(db_slots)}, ключи: {sorted(db_slots.keys())}")
             if slot_msg_id in db_slots:
                 slot_info = db_slots[slot_msg_id]
                 active_slots[slot_msg_id] = slot_info
-                logger.info(f"🎯 найден в БД по msg_id {slot_msg_id}")
             else:
                 platform_db = [
                     (m, s) for m, s in db_slots.items()
                     if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
                 ]
-                logger.info(f"🎯 в БД по platform='{platform_from_cb}': {len(platform_db)}")
                 if platform_db:
                     slot_msg_id, slot_info = platform_db[0]
                     active_slots[slot_msg_id] = slot_info
@@ -648,16 +631,11 @@ async def take_slot_start(callback: CallbackQuery):
     real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
 
     if real_platform is None:
-        logger.error(
-            f"❌ take_slot: sheet_title='{sheet_title}' не распознан, "
-            f"использую platform из callback '{platform_from_cb}'"
-        )
         platform = platform_from_cb
     elif real_platform != platform_from_cb:
         logger.warning(
             f"⚠️ take_slot: РАССИНХРОН! callback говорит '{platform_from_cb}', "
-            f"а sheet_title='{sheet_title}' соответствует '{real_platform}'. "
-            f"Использую '{real_platform}'."
+            f"а sheet_title='{sheet_title}' соответствует '{real_platform}'."
         )
         platform = real_platform
     else:
@@ -714,7 +692,6 @@ async def active_slot(callback: CallbackQuery):
         await callback.answer("❌ Уже в процессе.", show_alert=True)
         return
 
-    # Сохраняем message_id controls-сообщения (для последующего удаления)
     request = slot_requests[user_id]
     request["controls_msg_id"] = callback.message.message_id
     slot_requests[user_id] = request
@@ -757,7 +734,6 @@ async def select_review(callback: CallbackQuery):
         await callback.answer("❌ Уже работаете.", show_alert=True)
         return
 
-    # Продолжаем считать это же сообщение controls-сообщением
     request["controls_msg_id"] = callback.message.message_id
     slot_requests[user_id] = request
 
@@ -768,7 +744,7 @@ async def select_review(callback: CallbackQuery):
     if real_platform and real_platform != platform:
         logger.warning(
             f"⚠️ select_review: рассинхрон! request.platform='{platform}', "
-            f"sheet_title='{sheet_title}' => '{real_platform}'. Исправляю."
+            f"sheet_title='{sheet_title}' => '{real_platform}'."
         )
         platform = real_platform
         request["platform"] = platform
@@ -831,7 +807,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         row = row + [""] * (30 - len(row))
 
     extra_ids = []
-    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, длина row={len(row)}")
+    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}")
 
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
@@ -887,6 +863,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
+        # R = колонка 18 (индекс 17) — ссылка на фото к отзыву
         photo_link = row[17] if len(row) > 17 else ""
 
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
@@ -995,16 +972,41 @@ async def back_to_slot(callback: CallbackQuery):
 @router.message(F.photo)
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
+
+    # === ДИАГНОСТИКА ===
+    logger.info(
+        f"📸 PHOTO: user={user_id} (@{message.from_user.username}) "
+        f"в slot_requests={user_id in slot_requests}, "
+        f"state={(slot_requests.get(user_id) or {}).get('state')}"
+    )
+
     if user_id not in slot_requests:
+        await message.answer(
+            "⚠️ Не нашёл вашу активную сессию со слотами.\n\n"
+            "Возможные причины:\n"
+            "• Бот перезапускался, и сессия потерялась\n"
+            "• Вы уже сдали все отзывы\n"
+            "• Вы отменили задание через /cancel\n\n"
+            "Попробуйте /resume — бот восстановит ваш слот по таблице.\n"
+            "Если не сработает — обратитесь в /support."
+        )
         return
+
     request = slot_requests[user_id]
     if request.get("state") != "working_on_review":
-        await message.answer("❌ Сначала выберите отзыв.")
+        await message.answer(
+            "❌ Сначала выберите отзыв, к которому относится скриншот:\n"
+            "1. Нажмите «🎯 Активный слот».\n"
+            "2. Тапните на номер отзыва.\n"
+            "3. Отправьте скриншот ещё раз."
+        )
         return
+
     active_row = request.get("active_review_row")
     if active_row is None:
-        await message.answer("❌ Активный отзыв не найден.")
+        await message.answer("❌ Активный отзыв не найден. Выберите заново через «🎯 Активный слот».")
         return
+
     chat_id = message.chat.id
     for msg_id in request.get("extra_messages", []):
         try:
@@ -1062,7 +1064,11 @@ async def handle_screenshot(message: Message):
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
-        await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
+        if not SCREENSHOT_CHANNEL_ID:
+            logger.warning("⚠️ SCREENSHOT_CHANNEL_ID не задан — скриншот не отправлен")
+        else:
+            await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
+            logger.info(f"📤 Скриншот отправлен в {SCREENSHOT_CHANNEL_ID} от user {user_id}")
     except Exception as e:
         logger.error(f"Ошибка скриншота: {e}")
 
@@ -1079,21 +1085,18 @@ async def handle_screenshot(message: Message):
 
     total = len(ordered)
     if len(completed) == total:
-        # Все отзывы сданы — удаляем закреплённую инструкцию + controls + extra
         instr_id = request.get("instruction_msg_id")
         if instr_id:
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=instr_id)
-                logger.info(f"🗑️ user {user_id}: инструкция удалена после завершения всех отзывов")
-            except Exception as e:
-                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+            except Exception:
+                pass
         controls_id = request.get("controls_msg_id")
         if controls_id:
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=controls_id)
-                logger.info(f"🗑️ user {user_id}: controls удалено после завершения (msg {controls_id})")
-            except Exception as e:
-                logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
+            except Exception:
+                pass
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
         del slot_requests[user_id]
