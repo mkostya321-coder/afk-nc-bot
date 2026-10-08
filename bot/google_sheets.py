@@ -38,6 +38,23 @@ BLUE_BG = {"red": 0, "green": 0, "blue": 0.8}
 RED_BG = {"red": 0.9, "green": 0.2, "blue": 0.2}
 
 
+def _norm(value) -> str:
+    """Устойчивая нормализация ячейки: нижний регистр, без \xa0 и \u200b."""
+    if value is None:
+        return ""
+    return str(value).strip().lower().replace("\xa0", " ").replace("\u200b", "")
+
+
+def _is_status(j_val: str, *targets: str) -> bool:
+    """True если j_val начинается с одного из targets (устойчиво к пробелам)."""
+    if not j_val:
+        return False
+    for t in targets:
+        if j_val.startswith(t):
+            return True
+    return False
+
+
 def get_credentials():
     path = get_credentials_path()
     if not os.path.exists(path):
@@ -55,9 +72,14 @@ def get_client():
 
 
 async def retry_api_call(func, *args, max_attempts=8, **kwargs):
+    """
+    Обёртка над gspread-вызовами.
+    ВАЖНО: вызов уходит в отдельный поток через asyncio.to_thread,
+    чтобы не блокировать event loop.
+    """
     for attempt in range(1, max_attempts + 1):
         try:
-            return func(*args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
         except gspread.exceptions.APIError as e:
             error_msg = str(e)
             if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower():
@@ -137,7 +159,7 @@ def _is_row_invalid_now(row: list, mapping: dict) -> bool:
     t = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
     if not d or not t:
         return True
-    status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+    status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
     if status in BLOCKED_STATUSES:
         return True
     executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
@@ -174,9 +196,10 @@ async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
         if not client:
             logger.warning("⚠️ sync_username_in_sheets: нет credentials")
             return 0
-        spreadsheet = client.open_by_key(SHEET_ID)
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
 
-        for sheet in spreadsheet.worksheets():
+        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+        for sheet in worksheets:
             try:
                 records = await retry_api_call(sheet.get_all_values)
             except Exception as e:
@@ -198,7 +221,6 @@ async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
                     continue
                 e_val = (row[mapping["update_col"]-1] or "").strip()
                 if e_val not in ("", "0"):
-                    # уже помечено как обработанное — не трогаем
                     continue
                 col_k = chr(64 + mapping["executor_col"])
                 batch.append({"range": f"{col_k}{row_idx}", "values": [[new_with_at]]})
@@ -236,8 +258,8 @@ async def monitor_schedule(bot):
                 await asyncio.sleep(60)
                 continue
 
-            spreadsheet = client.open_by_key(SHEET_ID)
-            worksheets = spreadsheet.worksheets()
+            spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+            worksheets = await asyncio.to_thread(spreadsheet.worksheets)
             now = datetime.now(moscow_tz)
             today = now.date()
             logger.info(f"🔍 Проверка в {now.strftime('%H:%M')} МСК, листов: {len(worksheets)}")
@@ -297,7 +319,7 @@ async def monitor_schedule(bot):
                             stats["already_flagged"] += 1
                             continue
 
-                        status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+                        status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
                         executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
 
                         if status in BLOCKED_STATUSES:
@@ -693,7 +715,7 @@ async def monitor_schedule(bot):
 
 
 async def _check_republish(bot, client, now):
-    spreadsheet = client.open_by_key(SHEET_ID)
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
     expired_slots = []
 
     logger.info(f"🔄 _check_republish: слотов в памяти {len(active_slots)}")
@@ -711,6 +733,7 @@ async def _check_republish(bot, client, now):
         )
 
     for msg_id, slot in list(active_slots.items()):
+        # attempt=4 — не переопубликовываем, но и НЕ закрываем: слот висит, юзер может взять
         if slot.get("attempt", 1) >= 4:
             continue
         publish_time = slot.get("publish_time")
@@ -729,7 +752,7 @@ async def _check_republish(bot, client, now):
             logger.warning(f"⚠️ mapping восстановлен для слота {msg_id}, платформа {platform}")
 
         try:
-            sheet = spreadsheet.worksheet(sheet_title)
+            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             records = await retry_api_call(sheet.get_all_values)
         except:
             continue
@@ -746,7 +769,7 @@ async def _check_republish(bot, client, now):
             row = records[row_idx - 1]
             if not row:
                 continue
-            status = row[slot_mapping["status_col"]-1].strip().lower() if len(row) >= slot_mapping["status_col"] else ""
+            status = _norm(row[slot_mapping["status_col"]-1]) if len(row) >= slot_mapping["status_col"] else ""
             executor = row[slot_mapping["executor_col"]-1].strip() if len(row) >= slot_mapping["executor_col"] else ""
             flag_final = row[slot_mapping["flag_final_col"]-1].strip() if len(row) >= slot_mapping["flag_final_col"] else ""
             if status in BLOCKED_STATUSES:
@@ -783,7 +806,7 @@ async def _check_republish(bot, client, now):
 
         if col:
             try:
-                sheet = spreadsheet.worksheet(slot.get("sheet_title"))
+                sheet = await asyncio.to_thread(spreadsheet.worksheet, slot.get("sheet_title"))
                 batch = []
                 for row_idx in available_rows:
                     batch.append({"range": f"{chr(64+col)}{row_idx}", "values": [[1]]})
@@ -816,7 +839,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
     all_requests = list(slot_requests.items())
     logger.info(f"🕒 Сессий в БД: {len(all_requests)}")
 
-    spreadsheet = client.open_by_key(SHEET_ID)
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
     any_critical_error = False
     to_remove = []
 
@@ -848,7 +871,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         )
 
         try:
-            sheet = spreadsheet.worksheet(sheet_title)
+            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             records = await retry_api_call(sheet.get_all_values)
         except Exception as e:
             logger.error(f"❌ user {user_id}: не открыть лист '{sheet_title}': {e}")
@@ -869,7 +892,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             row = records[row_idx - 1]
             if not row:
                 continue
-            j_val = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+            j_val = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
             statuses_seen[j_val] = statuses_seen.get(j_val, 0) + 1
 
             col_j = chr(64 + mapping["status_col"])
@@ -881,9 +904,10 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if q_val != "1":
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
 
-            if j_val == "на модерации":
+            # «на модерации» → «на модерации с ОПЗ» (устойчиво к пробелам)
+            if _is_status(j_val, "на модерации") and not _is_status(j_val, "на модерации с опз"):
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
-            elif j_val == "в работе":
+            elif _is_status(j_val, "в работе"):
                 # J НЕ трогаем, 222 ставим в I
                 if no_show:
                     cells_to_red.append((row_idx, mapping["executor_col"]))
@@ -956,7 +980,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             continue
 
         try:
-            sheet = spreadsheet.worksheet(sheet_title)
+            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             records = await retry_api_call(sheet.get_all_values)
         except Exception as e:
             logger.error(f"❌ _close_day: не открыть '{sheet_title}' для неразобранных: {e}")
@@ -977,7 +1001,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             row = records[row_idx - 1]
             if not row:
                 continue
-            j_val = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+            j_val = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
             if j_val in BLOCKED_STATUSES:
                 skipped_by_status += 1
                 continue
@@ -1028,7 +1052,8 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             ok_slots_to_delete.append(msg_id)
 
     logger.info("🧹 Проверяю сиротские строки 'в работе'...")
-    for sheet in spreadsheet.worksheets():
+    worksheets_all = await asyncio.to_thread(spreadsheet.worksheets)
+    for sheet in worksheets_all:
         sheet_name_s = sheet.title
         platform_s = platform_from_sheet_name(sheet_name_s)
         if not platform_s:
@@ -1062,7 +1087,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 continue
             if len(row) < mapping_s["status_col"]:
                 continue
-            status = row[mapping_s["status_col"]-1].strip().lower()
+            status = _norm(row[mapping_s["status_col"]-1])
             if status != "в работе":
                 continue
             executor = row[mapping_s["executor_col"]-1].strip() if len(row) >= mapping_s["executor_col"] else ""
@@ -1176,10 +1201,11 @@ async def update_stats_from_sheet_once(bot=None):
         client = get_client()
         if not client:
             return
-        spreadsheet = client.open_by_key(SHEET_ID)
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
         updates_by_sheet = {}
 
-        for sheet in spreadsheet.worksheets():
+        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+        for sheet in worksheets:
             try:
                 records = await retry_api_call(sheet.get_all_values)
             except:
@@ -1196,7 +1222,7 @@ async def update_stats_from_sheet_once(bot=None):
                 if len(row) < 10:
                     continue
                 platform_raw = row[mapping["platform_col"]-1].strip() if len(row) >= mapping["platform_col"] else ""
-                status = row[mapping["status_col"]-1].strip().lower() if len(row) >= mapping["status_col"] else ""
+                status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
                 flag_stat = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
                 e_flag = row[mapping["update_col"]-1].strip() if len(row) >= mapping["update_col"] else ""
                 executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
@@ -1256,8 +1282,22 @@ async def update_stats_from_sheet_once(bot=None):
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
                             if fp:
-                                cur.execute(f"UPDATE users SET {fp}_passed = {fp}_passed + 1, {fp}_total = {fp}_total + 1 WHERE user_id = ?", (uid,))
-                            cur.execute("UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?", (price_opz, price_opz, uid))
+                                # ВАЖНО: инкрементим и обычный passed, и opz_passed,
+                                # чтобы финальный пересчёт мог вычесть OPZ.
+                                cur.execute(
+                                    f"UPDATE users SET "
+                                    f"  {fp}_passed = {fp}_passed + 1, "
+                                    f"  {fp}_total = {fp}_total + 1, "
+                                    f"  {fp}_opz_passed = {fp}_opz_passed + 1 "
+                                    f"WHERE user_id = ?",
+                                    (uid,)
+                                )
+                            # В payout и total_earned начисляем сразу OPZ-цену (70%),
+                            # а финальный пересчёт ниже выровняет, если есть ручные правки.
+                            cur.execute(
+                                "UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?",
+                                (price_opz, price_opz, uid)
+                            )
                             conn.commit()
                         e_value = 1
                     else:
@@ -1309,28 +1349,49 @@ async def update_stats_from_sheet_once(bot=None):
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
+        # ===== ФИНАЛЬНЫЙ ПЕРЕСЧЁТ payout С УЧЁТОМ OPZ =====
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
-                SELECT user_id, yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
+                SELECT user_id,
+                       yandex_passed, google_passed, gis_passed, avito_passed, vk_passed,
                        otzovik_passed, doctoru_passed, dokdok_passed, prodoctors_passed,
                        doctu_passed, top32_passed, zoon_passed, yell_passed,
                        yau_passed, yab_passed, hh_passed,
-                       admin_topup
+                       admin_topup,
+                       yandex_opz_passed, google_opz_passed, gis_opz_passed, avito_opz_passed,
+                       vk_opz_passed, otzovik_opz_passed, doctoru_opz_passed, dokdok_opz_passed,
+                       prodoctors_opz_passed, doctu_opz_passed, top32_opz_passed,
+                       zoon_opz_passed, yell_opz_passed, yau_opz_passed, yab_opz_passed, hh_opz_passed
                 FROM users
             """)
+
+            def _calc(passed, opz, price):
+                """Обычные отзывы — по полному прайсу, OPZ — по 70%."""
+                passed = passed or 0
+                opz = min(opz or 0, passed)  # защита от рассинхрона
+                normal = max(0, passed - opz)
+                return normal * price + opz * int(price * 0.7)
+
             for ur in cur.fetchall():
                 uid = ur[0]
                 total = (
-                    ur[1] * PRICES.get("яндекс", 0) + ur[2] * PRICES.get("google", 0) +
-                    ur[3] * PRICES.get("2гис", 0) + ur[4] * PRICES.get("авито", 0) +
-                    ur[5] * PRICES.get("вк", 0) + ur[6] * PRICES.get("отзовик", 0) +
-                    ur[7] * PRICES.get("доктору", 0) + ur[8] * PRICES.get("докдок", 0) +
-                    ur[9] * PRICES.get("про докторов", 0) + ur[10] * PRICES.get("докту", 0) +
-                    ur[11] * PRICES.get("32топ", 0) + ur[12] * PRICES.get("zoon", 0) +
-                    ur[13] * PRICES.get("yell", 0) +
-                    ur[14] * PRICES.get("яу", 0) + ur[15] * PRICES.get("яб", 0) +
-                    ur[16] * PRICES.get("h", 0)
+                    _calc(ur[1],  ur[18], PRICES.get("яндекс", 0)) +
+                    _calc(ur[2],  ur[19], PRICES.get("google", 0)) +
+                    _calc(ur[3],  ur[20], PRICES.get("2гис", 0)) +
+                    _calc(ur[4],  ur[21], PRICES.get("авито", 0)) +
+                    _calc(ur[5],  ur[22], PRICES.get("вк", 0)) +
+                    _calc(ur[6],  ur[23], PRICES.get("отзовик", 0)) +
+                    _calc(ur[7],  ur[24], PRICES.get("доктору", 0)) +
+                    _calc(ur[8],  ur[25], PRICES.get("докдок", 0)) +
+                    _calc(ur[9],  ur[26], PRICES.get("про докторов", 0)) +
+                    _calc(ur[10], ur[27], PRICES.get("докту", 0)) +
+                    _calc(ur[11], ur[28], PRICES.get("32топ", 0)) +
+                    _calc(ur[12], ur[29], PRICES.get("zoon", 0)) +
+                    _calc(ur[13], ur[30], PRICES.get("yell", 0)) +
+                    _calc(ur[14], ur[31], PRICES.get("яу", 0)) +
+                    _calc(ur[15], ur[32], PRICES.get("яб", 0)) +
+                    _calc(ur[16], ur[33], PRICES.get("h", 0))
                 )
                 admin_topup = ur[17] or 0
                 total += admin_topup
@@ -1347,14 +1408,15 @@ async def mark_as_paid_in_table(user_ids: list):
         client = get_client()
         if not client:
             return
-        spreadsheet = client.open_by_key(SHEET_ID)
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
         users_map = {}
         for uid in user_ids:
             user = get_user(uid)
             if user:
                 users_map[uid] = user.get('tg_username', '').lower()
 
-        for sheet in spreadsheet.worksheets():
+        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+        for sheet in worksheets:
             try:
                 records = await retry_api_call(sheet.get_all_values)
             except:
@@ -1371,7 +1433,7 @@ async def mark_as_paid_in_table(user_ids: list):
                 e_val = row[mapping["update_col"]-1].strip()
                 if e_val != "1":
                     continue
-                status = row[mapping["status_col"]-1].strip().lower()
+                status = _norm(row[mapping["status_col"]-1])
                 if status not in ("опубликован", "опубликовано"):
                     continue
                 executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
