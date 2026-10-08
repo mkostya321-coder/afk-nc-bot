@@ -178,7 +178,23 @@ async def weekly_payout_report(bot):
                                 yell_passed = 0,
                                 yau_passed = 0,
                                 yab_passed = 0,
-                                hh_passed = 0
+                                hh_passed = 0,
+                                yandex_opz_passed = 0,
+                                google_opz_passed = 0,
+                                gis_opz_passed = 0,
+                                avito_opz_passed = 0,
+                                vk_opz_passed = 0,
+                                otzovik_opz_passed = 0,
+                                doctoru_opz_passed = 0,
+                                dokdok_opz_passed = 0,
+                                prodoctors_opz_passed = 0,
+                                doctu_opz_passed = 0,
+                                top32_opz_passed = 0,
+                                zoon_opz_passed = 0,
+                                yell_opz_passed = 0,
+                                yau_opz_passed = 0,
+                                yab_opz_passed = 0,
+                                hh_opz_passed = 0
                             WHERE user_id IN ({placeholders})
                         """, user_ids)
                         conn.commit()
