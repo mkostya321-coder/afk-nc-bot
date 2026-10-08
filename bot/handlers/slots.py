@@ -224,6 +224,7 @@ async def cancel_task(message: Message):
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
+    completed_rows = [r for r, n in ordered if n in completed]
     if not remaining:
         await delete_session_messages(user_id, message.bot, request, message.chat.id)
         await message.answer("✅ У вас нет невыполненных отзывов.")
@@ -233,13 +234,16 @@ async def cancel_task(message: Message):
     platform = request.get("platform", "яндекс")
     mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
-    logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}")
+    logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}, выполненных: {len(completed_rows)}")
 
     client = get_client()
     if client and sheet_title:
         try:
-            sheet = client.open_by_key(SHEET_ID).worksheet(sheet_title)
+            spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             batch = []
+
+            # Невыполненные — возвращаем в свободные
             for row_idx in remaining:
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
@@ -248,10 +252,16 @@ async def cancel_task(message: Message):
                         continue
                     col = chr(64 + mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
+
+            # ВЫПОЛНЕННЫЕ — сразу переводим в ОПЗ (оплата 70%)
+            for row_idx in completed_rows:
+                col_j = chr(64 + mapping["status_col"])
+                batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
+
             for i in range(0, len(batch), 50):
-                sheet.batch_update(batch[i:i+50])
+                await asyncio.to_thread(sheet.batch_update, batch[i:i+50])
                 await asyncio.sleep(0.5)
-            logger.info(f"✅ Очищено {len(remaining)} строк")
+            logger.info(f"✅ Очищено {len(remaining)} невыполненных + ОПЗ отмечено {len(completed_rows)} выполненных")
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
 
@@ -261,7 +271,7 @@ async def cancel_task(message: Message):
 
     await message.answer(
         f"✅ Отказ принят.\n\n"
-        f"• Выполненные: {len(completed)} – на модерацию\n"
+        f"• Выполненные: {len(completed)} – на модерацию с ОПЗ (оплата 70%)\n"
         f"• Невыполненные: {len(remaining)} – переопубликуются"
     )
 
@@ -301,17 +311,18 @@ async def cmd_resume(message: Message):
     if not client:
         await message.answer("❌ Ошибка доступа к таблице.")
         return
-    spreadsheet = client.open_by_key(SHEET_ID)
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
 
     found = []
-    for sheet in spreadsheet.worksheets():
+    worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+    for sheet in worksheets:
         sheet_name = sheet.title
         platform = platform_from_sheet_name(sheet_name)
         if not platform:
             continue
         mapping = get_column_mapping(platform)
         try:
-            records = sheet.get_all_values()
+            records = await asyncio.to_thread(sheet.get_all_values)
         except:
             continue
         for row_idx, row in enumerate(records[1:], start=2):
@@ -413,7 +424,7 @@ async def handle_quantity_input(message: Message):
         await message.answer("❌ Ошибка доступа к таблице.")
         del slot_requests[user_id]
         return
-    spreadsheet = client.open_by_key(SHEET_ID)
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
 
     slot_msg_id = request["slot_msg_id"]
     slot_info = active_slots.get(slot_msg_id)
@@ -435,8 +446,8 @@ async def handle_quantity_input(message: Message):
         return
 
     try:
-        sheet = spreadsheet.worksheet(sheet_title)
-        records = sheet.get_all_values()
+        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+        records = await asyncio.to_thread(sheet.get_all_values)
     except Exception as e:
         await message.answer("❌ Ошибка доступа к листу.")
         del slot_requests[user_id]
@@ -511,7 +522,7 @@ async def handle_quantity_input(message: Message):
 
     try:
         for i in range(0, len(batch), 50):
-            sheet.batch_update(batch[i:i+50])
+            await asyncio.to_thread(sheet.batch_update, batch[i:i+50])
             await asyncio.sleep(0.5)
         logger.info(f"✅ Записано {len(assigned_rows)} строк")
     except Exception as e:
@@ -740,7 +751,16 @@ async def select_review(callback: CallbackQuery):
     platform = request.get("platform", "яндекс")
     sheet_title = request.get("sheet_title")
 
-    real_platform = platform_from_sheet_name(sheet_title) if sheet_title else None
+    # === ЖЁСТКАЯ ПРОВЕРКА: sheet_title обязателен ===
+    if not sheet_title:
+        logger.error(f"❌ select_review: sheet_title пуст у user {user_id} — просим /resume")
+        await callback.answer(
+            "❌ Потеряна сессия. Введите /resume для восстановления.",
+            show_alert=True
+        )
+        return
+
+    real_platform = platform_from_sheet_name(sheet_title)
     if real_platform and real_platform != platform:
         logger.warning(
             f"⚠️ select_review: рассинхрон! request.platform='{platform}', "
@@ -764,6 +784,19 @@ async def select_review(callback: CallbackQuery):
     if target_row is None:
         await callback.answer("❌ Уже выполнен.", show_alert=True)
         return
+
+    # === ВАЛИДАЦИЯ: строка должна быть в assigned_rows ===
+    if target_row not in request.get("assigned_rows", []):
+        logger.error(
+            f"❌ select_review: row {target_row} НЕ в assigned_rows "
+            f"({request.get('assigned_rows')}) для user {user_id}"
+        )
+        await callback.answer(
+            "❌ Эта строка вам не принадлежит. Введите /resume.",
+            show_alert=True
+        )
+        return
+
     request["active_review_row"] = target_row
     request["state"] = "working_on_review"
     slot_requests[user_id] = request
@@ -772,24 +805,19 @@ async def select_review(callback: CallbackQuery):
     if not client:
         await callback.answer("❌ Ошибка доступа.", show_alert=True)
         return
-    spreadsheet = client.open_by_key(SHEET_ID)
-    sheet = None
-    if sheet_title:
-        try:
-            sheet = spreadsheet.worksheet(sheet_title)
-        except:
-            pass
-    if sheet is None:
-        for s in spreadsheet.worksheets():
-            try:
-                s.cell(target_row, 1)
-                sheet = s
-                break
-            except:
-                continue
-    if sheet is None:
-        await callback.answer("❌ Ошибка таблицы.", show_alert=True)
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+
+    # === Только точный лист, БЕЗ fallback-перебора ===
+    try:
+        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+    except Exception as e:
+        logger.error(f"❌ select_review: не открыть лист '{sheet_title}': {e}")
+        await callback.answer(
+            "❌ Ошибка доступа к листу. Введите /resume.",
+            show_alert=True
+        )
         return
+
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
     await callback.answer()
 
@@ -802,12 +830,12 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         request["mapping"] = mapping
         slot_requests[user_id] = request
 
-    row = sheet.row_values(row_idx)
+    row = await asyncio.to_thread(sheet.row_values, row_idx)
     if len(row) < 30:
         row = row + [""] * (30 - len(row))
 
     extra_ids = []
-    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}")
+    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping.text_col={mapping.get('text_col')}")
 
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
@@ -863,8 +891,12 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
-        # R = колонка 18 (индекс 17) — ссылка на фото к отзыву
-        photo_link = row[17] if len(row) > 17 else ""
+
+        # === photo_link берём из mapping (photo_col), БЕЗ хардкода row[17] ===
+        photo_link = ""
+        photo_col = mapping.get("photo_col")
+        if photo_col and len(row) >= photo_col:
+            photo_link = row[photo_col-1]
 
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
@@ -973,7 +1005,6 @@ async def back_to_slot(callback: CallbackQuery):
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
 
-    # === ДИАГНОСТИКА ===
     logger.info(
         f"📸 PHOTO: user={user_id} (@{message.from_user.username}) "
         f"в slot_requests={user_id in slot_requests}, "
@@ -1007,6 +1038,25 @@ async def handle_screenshot(message: Message):
         await message.answer("❌ Активный отзыв не найден. Выберите заново через «🎯 Активный слот».")
         return
 
+    # === ВАЛИДАЦИЯ: активная строка должна быть в assigned_rows ===
+    if active_row not in request.get("assigned_rows", []):
+        logger.error(
+            f"❌ handle_screenshot: row {active_row} НЕ в assigned_rows "
+            f"({request.get('assigned_rows')}) для user {user_id}"
+        )
+        await message.answer(
+            "❌ Ошибка сессии: строка не принадлежит вам. Введите /resume."
+        )
+        return
+
+    sheet_title = request.get("sheet_title")
+    if not sheet_title:
+        logger.error(f"❌ handle_screenshot: sheet_title пуст у user {user_id}")
+        await message.answer(
+            "❌ Потеряна сессия. Введите /resume для восстановления."
+        )
+        return
+
     chat_id = message.chat.id
     for msg_id in request.get("extra_messages", []):
         try:
@@ -1017,43 +1067,36 @@ async def handle_screenshot(message: Message):
 
     platform = request.get("platform", "яндекс")
     mapping = get_safe_mapping(request, platform)
-    sheet_title = request.get("sheet_title")
 
     client = get_client()
     if not client:
         await message.answer("❌ Ошибка доступа.")
         return
-    spreadsheet = client.open_by_key(SHEET_ID)
-    sheet = None
-    if sheet_title:
-        try:
-            sheet = spreadsheet.worksheet(sheet_title)
-        except:
-            pass
-    if sheet is None:
-        for s in spreadsheet.worksheets():
-            try:
-                s.cell(active_row, 1)
-                sheet = s
-                break
-            except:
-                continue
-    if sheet is None:
-        await message.answer("❌ Лист не найден.")
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+
+    # === Только точный лист, БЕЗ перебора ===
+    try:
+        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+    except Exception as e:
+        logger.error(f"❌ handle_screenshot: не открыть лист '{sheet_title}': {e}")
+        await message.answer("❌ Лист не найден. Введите /resume.")
         return
 
-    review_id = sheet.cell(active_row, mapping["id_col"]).value
+    review_id = await asyncio.to_thread(sheet.cell, active_row, mapping["id_col"])
+    review_id = review_id.value if review_id else None
     if not review_id:
         review_id = secrets.token_hex(4)
-        sheet.update_cell(active_row, mapping["id_col"], review_id)
+        await asyncio.to_thread(sheet.update_cell, active_row, mapping["id_col"], review_id)
 
     try:
-        sheet.update_cell(active_row, mapping["status_col"], "на модерации")
-        sheet.update_cell(active_row, mapping["flag_final_col"], 333)
-        sheet.format(f"{chr(64+mapping['flag_final_col'])}{active_row}", {
-            "backgroundColor": {"red": 0, "green": 0.8, "blue": 0}
-        })
-        logger.info(f"✅ Строка {active_row} → 'на модерации'")
+        await asyncio.to_thread(sheet.update_cell, active_row, mapping["status_col"], "на модерации")
+        await asyncio.to_thread(sheet.update_cell, active_row, mapping["flag_final_col"], 333)
+        await asyncio.to_thread(
+            sheet.format,
+            f"{chr(64+mapping['flag_final_col'])}{active_row}",
+            {"backgroundColor": {"red": 0, "green": 0.8, "blue": 0}}
+        )
+        logger.info(f"✅ Строка {active_row} (лист '{sheet_title}') → 'на модерации', id={review_id}")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         await message.answer("❌ Ошибка сохранения.")
