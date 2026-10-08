@@ -76,6 +76,23 @@ def init_db():
             "yab_total": "INTEGER DEFAULT 0",
             "hh_passed": "INTEGER DEFAULT 0",
             "hh_total": "INTEGER DEFAULT 0",
+            # OPZ-счётчики (отзывы "опубликован опз" — оплата 70% прайса)
+            "yandex_opz_passed": "INTEGER DEFAULT 0",
+            "google_opz_passed": "INTEGER DEFAULT 0",
+            "gis_opz_passed": "INTEGER DEFAULT 0",
+            "avito_opz_passed": "INTEGER DEFAULT 0",
+            "vk_opz_passed": "INTEGER DEFAULT 0",
+            "otzovik_opz_passed": "INTEGER DEFAULT 0",
+            "doctoru_opz_passed": "INTEGER DEFAULT 0",
+            "dokdok_opz_passed": "INTEGER DEFAULT 0",
+            "prodoctors_opz_passed": "INTEGER DEFAULT 0",
+            "doctu_opz_passed": "INTEGER DEFAULT 0",
+            "top32_opz_passed": "INTEGER DEFAULT 0",
+            "zoon_opz_passed": "INTEGER DEFAULT 0",
+            "yell_opz_passed": "INTEGER DEFAULT 0",
+            "yau_opz_passed": "INTEGER DEFAULT 0",
+            "yab_opz_passed": "INTEGER DEFAULT 0",
+            "hh_opz_passed": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
