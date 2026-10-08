@@ -76,7 +76,7 @@ def init_db():
             "yab_total": "INTEGER DEFAULT 0",
             "hh_passed": "INTEGER DEFAULT 0",
             "hh_total": "INTEGER DEFAULT 0",
-            # OPZ-счётчики (отзывы "опубликован опз" — оплата 70% прайса)
+            # OPZ-счётчики (опубликован опз — оплата 70% прайса)
             "yandex_opz_passed": "INTEGER DEFAULT 0",
             "google_opz_passed": "INTEGER DEFAULT 0",
             "gis_opz_passed": "INTEGER DEFAULT 0",
@@ -180,6 +180,15 @@ def init_db():
         if "created_business_day" not in _cols:
             cur.execute("ALTER TABLE slot_requests_db ADD COLUMN created_business_day TEXT")
             print("✅ Добавлена колонка slot_requests_db.created_business_day")
+        if "mapping_json" not in _cols:
+            cur.execute("ALTER TABLE slot_requests_db ADD COLUMN mapping_json TEXT")
+            print("✅ Добавлена колонка slot_requests_db.mapping_json")
+        if "controls_msg_id" not in _cols:
+            cur.execute("ALTER TABLE slot_requests_db ADD COLUMN controls_msg_id INTEGER")
+            print("✅ Добавлена колонка slot_requests_db.controls_msg_id")
+        if "instruction_msg_id" not in _cols:
+            cur.execute("ALTER TABLE slot_requests_db ADD COLUMN instruction_msg_id INTEGER")
+            print("✅ Добавлена колонка slot_requests_db.instruction_msg_id")
 
         if OWNER_ID:
             cur.execute("INSERT OR IGNORE INTO admins (user_id, role) VALUES (?, 'owner')", (OWNER_ID,))
@@ -506,8 +515,9 @@ def save_slot_request(user_id: int, data: dict):
             INSERT OR REPLACE INTO slot_requests_db 
             (user_id, platform, count, date, time, slot_msg_id, state, assigned_rows,
              row_ids, sheet_title, ordered_reviews, completed_reviews, active_review_row,
-             extra_messages, updated_at, created_business_day)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             extra_messages, updated_at, created_business_day,
+             mapping_json, controls_msg_id, instruction_msg_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             data.get("platform"),
@@ -524,7 +534,10 @@ def save_slot_request(user_id: int, data: dict):
             data.get("active_review_row"),
             json.dumps(data.get("extra_messages", [])),
             datetime.now(),
-            data.get("created_business_day")
+            data.get("created_business_day"),
+            json.dumps(data.get("mapping")) if data.get("mapping") else None,
+            data.get("controls_msg_id"),
+            data.get("instruction_msg_id"),
         ))
         conn.commit()
 
@@ -536,6 +549,23 @@ def delete_slot_request(user_id: int):
         conn.commit()
 
 
+def _load_request_row(row) -> dict:
+    d = dict(row)
+    d["assigned_rows"] = json.loads(d.get("assigned_rows") or "[]")
+    d["row_ids"] = json.loads(d.get("row_ids") or "[]")
+    d["ordered_reviews"] = json.loads(d.get("ordered_reviews") or "[]")
+    d["completed_reviews"] = json.loads(d.get("completed_reviews") or "[]")
+    d["extra_messages"] = json.loads(d.get("extra_messages") or "[]")
+    if d.get("mapping_json"):
+        try:
+            d["mapping"] = json.loads(d["mapping_json"])
+        except Exception:
+            d["mapping"] = None
+    else:
+        d["mapping"] = None
+    return d
+
+
 def get_all_slot_requests() -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -543,12 +573,7 @@ def get_all_slot_requests() -> dict:
         cur.execute("SELECT * FROM slot_requests_db")
         result = {}
         for row in cur.fetchall():
-            d = dict(row)
-            d["assigned_rows"] = json.loads(d.get("assigned_rows") or "[]")
-            d["row_ids"] = json.loads(d.get("row_ids") or "[]")
-            d["ordered_reviews"] = json.loads(d.get("ordered_reviews") or "[]")
-            d["completed_reviews"] = json.loads(d.get("completed_reviews") or "[]")
-            d["extra_messages"] = json.loads(d.get("extra_messages") or "[]")
+            d = _load_request_row(row)
             result[d["user_id"]] = d
         return result
 
@@ -561,10 +586,4 @@ def get_slot_request(user_id: int) -> Optional[dict]:
         row = cur.fetchone()
         if not row:
             return None
-        d = dict(row)
-        d["assigned_rows"] = json.loads(d.get("assigned_rows") or "[]")
-        d["row_ids"] = json.loads(d.get("row_ids") or "[]")
-        d["ordered_reviews"] = json.loads(d.get("ordered_reviews") or "[]")
-        d["completed_reviews"] = json.loads(d.get("completed_reviews") or "[]")
-        d["extra_messages"] = json.loads(d.get("extra_messages") or "[]")
-        return d
+        return _load_request_row(row)
