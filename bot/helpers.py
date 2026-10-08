@@ -68,20 +68,44 @@ SHEET_NAME_TO_PLATFORM = {
 }
 
 
-def _find_col(headers: list, *keys, default: int = 0, default_idx: int = None) -> int:
+def _find_col(headers: list, *keys, default: int = 0, default_idx: int = None,
+              exclude: tuple = None) -> int:
     """
-    Ищет номер колонки (1-based) по подстроке в заголовке.
-    Принимает и `default`, и `default_idx` — оба работают одинаково.
+    Ищет номер колонки (1-based) по ключам в заголовке с приоритетами:
+      +1000 — точное совпадение
+      +100  — заголовок начинается с ключа
+      +10   — ключ содержится в заголовке
+      −∞    — если встречается слово из exclude (ответ, правка, жалоба и т.п.)
+    Побеждает колонка с наибольшим счётом.
     """
     fallback = default if default else (default_idx if default_idx else 1)
     if not headers:
         return fallback
+
+    exclude = tuple(x.lower() for x in (exclude or ()))
+    best_col = fallback
+    best_score = 0
+
     for i, cell in enumerate(headers):
         cell_l = str(cell or "").strip().lower()
+        if not cell_l:
+            continue
+        if exclude and any(x in cell_l for x in exclude):
+            continue
+        score = 0
         for k in keys:
-            if k in cell_l:
-                return i + 1
-    return fallback
+            k_l = k.lower()
+            if cell_l == k_l:
+                score = max(score, 1000)
+            elif cell_l.startswith(k_l):
+                score = max(score, 100)
+            elif k_l in cell_l:
+                score = max(score, 10)
+        if score > best_score:
+            best_score = score
+            best_col = i + 1
+
+    return best_col
 
 
 def get_column_mapping(platform: str, headers: list = None):
@@ -98,6 +122,7 @@ def get_column_mapping(platform: str, headers: list = None):
             "update_col": 5, "order_col": 24, "text_history_col": 17,
             "text_like_col": 18, "text_minus_col": 19, "tz_col": 10,
             "doctor_name_col": 12, "doctor_direction_col": 9, "photo_doc_col": 8,
+            "photo_col": None,
         }
     else:
         default = {
@@ -106,6 +131,7 @@ def get_column_mapping(platform: str, headers: list = None):
             "text_col": 14, "flag_first_col": 17, "flag_second_col": 16,
             "flag_third_col": 15, "flag_final_col": 9, "id_col": 19,
             "update_col": 5, "order_col": 20,
+            "photo_col": 18,
         }
 
     if not headers:
@@ -122,18 +148,22 @@ def get_column_mapping(platform: str, headers: list = None):
         detected["executor_col"] = _find_col(headers, "исполнител", default=default["executor_col"])
         detected["gender_col"]   = _find_col(headers, "пол", default=default["gender_col"])
         detected["update_col"]   = _find_col(headers, "обновлен", "e-", default=default["update_col"])
+        detected["photo_doc_col"] = _find_col(headers, "фото", "документ", default=default["photo_doc_col"])
         return detected
+
+    # ============ УНИВЕРСАЛЬНЫЙ ПОИСК ============
+    TEXT_EXCLUDE = ("ответ", "правка", "жалоб", "коммент", "шаблон", "заготовк")
 
     detected = {
         "date_col":     _find_col(headers, "дата", default=default["date_col"]),
         "time_col":     _find_col(headers, "время", default=default["time_col"]),
         "stars_col":    _find_col(headers, "звезд", "звёзд", "оценк", default=default["stars_col"]),
         "platform_col": _find_col(headers, "платформ", default=default["platform_col"]),
-        "link_col":     _find_col(headers, "ссылк", default=default["link_col"]),
+        "link_col":     _find_col(headers, "ссылка на отзыв", "ссылк", exclude=("фото", "док", "изображ"), default=default["link_col"]),
         "status_col":   _find_col(headers, "статус", default=default["status_col"]),
         "executor_col": _find_col(headers, "исполнител", default=default["executor_col"]),
         "gender_col":   _find_col(headers, "пол", default=default["gender_col"]),
-        "text_col":     _find_col(headers, "текст", default=default["text_col"]),
+        "text_col":     _find_col(headers, "текст отзыва", "основной текст", "текст", exclude=TEXT_EXCLUDE, default=default["text_col"]),
         "update_col":   _find_col(headers, "обновлен", "e-", default=default["update_col"]),
         "flag_first_col":  default["flag_first_col"],
         "flag_second_col": default["flag_second_col"],
@@ -141,7 +171,15 @@ def get_column_mapping(platform: str, headers: list = None):
         "flag_final_col":  default["flag_final_col"],
         "id_col":          default["id_col"],
         "order_col":       default["order_col"],
+        "photo_col":    _find_col(headers, "фото к отзыву", "фото", "изображен", exclude=("док", "документ"), default=default.get("photo_col")),
     }
+
+    logger.info(
+        f"🗂️ Mapping (universal): date={detected['date_col']} time={detected['time_col']} "
+        f"stars={detected['stars_col']} link={detected['link_col']} status={detected['status_col']} "
+        f"exec={detected['executor_col']} gender={detected['gender_col']} text={detected['text_col']} "
+        f"photo={detected['photo_col']} update={detected['update_col']}"
+    )
     return detected
 
 
