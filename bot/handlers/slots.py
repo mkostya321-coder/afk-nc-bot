@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
 
-# ============ ХЕЛПЕР БЕЗОПАСНОЙ ОТПРАВКИ ============
 async def _safe_send(bot, chat_id: int, text: str, **kwargs):
     """Безопасная отправка — не валит хендлер, если юзер заблокировал бота."""
     try:
@@ -376,11 +375,9 @@ async def cmd_resume(message: Message):
     )
 
 
-# ============ ВВОД КОЛИЧЕСТВА ============
-@router.message(F.text)
+# ============ ВВОД КОЛИЧЕСТВА (catch-all, но НЕ для команд) ============
+@router.message(F.text, ~Command())
 async def handle_quantity_input(message: Message):
-    if message.text and message.text.startswith('/'):
-        return
     user_id = message.from_user.id
     if user_id not in slot_requests:
         return
