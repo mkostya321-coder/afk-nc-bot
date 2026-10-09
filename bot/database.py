@@ -93,6 +93,9 @@ def init_db():
             "yau_opz_passed": "INTEGER DEFAULT 0",
             "yab_opz_passed": "INTEGER DEFAULT 0",
             "hh_opz_passed": "INTEGER DEFAULT 0",
+            # Промоутер NC
+            "promo_table_link": "TEXT",
+            "promo_schedule": "TEXT",
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
@@ -103,6 +106,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS admins (
                 user_id INTEGER PRIMARY KEY,
                 role TEXT NOT NULL DEFAULT 'moderator'
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                user_id INTEGER PRIMARY KEY,
+                post TEXT NOT NULL
             )
         """)
         cur.execute("""
@@ -284,6 +293,76 @@ def is_comoderator(user_id: int) -> bool:
     return role in ('owner', 'ga', 'moderator', 'comoderator')
 
 
+# ============ ДОЛЖНОСТИ (posts) ============
+def set_post(user_id: int, post: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT OR REPLACE INTO posts (user_id, post) VALUES (?, ?)", (user_id, post))
+        conn.commit()
+
+
+def get_post(user_id: int) -> Optional[str]:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT post FROM posts WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def has_post(user_id: int, post: str) -> bool:
+    return get_post(user_id) == post
+
+
+def remove_post(user_id: int) -> bool:
+    """Снимает должность. Возвращает True, если была хоть одна."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT post FROM posts WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        cur.execute("DELETE FROM posts WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+
+
+def list_posts(post_filter: str = None) -> list:
+    """Возвращает список (user_id, post) по фильтру или все."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        if post_filter:
+            cur.execute("SELECT user_id, post FROM posts WHERE post = ?", (post_filter,))
+        else:
+            cur.execute("SELECT user_id, post FROM posts")
+        return [{"user_id": r[0], "post": r[1]} for r in cur.fetchall()]
+
+
+# ============ ПРОМОУТЕР NC ============
+def set_promo_table_link(user_id: int, link: str):
+    update_user_field(user_id, "promo_table_link", link)
+
+
+def get_promo_table_link(user_id: int) -> Optional[str]:
+    user = get_user(user_id)
+    return (user or {}).get("promo_table_link")
+
+
+def set_promo_schedule(user_id: int, schedule_dict: dict):
+    update_user_field(user_id, "promo_schedule", json.dumps(schedule_dict, ensure_ascii=False))
+
+
+def get_promo_schedule(user_id: int) -> dict:
+    user = get_user(user_id)
+    raw = (user or {}).get("promo_schedule")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+# ============ WARNINGS ============
 def add_warning(user_id: int, reason: str, warned_by: int):
     extend_warnings_expiry(user_id, 45)
     with sqlite3.connect(DB_PATH) as conn:
@@ -390,7 +469,6 @@ def set_limit(platform: str, limit: int):
 
 # ============ ПЕРСОНАЛЬНЫЕ ЛИМИТЫ ============
 def get_user_limit(user_id: int, platform: str):
-    """Возвращает персональный лимит или None, если его нет."""
     val = get_setting(f"user_limit_{user_id}_{platform}")
     if val is None or val == "":
         return None
@@ -405,7 +483,6 @@ def set_user_limit(user_id: int, platform: str, limit: int):
 
 
 def reset_user_limit(user_id: int, platform: str = None):
-    """Сбрасывает персональный лимит (для одной платформы или для всех)."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         if platform:
@@ -416,9 +493,6 @@ def reset_user_limit(user_id: int, platform: str = None):
 
 
 def get_effective_limit(user_id: int, platform: str) -> int:
-    """
-    Приоритет: персональный лимит → общий лимит.
-    """
     personal = get_user_limit(user_id, platform)
     if personal is not None:
         return personal
