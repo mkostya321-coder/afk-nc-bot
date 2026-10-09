@@ -18,7 +18,7 @@ from bot.database import (
     add_user, get_user, get_user_by_username,
     is_registered, update_user_field, is_blocked,
     get_active_warnings, get_setting, set_setting,
-    get_admin_role,
+    get_admin_role, has_post,
 )
 from bot.keyboards.reply import main_menu_keyboard
 from bot.middlewares import is_subscribed
@@ -865,11 +865,32 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
 # ============ ДРУГИЕ ЗАДАНИЯ ============
 @router.message(F.text == "🎯 Другие задания")
 async def other_tasks(message: Message):
+    user_id = message.from_user.id
     kb = InlineKeyboardBuilder()
-    kb.button(text="🎬 Tik Tok", callback_data="task_tiktok")
-    kb.button(text="📊 Отчет Tik Tok", callback_data="report_tiktok")
+    kb.button(text="🎬 Tik Tok", callback_data="tiktok_menu")
+    if has_post(user_id, "promonc"):
+        kb.button(text="🏆 Промоутер NC", callback_data="promo_menu")
     kb.adjust(1)
     await message.answer("Выберите задание:", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "tiktok_menu")
+async def tiktok_menu(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎬 Задача Tik Tok", callback_data="task_tiktok")
+    kb.button(text="📊 Отчет Tik Tok", callback_data="report_tiktok")
+    kb.adjust(1)
+    try:
+        await callback.message.edit_text(
+            "Выберите задание в разделе Tik Tok:",
+            reply_markup=kb.as_markup()
+        )
+    except Exception:
+        await callback.message.answer(
+            "Выберите задание в разделе Tik Tok:",
+            reply_markup=kb.as_markup()
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "task_tiktok")
