@@ -37,16 +37,34 @@ BLOCKED_STATUSES = (
 BLUE_BG = {"red": 0, "green": 0, "blue": 0.8}
 RED_BG = {"red": 0.9, "green": 0.2, "blue": 0.2}
 
+FIELD_MAP = {
+    "яндекс": "yandex",
+    "яндекс негатив": "yandex_neg",
+    "google": "google",
+    "2гис": "gis",
+    "авито": "avito",
+    "вк": "vk",
+    "отзовик": "otzovik",
+    "доктору": "doctoru",
+    "докдок": "dokdok",
+    "про докторов": "prodoctors",
+    "докту": "doctu",
+    "32топ": "top32",
+    "zoon": "zoon",
+    "яу": "yau",
+    "яб": "yab",
+    "h": "hh",
+    "yell": "yell",
+}
+
 
 def _norm(value) -> str:
-    """Устойчивая нормализация ячейки: нижний регистр, без \xa0 и \u200b."""
     if value is None:
         return ""
     return str(value).strip().lower().replace("\xa0", " ").replace("\u200b", "")
 
 
 def _is_status(j_val: str, *targets: str) -> bool:
-    """True если j_val начинается с одного из targets (устойчиво к пробелам)."""
     if not j_val:
         return False
     for t in targets:
@@ -72,11 +90,6 @@ def get_client():
 
 
 async def retry_api_call(func, *args, max_attempts=8, **kwargs):
-    """
-    Обёртка над gspread-вызовами.
-    ВАЖНО: вызов уходит в отдельный поток через asyncio.to_thread,
-    чтобы не блокировать event loop.
-    """
     for attempt in range(1, max_attempts + 1):
         try:
             return await asyncio.to_thread(func, *args, **kwargs)
@@ -124,7 +137,8 @@ async def _batch_format_cells(spreadsheet, sheet_id: int, cells: list, bg_color:
 
 def build_slot_message(platform: str, count: int, date: str, time: str):
     platform_names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС",
+        "яндекс": "Яндекс", "яндекс негатив": "Яндекс Негатив",
+        "google": "Google", "2гис": "2ГИС",
         "авито": "Авито", "вк": "ВК", "отзовик": "Otzovik", "доктору": "Doctoru",
         "докдок": "ДокДок", "про докторов": "Про Докторов", "докту": "ДокТу",
         "32топ": "32ТОП", "zoon": "ZOON",
@@ -173,14 +187,6 @@ def _is_row_invalid_now(row: list, mapping: dict) -> bool:
 
 
 async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
-    """
-    Проходит по всем листам. Находит в столбце K (executor_col) ячейки со старым
-    username (без @), у которых в столбце E (update_col) стоит 0 или пусто.
-    Меняет K на новый @username.
-
-    Если E=1 (уже обработано/оплачено) — не трогает.
-    Возвращает количество обновлённых строк.
-    """
     if not old_username or not new_username:
         return 0
     old_clean = old_username.lstrip("@").lower().strip()
@@ -231,10 +237,7 @@ async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
                         await retry_api_call(sheet.batch_update, batch[i:i+50])
                         await asyncio.sleep(0.6)
                     total_updated += len(batch)
-                    logger.info(
-                        f"🔄 sync_username '{sheet.title}': обновлено {len(batch)} строк "
-                        f"'{old_clean}' → '{new_clean}'"
-                    )
+                    logger.info(f"🔄 sync_username '{sheet.title}': обновлено {len(batch)} строк '{old_clean}' → '{new_clean}'")
                 except Exception as e:
                     logger.error(f"❌ sync_username '{sheet.title}': {e}")
 
@@ -441,9 +444,7 @@ async def monitor_schedule(bot):
                             pruned.append(r)
 
                     if pruned:
-                        logger.info(
-                            f"✂️ {platform} (msg {existing_msg_id}): прунинг {len(pruned)} невалидных строк: {pruned}"
-                        )
+                        logger.info(f"✂️ {platform} (msg {existing_msg_id}): прунинг {len(pruned)} невалидных строк: {pruned}")
                         slot["row_ids"] = [r for r in slot["row_ids"] if r not in pruned]
                         slot["count"] = len(slot["row_ids"])
                         active_slots[existing_msg_id] = slot
@@ -481,26 +482,17 @@ async def monitor_schedule(bot):
                                 parse_mode=ParseMode.HTML
                             )
                             slot_alive = True
-                            logger.info(
-                                f"ℹ️ '{sheet_name}' (platform={platform}): "
-                                f"слот живой, {current_count} шт (msg {existing_msg_id})"
-                            )
+                            logger.info(f"ℹ️ '{sheet_name}' (platform={platform}): слот живой, {current_count} шт (msg {existing_msg_id})")
                         except Exception as e:
                             err = str(e).lower()
                             if "message is not modified" in err:
                                 slot_alive = True
-                                logger.info(
-                                    f"ℹ️ '{sheet_name}' (platform={platform}): сообщение не изменилось, "
-                                    f"{current_count} шт (msg {existing_msg_id})"
-                                )
+                                logger.info(f"ℹ️ '{sheet_name}' (platform={platform}): сообщение не изменилось, {current_count} шт (msg {existing_msg_id})")
                             elif ("message to edit not found" in err
                                   or "message_id_invalid" in err
                                   or "message can't be edited" in err):
                                 dead = True
-                                logger.warning(
-                                    f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
-                                    f"Пересоздаю с {current_count} строками."
-                                )
+                                logger.warning(f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. Пересоздаю с {current_count} строками.")
                             else:
                                 logger.warning(f"⚠️ Проверка слота {platform} (msg {existing_msg_id}): {e}")
 
@@ -534,10 +526,7 @@ async def monitor_schedule(bot):
                                     "publish_time": datetime.now(moscow_tz),
                                     "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
                                 }
-                                logger.info(
-                                    f"✅ Переопубликован {platform} "
-                                    f"({current_count} шт, msg {sent_msg.message_id})"
-                                )
+                                logger.info(f"✅ Переопубликован {platform} ({current_count} шт, msg {sent_msg.message_id})")
                             except Exception as e:
                                 logger.error(f"❌ Не удалось переопубликовать слот {platform}: {e}")
 
@@ -567,15 +556,10 @@ async def monitor_schedule(bot):
                         elif ("message to edit not found" in err
                               or "message_id_invalid" in err
                               or "message can't be edited" in err):
-                            logger.warning(
-                                f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. "
-                                f"Публикую новый слот ({candidate_count} шт)."
-                            )
+                            logger.warning(f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв: {e}. Публикую новый слот ({candidate_count} шт).")
                             edit_failed_dead = True
                         else:
-                            logger.warning(
-                                f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e}"
-                            )
+                            logger.warning(f"⚠️ Не удалось отредактировать слот {platform} (msg {existing_msg_id}): {e}")
 
                     if edit_failed_dead:
                         try:
@@ -704,10 +688,7 @@ async def monitor_schedule(bot):
                     set_setting("last_closed_business_day", current_bd)
                     logger.info(f"🕒 last_closed_business_day обновлён на {current_bd}")
                 else:
-                    logger.warning(
-                        f"⚠️ _close_day завершился с ошибками — НЕ обновляю last_closed_business_day, "
-                        f"повторю на следующей итерации"
-                    )
+                    logger.warning(f"⚠️ _close_day завершился с ошибками — НЕ обновляю last_closed_business_day, повторю на следующей итерации")
 
         except Exception as e:
             logger.error(f"❌ Ошибка планировщика: {e}", exc_info=True)
@@ -733,7 +714,6 @@ async def _check_republish(bot, client, now):
         )
 
     for msg_id, slot in list(active_slots.items()):
-        # attempt=4 — не переопубликовываем, но и НЕ закрываем: слот висит, юзер может взять
         if slot.get("attempt", 1) >= 4:
             continue
         publish_time = slot.get("publish_time")
@@ -904,11 +884,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if q_val != "1":
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
 
-            # «на модерации» → «на модерации с ОПЗ» (устойчиво к пробелам)
             if _is_status(j_val, "на модерации") and not _is_status(j_val, "на модерации с опз"):
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif _is_status(j_val, "в работе"):
-                # J НЕ трогаем, 222 ставим в I
                 if no_show:
                     cells_to_red.append((row_idx, mapping["executor_col"]))
                 else:
@@ -1099,7 +1077,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             q_val = row[mapping_s["flag_first_col"]-1].strip() if len(row) >= mapping_s["flag_first_col"] else ""
             if q_val != "1":
                 batch_s.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
-            # J НЕ трогаем, 222 ставим в I
             batch_s.append({"range": f"{col_i}{row_idx}", "values": [[222]]})
             cells_s.append((row_idx, mapping_s["flag_final_col"]))
             cells_red_s.append((row_idx, mapping_s["executor_col"]))
@@ -1244,16 +1221,7 @@ async def update_stats_from_sheet_once(bot=None):
                     if user:
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
-                        field_map = {
-                            "яндекс": "yandex", "google": "google", "2гис": "gis",
-                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
-                            "доктору": "doctoru", "докдок": "dokdok",
-                            "про докторов": "prodoctors", "докту": "doctu",
-                            "32топ": "top32", "zoon": "zoon",
-                            "яу": "yau", "яб": "yab", "h": "hh",
-                            "yell": "yell",
-                        }
-                        fp = field_map.get(platform)
+                        fp = FIELD_MAP.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
                             if fp:
@@ -1269,21 +1237,10 @@ async def update_stats_from_sheet_once(bot=None):
                         uid = user["user_id"]
                         price = PRICES.get(platform, 0)
                         price_opz = int(price * 0.7)
-                        field_map = {
-                            "яндекс": "yandex", "google": "google", "2гис": "gis",
-                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
-                            "доктору": "doctoru", "докдок": "dokdok",
-                            "про докторов": "prodoctors", "докту": "doctu",
-                            "32топ": "top32", "zoon": "zoon",
-                            "яу": "yau", "яб": "yab", "h": "hh",
-                            "yell": "yell",
-                        }
-                        fp = field_map.get(platform)
+                        fp = FIELD_MAP.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
                             if fp:
-                                # ВАЖНО: инкрементим и обычный passed, и opz_passed,
-                                # чтобы финальный пересчёт мог вычесть OPZ.
                                 cur.execute(
                                     f"UPDATE users SET "
                                     f"  {fp}_passed = {fp}_passed + 1, "
@@ -1292,8 +1249,6 @@ async def update_stats_from_sheet_once(bot=None):
                                     f"WHERE user_id = ?",
                                     (uid,)
                                 )
-                            # В payout и total_earned начисляем сразу OPZ-цену (70%),
-                            # а финальный пересчёт ниже выровняет, если есть ручные правки.
                             cur.execute(
                                 "UPDATE users SET payout = payout + ?, total_earned = total_earned + ? WHERE user_id = ?",
                                 (price_opz, price_opz, uid)
@@ -1306,16 +1261,7 @@ async def update_stats_from_sheet_once(bot=None):
                 elif status == "удален":
                     if user:
                         uid = user["user_id"]
-                        field_map = {
-                            "яндекс": "yandex", "google": "google", "2гис": "gis",
-                            "авито": "avito", "вк": "vk", "отзовик": "otzovik",
-                            "доктору": "doctoru", "докдок": "dokdok",
-                            "про докторов": "prodoctors", "докту": "doctu",
-                            "32топ": "top32", "zoon": "zoon",
-                            "яу": "yau", "яб": "yab", "h": "hh",
-                            "yell": "yell",
-                        }
-                        fp = field_map.get(platform)
+                        fp = FIELD_MAP.get(platform)
                         with sqlite3.connect(DB_PATH) as conn:
                             cur = conn.cursor()
                             if fp:
@@ -1362,14 +1308,14 @@ async def update_stats_from_sheet_once(bot=None):
                        yandex_opz_passed, google_opz_passed, gis_opz_passed, avito_opz_passed,
                        vk_opz_passed, otzovik_opz_passed, doctoru_opz_passed, dokdok_opz_passed,
                        prodoctors_opz_passed, doctu_opz_passed, top32_opz_passed,
-                       zoon_opz_passed, yell_opz_passed, yau_opz_passed, yab_opz_passed, hh_opz_passed
+                       zoon_opz_passed, yell_opz_passed, yau_opz_passed, yab_opz_passed, hh_opz_passed,
+                       yandex_neg_passed, yandex_neg_opz_passed
                 FROM users
             """)
 
             def _calc(passed, opz, price):
-                """Обычные отзывы — по полному прайсу, OPZ — по 70%."""
                 passed = passed or 0
-                opz = min(opz or 0, passed)  # защита от рассинхрона
+                opz = min(opz or 0, passed)
                 normal = max(0, passed - opz)
                 return normal * price + opz * int(price * 0.7)
 
@@ -1391,7 +1337,8 @@ async def update_stats_from_sheet_once(bot=None):
                     _calc(ur[13], ur[30], PRICES.get("yell", 0)) +
                     _calc(ur[14], ur[31], PRICES.get("яу", 0)) +
                     _calc(ur[15], ur[32], PRICES.get("яб", 0)) +
-                    _calc(ur[16], ur[33], PRICES.get("h", 0))
+                    _calc(ur[16], ur[33], PRICES.get("h", 0)) +
+                    _calc(ur[34], ur[35], PRICES.get("яндекс негатив", 0))
                 )
                 admin_topup = ur[17] or 0
                 total += admin_topup
