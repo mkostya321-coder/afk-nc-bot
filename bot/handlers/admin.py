@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# ============ СКРЫТЫЕ ПОЛЬЗОВАТЕЛИ (только для /info) ============
 HIDDEN_USERNAMES = {
     "new_chapterr24",
     "new_chapterr97",
@@ -29,7 +28,6 @@ HIDDEN_USERNAMES = {
 
 
 def find_user_by_target(target: str):
-    """Ищет пользователя по ID или @username. Возвращает dict или None."""
     if not target:
         return None
     t = target.strip()
