@@ -25,7 +25,6 @@ moscow_tz = pytz.timezone("Europe/Moscow")
 
 
 async def _safe_send(bot, chat_id: int, text: str, **kwargs):
-    """Безопасная отправка — не валит хендлер, если юзер заблокировал бота."""
     try:
         return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
     except Exception as e:
@@ -49,6 +48,10 @@ PIN_REMINDER = "📸 Инструкция по скриншотам — закр
 PLATFORM_TEMPLATES = {
     "яндекс": {
         "instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ, "warning": WARNING
+    },
+    "яндекс негатив": {
+        "instruction": "🔥 Яндекс Негатив\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ, "warning": WARNING
     },
     "google": {
@@ -729,7 +732,8 @@ async def show_slot_buttons(message: Message, user_id: int):
         request["mapping"] = get_column_mapping(platform)
         slot_requests[user_id] = request
     names = {
-        "яндекс": "Яндекс", "google": "Google", "2гис": "2ГИС", "авито": "Авито",
+        "яндекс": "Яндекс", "яндекс негатив": "Я.Негатив",
+        "google": "Google", "2гис": "2ГИС", "авито": "Авито",
         "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
         "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП",
         "zoon": "ZOON", "яу": "ЯУ", "яб": "ЯБ", "h": "HH", "yell": "Yell"
