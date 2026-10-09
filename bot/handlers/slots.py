@@ -23,6 +23,17 @@ router = Router()
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
+
+# ============ ХЕЛПЕР БЕЗОПАСНОЙ ОТПРАВКИ ============
+async def _safe_send(bot, chat_id: int, text: str, **kwargs):
+    """Безопасная отправка — не валит хендлер, если юзер заблокировал бота."""
+    try:
+        return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    except Exception as e:
+        logger.warning(f"⚠️ _safe_send для {chat_id}: {e}")
+        return None
+
+
 SNIPPET_REQ = (
     "📌 Требования к скриншоту:\n"
     "Скриншот должен быть сделан в свернутом приложении (не в браузере).\n"
@@ -271,7 +282,8 @@ async def cancel_task(message: Message):
 
     del slot_requests[user_id]
 
-    await message.answer(
+    await _safe_send(
+        message.bot, user_id,
         f"✅ Отказ принят.\n\n"
         f"• Выполненные: {len(completed)} – на модерацию с ОПЗ (оплата 70%)\n"
         f"• Невыполненные: {len(remaining)} – переопубликуются"
@@ -569,28 +581,28 @@ async def take_slot_start(callback: CallbackQuery):
         pass
     user_id = callback.from_user.id
     if not is_registered(user_id):
-        await callback.bot.send_message(user_id, "❌ Вы не зарегистрированы.")
+        await _safe_send(callback.bot, user_id, "❌ Вы не зарегистрированы.")
         return
     if is_blocked(user_id):
-        await callback.bot.send_message(user_id, "⛔ Вы заблокированы.")
+        await _safe_send(callback.bot, user_id, "⛔ Вы заблокированы.")
         return
 
     from bot.middlewares import is_subscribed
     if not await is_subscribed(user_id, callback.bot):
-        await callback.bot.send_message(
-            user_id,
+        await _safe_send(
+            callback.bot, user_id,
             f"⚠️ Для использования бота подпишитесь на канал {REQUIRED_CHANNEL_ID}\n"
             f"После подписки нажмите /start и попробуйте снова."
         )
         return
 
     if user_id in slot_requests:
-        await callback.bot.send_message(user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
+        await _safe_send(callback.bot, user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
         return
 
     parts = callback.data.split("|")
     if len(parts) < 5:
-        await callback.bot.send_message(user_id, "Некорректный запрос.")
+        await _safe_send(callback.bot, user_id, "Некорректный запрос.")
         return
     _, platform_from_cb, count_str, date, time_safe = parts
     try:
@@ -629,15 +641,15 @@ async def take_slot_start(callback: CallbackQuery):
                     slot_msg_id, slot_info = platform_db[0]
                     active_slots[slot_msg_id] = slot_info
                 else:
-                    await callback.bot.send_message(
-                        user_id,
+                    await _safe_send(
+                        callback.bot, user_id,
                         "❌ Слот не найден или уже разобран. Проверьте канал — возможно, слот "
                         "переопубликован, нажмите «Взять слот» в свежем сообщении, либо /resume."
                     )
                     return
 
     if slot_info.get("count", 0) == 0:
-        await callback.bot.send_message(user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
+        await _safe_send(callback.bot, user_id, "❌ Этот слот уже разобран. Ожидайте следующий.")
         return
 
     sheet_title = slot_info.get("sheet_title")
@@ -661,8 +673,8 @@ async def take_slot_start(callback: CallbackQuery):
         next_reset = now_msk.replace(hour=10, minute=0, second=0, microsecond=0)
         if now_msk >= next_reset:
             next_reset += timedelta(days=1)
-        await callback.bot.send_message(
-            user_id,
+        await _safe_send(
+            callback.bot, user_id,
             f"❌ <b>Лимит исчерпан на сегодня</b>\n\n"
             f"Платформа: <b>{platform}</b>\n"
             f"Установлено: <b>{limit} отзывов в день</b>\n"
@@ -682,13 +694,11 @@ async def take_slot_start(callback: CallbackQuery):
         "sheet_title": sheet_title,
         "created_business_day": business_day_key()
     }
-    await callback.bot.send_message(
-        chat_id=user_id,
-        text=(
-            f"📊 Доступно: {slot_info.get('count', count)} шт.\n"
-            f"Сколько выполните?\n\n"
-            f"Если хотите отказаться пропишите команду /cancel."
-        )
+    await _safe_send(
+        callback.bot, user_id,
+        f"📊 Доступно: {slot_info.get('count', count)} шт.\n"
+        f"Сколько выполните?\n\n"
+        f"Если хотите отказаться пропишите команду /cancel."
     )
 
 
