@@ -195,7 +195,6 @@ async def menu_reg_callback(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("Произошла ошибка, попробуйте позже.")
 
 
-# ---------- Старт ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -221,7 +220,6 @@ async def cmd_start(message: Message, state: FSMContext):
         await show_intro(message, state)
 
 
-# ---------- Проверка подписки ----------
 @router.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -274,7 +272,6 @@ async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
         await show_intro(callback.message, state)
 
 
-# ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
 @router.message(Command("profile"))
 async def menu_profile(message: Message):
@@ -406,7 +403,6 @@ async def menu_profile(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
-# ---------- /myotz ----------
 @router.message(Command("myotz"))
 async def cmd_myotz(message: Message):
     if is_blocked(message.from_user.id):
@@ -440,7 +436,6 @@ async def cmd_myotz(message: Message):
     await message.answer(text)
 
 
-# ---------- Помощь ----------
 @router.message(F.text == "❓ Помощь")
 @router.message(Command("help"))
 async def menu_help(message: Message):
@@ -470,14 +465,12 @@ async def menu_help(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=main_menu_keyboard(is_registered=is_reg))
 
 
-# ---------- /manual ----------
 @router.message(Command("manual"))
 async def cmd_manual(message: Message):
     text = RULES_1 + "\n\n" + RULES_2
     await message.answer(text)
 
 
-# ---------- /money ----------
 @router.message(Command("money"))
 async def cmd_money(message: Message):
     text = (
@@ -522,7 +515,6 @@ async def cmd_money(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
-# ---------- /tiktok ----------
 @router.message(Command("tiktok"))
 async def cmd_tiktok(message: Message):
     text = (
@@ -543,7 +535,6 @@ async def cmd_tiktok(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
-# ---------- /support ----------
 @router.message(Command("support"))
 async def cmd_support(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
@@ -585,7 +576,6 @@ async def process_support(message: Message, state: FSMContext):
     await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
 
-# ---------- Реферальная система ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
     logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id}")
@@ -652,7 +642,6 @@ async def referral_invite(callback: CallbackQuery):
         await callback.answer("Ошибка", show_alert=True)
 
 
-# ---------- Регистрация ----------
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
@@ -755,7 +744,6 @@ async def process_bank(message: Message, state: FSMContext):
     )
 
 
-# ---------- Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
@@ -865,7 +853,6 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ ДРУГИЕ ЗАДАНИЯ ============
 @router.message(F.text == "🎯 Другие задания")
 async def other_tasks(message: Message):
     user_id = message.from_user.id
@@ -1068,7 +1055,6 @@ async def process_tiktok_screenshot_views_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
 
 
-# ---------- СОТРУДНИЧЕСТВО ----------
 @router.message(F.text == "🤝 Сотрудничество с NC")
 async def collaboration_start(message: Message):
     if is_blocked(message.from_user.id):
