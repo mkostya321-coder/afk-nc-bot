@@ -360,6 +360,7 @@ async def cmd_info(message: Message):
         f"Пополнение адм: {user.get('admin_topup', 0)}₽\n\n"
         f"📊 Статистика по слотам:\n"
         f"Яндекс: {user['yandex_passed']}\n"
+        f"Яндекс Негатив: {user.get('yandex_neg_passed', 0)}\n"
         f"Google: {user['google_passed']}\n"
         f"2ГИС: {user['gis_passed']}\n"
         f"Авито: {user['avito_passed']}\n"
@@ -561,7 +562,7 @@ async def cmd_subtract(message: Message):
             await message.answer("❌ Не указаны платформы и количество.")
             return
 
-             field_map = {
+        field_map = {
             "яндекс": "yandex", "яндекс негатив": "yandex_neg",
             "google": "google", "2гис": "gis",
             "авито": "avito", "вк": "vk", "отзовик": "otzovik",
@@ -582,7 +583,7 @@ async def cmd_subtract(message: Message):
             if not plat:
                 await message.answer(
                     f"❌ Не распознал платформу '{plat_raw}'.\n"
-                    f"Допустимые: Яндекс, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, "
+                    f"Допустимые: Яндекс, Яндекс Негатив, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, "
                     f"ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, Yell, ЯУ, ЯБ, HH."
                 )
                 return
@@ -662,7 +663,8 @@ async def reset_balance(message: Message):
             cur.execute(f"""
                 UPDATE users SET payout = 0,
                 admin_topup = 0,
-                yandex_passed=0, google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
+                yandex_passed=0, yandex_neg_passed=0, yandex_neg_opz_passed=0,
+                google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
                 otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
                 doctu_passed=0, top32_passed=0, zoon_passed=0, yell_passed=0,
                 yau_passed=0, yab_passed=0, hh_passed=0
@@ -728,6 +730,8 @@ async def cmd_payout_report(message: Message):
                         payout = 0,
                         admin_topup = 0,
                         yandex_passed = 0,
+                        yandex_neg_passed = 0,
+                        yandex_neg_opz_passed = 0,
                         google_passed = 0,
                         gis_passed = 0,
                         avito_passed = 0,
