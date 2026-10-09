@@ -44,7 +44,6 @@ def run_flask():
 
 
 async def validate_chat_ids(bot):
-    """Проверяем на старте все chat_id. Отдельно ловим 'chat not found'."""
     checks = {
         "CHANNEL_ID": CHANNEL_ID,
         "LOG_CHANNEL_ID": LOG_CHANNEL_ID,
@@ -164,6 +163,8 @@ async def weekly_payout_report(bot):
                                 payout = 0,
                                 admin_topup = 0,
                                 yandex_passed = 0,
+                                yandex_neg_passed = 0,
+                                yandex_neg_opz_passed = 0,
                                 google_passed = 0,
                                 gis_passed = 0,
                                 avito_passed = 0,
@@ -221,8 +222,6 @@ async def main():
 
     dp.message.middleware(AutoMenuMiddleware())
 
-    # ВАЖНО: порядок — promo ПЕРЕД slots, иначе catch-all в slots.py
-    # перехватит команды /set_post, /list_posts, /infopromo и т.д.
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(admin_advanced_router)
