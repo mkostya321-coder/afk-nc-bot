@@ -561,8 +561,9 @@ async def cmd_subtract(message: Message):
             await message.answer("❌ Не указаны платформы и количество.")
             return
 
-        field_map = {
-            "яндекс": "yandex", "google": "google", "2гис": "gis",
+             field_map = {
+            "яндекс": "yandex", "яндекс негатив": "yandex_neg",
+            "google": "google", "2гис": "gis",
             "авито": "avito", "вк": "vk", "отзовик": "otzovik",
             "доктору": "doctoru", "докдок": "dokdok",
             "про докторов": "prodoctors", "докту": "doctu",
