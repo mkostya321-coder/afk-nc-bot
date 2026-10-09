@@ -93,9 +93,14 @@ def init_db():
             "yau_opz_passed": "INTEGER DEFAULT 0",
             "yab_opz_passed": "INTEGER DEFAULT 0",
             "hh_opz_passed": "INTEGER DEFAULT 0",
-            # Промоутер NC
+            # Промоутер NC                          
             "promo_table_link": "TEXT",
             "promo_schedule": "TEXT",
+            # Яндекс Негатив
+            "yandex_neg_passed": "INTEGER DEFAULT 0",
+            "yandex_neg_total": "INTEGER DEFAULT 0",
+            "yandex_neg_opz_passed": "INTEGER DEFAULT 0",
+        }
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
