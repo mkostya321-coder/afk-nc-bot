@@ -259,6 +259,7 @@ def toggle_block(user_id: int) -> Optional[int]:
     return new_status
 
 
+# ============ РОЛИ ============
 def get_admin_role(user_id: int) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -270,7 +271,18 @@ def get_admin_role(user_id: int) -> Optional[str]:
 def set_admin_role(user_id: int, role: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO admins (user_id, role) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET role = ?", (user_id, role, role))
+        cur.execute(
+            "INSERT INTO admins (user_id, role) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET role = ?",
+            (user_id, role, role)
+        )
+        conn.commit()
+
+
+def remove_admin_role(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
         conn.commit()
 
 
@@ -283,14 +295,29 @@ def is_ga(user_id: int) -> bool:
     return role in ('owner', 'ga')
 
 
+def is_admin_nc(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga', 'admin')
+
+
+def is_stmoderator(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga', 'admin', 'stmoderator')
+
+
 def is_moderator(user_id: int) -> bool:
     role = get_admin_role(user_id)
-    return role in ('owner', 'ga', 'moderator')
+    return role in ('owner', 'ga', 'admin', 'stmoderator', 'moderator')
 
 
 def is_comoderator(user_id: int) -> bool:
     role = get_admin_role(user_id)
-    return role in ('owner', 'ga', 'moderator', 'comoderator')
+    return role in ('owner', 'ga', 'admin', 'stmoderator', 'moderator', 'comoderator')
+
+
+def is_stpromonc(user_id: int) -> bool:
+    role = get_admin_role(user_id)
+    return role in ('owner', 'ga', 'admin', 'stpromonc')
 
 
 # ============ ДОЛЖНОСТИ (posts) ============
@@ -327,7 +354,7 @@ def remove_post(user_id: int) -> bool:
 
 
 def list_posts(post_filter: str = None) -> list:
-    """Возвращает список (user_id, post) по фильтру или все."""
+    """Возвращает список {user_id, post} по фильтру или все."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         if post_filter:
@@ -405,6 +432,7 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         conn.commit()
 
 
+# ============ SETTINGS ============
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -420,6 +448,7 @@ def set_setting(key: str, value: str):
         conn.commit()
 
 
+# ============ ПОЛЬЗОВАТЕЛИ ============
 def get_all_users_with_payout():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -428,6 +457,15 @@ def get_all_users_with_payout():
         return [dict(row) for row in cur.fetchall()]
 
 
+def get_all_registered_users():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, tg_username FROM users WHERE name IS NOT NULL")
+        return [dict(row) for row in cur.fetchall()]
+
+
+# ============ ЛИМИТЫ ============
 def add_review_take(user_id: int, platform: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -467,7 +505,6 @@ def set_limit(platform: str, limit: int):
         conn.commit()
 
 
-# ============ ПЕРСОНАЛЬНЫЕ ЛИМИТЫ ============
 def get_user_limit(user_id: int, platform: str):
     val = get_setting(f"user_limit_{user_id}_{platform}")
     if val is None or val == "":
@@ -499,14 +536,7 @@ def get_effective_limit(user_id: int, platform: str) -> int:
     return get_limit(platform)
 
 
-def get_all_registered_users():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("SELECT user_id, tg_username FROM users WHERE name IS NOT NULL")
-        return [dict(row) for row in cur.fetchall()]
-
-
+# ============ КАНАЛ ============
 def save_channel_message(message_id: int, chat_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -532,6 +562,7 @@ def delete_channel_message(record_id: int):
         conn.commit()
 
 
+# ============ АКТИВНЫЕ СЛОТЫ ============
 def save_active_slot(msg_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -582,6 +613,7 @@ def get_all_active_slots() -> dict:
         return result
 
 
+# ============ СЕССИИ СЛОТОВ ============
 def save_slot_request(user_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
