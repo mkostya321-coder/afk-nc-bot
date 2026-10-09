@@ -221,11 +221,13 @@ async def main():
 
     dp.message.middleware(AutoMenuMiddleware())
 
+    # ВАЖНО: порядок — promo ПЕРЕД slots, иначе catch-all в slots.py
+    # перехватит команды /set_post, /list_posts, /infopromo и т.д.
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(admin_advanced_router)
-    dp.include_router(slots.router)
     dp.include_router(promo.router)
+    dp.include_router(slots.router)
 
     await validate_chat_ids(bot)
 
