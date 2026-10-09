@@ -76,7 +76,6 @@ def init_db():
             "yab_total": "INTEGER DEFAULT 0",
             "hh_passed": "INTEGER DEFAULT 0",
             "hh_total": "INTEGER DEFAULT 0",
-            # OPZ-счётчики
             "yandex_opz_passed": "INTEGER DEFAULT 0",
             "google_opz_passed": "INTEGER DEFAULT 0",
             "gis_opz_passed": "INTEGER DEFAULT 0",
@@ -93,14 +92,11 @@ def init_db():
             "yau_opz_passed": "INTEGER DEFAULT 0",
             "yab_opz_passed": "INTEGER DEFAULT 0",
             "hh_opz_passed": "INTEGER DEFAULT 0",
-            # Промоутер NC                          
             "promo_table_link": "TEXT",
             "promo_schedule": "TEXT",
-            # Яндекс Негатив
             "yandex_neg_passed": "INTEGER DEFAULT 0",
             "yandex_neg_total": "INTEGER DEFAULT 0",
             "yandex_neg_opz_passed": "INTEGER DEFAULT 0",
-        }
         }
         for col_name, col_type in needed_columns.items():
             if col_name not in columns:
@@ -264,7 +260,6 @@ def toggle_block(user_id: int) -> Optional[int]:
     return new_status
 
 
-# ============ РОЛИ ============
 def get_admin_role(user_id: int) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -325,7 +320,6 @@ def is_stpromonc(user_id: int) -> bool:
     return role in ('owner', 'ga', 'admin', 'stpromonc')
 
 
-# ============ ДОЛЖНОСТИ (posts) ============
 def set_post(user_id: int, post: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -367,7 +361,6 @@ def list_posts(post_filter: str = None) -> list:
         return [{"user_id": r[0], "post": r[1]} for r in cur.fetchall()]
 
 
-# ============ ПРОМОУТЕР NC ============
 def set_promo_table_link(user_id: int, link: str):
     update_user_field(user_id, "promo_table_link", link)
 
@@ -392,7 +385,6 @@ def get_promo_schedule(user_id: int) -> dict:
         return {}
 
 
-# ============ WARNINGS ============
 def add_warning(user_id: int, reason: str, warned_by: int):
     extend_warnings_expiry(user_id, 45)
     with sqlite3.connect(DB_PATH) as conn:
@@ -435,7 +427,6 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         conn.commit()
 
 
-# ============ SETTINGS ============
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -451,7 +442,6 @@ def set_setting(key: str, value: str):
         conn.commit()
 
 
-# ============ ПОЛЬЗОВАТЕЛИ ============
 def get_all_users_with_payout():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -468,7 +458,6 @@ def get_all_registered_users():
         return [dict(row) for row in cur.fetchall()]
 
 
-# ============ ЛИМИТЫ ============
 def add_review_take(user_id: int, platform: str):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -539,7 +528,6 @@ def get_effective_limit(user_id: int, platform: str) -> int:
     return get_limit(platform)
 
 
-# ============ КАНАЛ ============
 def save_channel_message(message_id: int, chat_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -565,7 +553,6 @@ def delete_channel_message(record_id: int):
         conn.commit()
 
 
-# ============ АКТИВНЫЕ СЛОТЫ ============
 def save_active_slot(msg_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -616,7 +603,6 @@ def get_all_active_slots() -> dict:
         return result
 
 
-# ============ СЕССИИ СЛОТОВ ============
 def save_slot_request(user_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
