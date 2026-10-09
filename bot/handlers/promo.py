@@ -10,17 +10,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from bot.database import (
     get_user, get_user_by_username, is_ga, is_owner,
-    get_post, set_post, has_post,
+    get_post, set_post, has_post, remove_post, list_posts,
     set_promo_table_link, get_promo_table_link,
     set_promo_schedule, get_promo_schedule,
 )
-from bot.config import MANAGER_USERNAME
+from bot.config import (
+    MANAGER_USERNAME,
+    PROMO_REPORT_CHAT_ID, PROMO_REPORT_THREAD_ID,
+    SUPPORT_CHAT_ID, SUPPORT_THREAD_ID,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 # ============ ДОЛЖНОСТИ ============
-# code -> отображаемое имя
 POSTS = {
     "promonc": "Промоутер NC",
 }
@@ -40,6 +43,10 @@ class PromoAdminEdit(StatesGroup):
     schedule_friday = State()
     schedule_saturday = State()
     schedule_sunday = State()
+
+
+class PromoReportForm(StatesGroup):
+    waiting_photo_with_text = State()
 
 
 DAY_FLOW = [
@@ -111,6 +118,93 @@ async def cmd_set_post(message: Message):
         f"назначен на должность «{post_display(post_code)}»."
     )
     logger.info(f"📌 {message.from_user.id} назначил @{target} должность {post_code}")
+
+
+# ============ /remove_post ============
+@router.message(Command("remove_post"))
+async def cmd_remove_post(message: Message):
+    user_id = message.from_user.id
+    if not (is_owner(user_id) or is_ga(user_id)):
+        await message.answer("⛔ Команда доступна только владельцу и ГА.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Использование: /remove_post <username или user_id>\n"
+            "Снимает должность с пользователя."
+        )
+        return
+
+    target = parts[1]
+    if target.isdigit():
+        user = get_user(int(target))
+    else:
+        user = get_user_by_username(target.lstrip("@"))
+
+    if not user:
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
+        return
+
+    post_code = get_post(user["user_id"])
+    if not post_code:
+        await message.answer(f"❌ У @{user.get('tg_username') or user['user_id']} нет должности.")
+        return
+
+    ok = remove_post(user["user_id"])
+    if ok:
+        await message.answer(
+            f"✅ С @{user.get('tg_username') or user['user_id']} снята должность «{post_display(post_code)}»."
+        )
+        logger.info(f"📌 {message.from_user.id} снял должность {post_code} с {user['user_id']}")
+    else:
+        await message.answer("❌ Не удалось снять должность.")
+
+
+# ============ /list_posts ============
+@router.message(Command("list_posts"))
+async def cmd_list_posts(message: Message):
+    user_id = message.from_user.id
+    if not (is_owner(user_id) or is_ga(user_id)):
+        await message.answer("⛔ Команда доступна только владельцу и ГА.")
+        return
+
+    parts = message.text.split()
+    post_filter = parts[1].lower() if len(parts) > 1 else None
+
+    if post_filter and post_filter not in POSTS:
+        await message.answer(
+            f"❌ Должность '{post_filter}' не найдена.\n"
+            f"Доступные: {', '.join(POSTS.keys())}"
+        )
+        return
+
+    rows = list_posts(post_filter)
+    if not rows:
+        await message.answer("📭 Список пуст.")
+        return
+
+    lines = [f"📋 <b>Сотрудники с должностями</b>\n"]
+    by_post = {}
+    for r in rows:
+        by_post.setdefault(r["post"], []).append(r["user_id"])
+
+    for post_code, uids in by_post.items():
+        lines.append(f"\n<b>{post_display(post_code)}</b> ({len(uids)}):")
+        for uid in uids:
+            u = get_user(uid)
+            if not u:
+                continue
+            uname = u.get("tg_username") or "—"
+            name = u.get("name") or "—"
+            lines.append(f"• {name} (@{uname}, ID: {uid})")
+
+    text = "\n".join(lines)
+    if len(text) <= 4000:
+        await message.answer(text, parse_mode="HTML")
+    else:
+        for i in range(0, len(text), 4000):
+            await message.answer(text[i:i+4000], parse_mode="HTML")
 
 
 # ============ /infopromo ============
@@ -383,15 +477,90 @@ async def promo_user_schedule(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "promo_user:report")
-async def promo_user_report(callback: CallbackQuery):
+async def promo_user_report(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     if not has_post(user_id, "promonc"):
         await callback.answer("⛔", show_alert=True)
         return
+    await state.set_state(PromoReportForm.waiting_photo_with_text)
     await callback.message.answer(
-        f"📤 Для отправки отчёта напишите менеджеру: @{MANAGER_USERNAME}"
+        "📤 <b>Отправка отчёта</b>\n\n"
+        "Пришлите <b>фото</b> с <b>подписью</b> (не отдельным сообщением!).\n\n"
+        "В подписи укажите:\n"
+        "1. На каком месте по горизонтали находится отзыв в таблице?\n"
+        "   <i>(слева в таблице номера строк, пример: 67)</i>\n"
+        "2. Какие-то уточнения? <i>(другой текст или изменения — не обязательно)</i>\n\n"
+        "<b>Пример подписи:</b>\n"
+        "<code>67 — текст изменён на новый, фото обновлено</code>\n"
+        "или просто:\n"
+        "<code>67</code>\n\n"
+        "⚠️ <b>Фото без подписи не принимается!</b>",
+        parse_mode="HTML"
     )
     await callback.answer()
+
+
+@router.message(PromoReportForm.waiting_photo_with_text, F.photo)
+async def promo_report_photo(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if not has_post(user_id, "promonc"):
+        await state.clear()
+        return
+
+    caption = (message.caption or "").strip()
+    if not caption:
+        await message.answer(
+            "⚠️ <b>Фото без подписи не принимается!</b>\n\n"
+            "Пришлите фото ещё раз, указав в подписи номер строки (например, <code>67</code>).",
+            parse_mode="HTML"
+        )
+        return
+
+    user = get_user(user_id)
+    username = (user.get("tg_username") if user else None) or message.from_user.username or "unknown"
+    name = (user.get("name") if user else None) or "—"
+
+    report_chat = PROMO_REPORT_CHAT_ID or SUPPORT_CHAT_ID
+    report_thread = PROMO_REPORT_THREAD_ID or SUPPORT_THREAD_ID or None
+
+    header = (
+        f"🏆 <b>Отчёт Промоутера NC</b>\n"
+        f"👤 {name} (@{username}, ID: {user_id})\n"
+        f"📝 Подпись:\n{caption}"
+    )
+
+    if not report_chat:
+        logger.warning("⚠️ PROMO_REPORT_CHAT_ID/SUPPORT_CHAT_ID не заданы — отчёт не отправлен.")
+        await message.answer("⚠️ Техническая ошибка: чат для отчётов не настроен. Обратитесь к администрации.")
+        return
+
+    try:
+        await message.bot.send_photo(
+            chat_id=report_chat,
+            photo=message.photo[-1].file_id,
+            caption=header,
+            message_thread_id=report_thread,
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ Промо-отчёт от {user_id} (@{username}) отправлен")
+    except Exception as e:
+        logger.error(f"❌ Не удалось отправить промо-отчёт: {e}")
+        await message.answer("❌ Ошибка отправки. Попробуйте позже.")
+        return
+
+    await message.answer(
+        "✅ <b>Отчёт принят!</b>\n\n"
+        "Можете отправить следующий отчёт или выйти в меню через /start.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(PromoReportForm.waiting_photo_with_text, F.text)
+async def promo_report_wrong_format(message: Message, state: FSMContext):
+    await message.answer(
+        "⚠️ Отправьте именно <b>фото</b> с подписью. Текстом отчёт не принимается.",
+        parse_mode="HTML"
+    )
 
 
 @router.callback_query(F.data == "promo_user:help")
@@ -407,7 +576,9 @@ async def promo_user_help(callback: CallbackQuery):
         "• Тексты для публикации\n"
         "• Статус выполнения заданий\n"
         "• Начисления за проделанную работу\n\n"
-        f"По всем вопросам: /support или к своему менеджеру в чате"
+        "📤 <b>Как отправлять отчёты:</b>\n"
+        "Нажмите «Отправить отчёт» и пришлите фото с подписью, где указан номер строки из таблицы.\n\n"
+        f"По всем вопросам: @{MANAGER_USERNAME}"
     )
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
