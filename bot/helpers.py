@@ -19,7 +19,7 @@ PLATFORM_ALIASES = {
     "2гис": ["2гис", "гис", "2 гис"],
     "авито": ["авито", "avito"],
     "вк": ["вк", "vk"],
-    "отзовик": ["отзовик", "otzovik"],
+    "отзовик": ["отзовик", "otzovik", "otz", "отз"],
     "доктору": ["доктору", "docto", "doctoru", "докто ру"],
     "докдок": ["докдок", "doc doc", "doc"],
     "про докторов": ["про докторов", "продокторов", "pro doctors"],
@@ -47,6 +47,12 @@ SHEET_NAME_TO_PLATFORM = {
     "Продокторов (ПР)": "про докторов", "Продокторов": "про докторов", "про докторов": "про докторов",
     # ВК
     "ВК (ВК)": "вк", "ВК": "вк", "вк": "вк",
+    # Отзовик
+    "Otzovik (OT)": "отзовик", "Otzovik (ot)": "отзовик", "Otzovik (Ot)": "отзовик",
+    "OTZOVIK (OT)": "отзовик", "OTZOVIK (ОТ)": "отзовик",
+    "Отзовик (ОТ)": "отзовик", "Отзовик (ot)": "отзовик",
+    "Otzovik": "отзовик", "OTZOVIK": "отзовик",
+    "Отзовик": "отзовик", "отзовик": "отзовик",
     # ДокДок
     "ДокДок (ДД)": "докдок", "ДокДок": "докдок", "докдок": "докдок",
     # 32ТОП
@@ -146,7 +152,7 @@ def get_column_mapping(platform: str, headers: list = None):
         detected["link_col"]     = _find_col(headers, "ссылк", default=default["link_col"])
         detected["status_col"]   = _find_col(headers, "статус", default=default["status_col"])
         detected["executor_col"] = _find_col(headers, "исполнител", default=default["executor_col"])
-        detected["gender_col"]   = _find_col(headers, "пол", default=default["gender_col"])
+        detected["gender_col"]   = _find_col(headers, "род", "пол", exclude=("исполнител",), default=default["gender_col"])
         detected["update_col"]   = _find_col(headers, "обновлен", "e-", default=default["update_col"])
         detected["photo_doc_col"] = _find_col(headers, "фото", "документ", default=default["photo_doc_col"])
         return detected
@@ -162,7 +168,7 @@ def get_column_mapping(platform: str, headers: list = None):
         "link_col":     _find_col(headers, "ссылка на отзыв", "ссылк", exclude=("фото", "док", "изображ"), default=default["link_col"]),
         "status_col":   _find_col(headers, "статус", default=default["status_col"]),
         "executor_col": _find_col(headers, "исполнител", default=default["executor_col"]),
-        "gender_col":   _find_col(headers, "пол", default=default["gender_col"]),
+        "gender_col":   _find_col(headers, "род", "пол", exclude=("исполнител",), default=default["gender_col"]),
         "text_col":     _find_col(headers, "текст отзыва", "основной текст", "текст", exclude=TEXT_EXCLUDE, default=default["text_col"]),
         "update_col":   _find_col(headers, "обновлен", "e-", default=default["update_col"]),
         "flag_first_col":  default["flag_first_col"],
