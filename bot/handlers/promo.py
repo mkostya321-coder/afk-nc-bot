@@ -9,7 +9,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from bot.database import (
-    get_user, get_user_by_username, is_ga, is_owner,
+    get_user, get_user_by_username,
+    is_ga, is_owner, is_admin_nc, is_stpromonc,
+    get_admin_role,
     get_post, set_post, has_post, remove_post, list_posts,
     set_promo_table_link, get_promo_table_link,
     set_promo_schedule, get_promo_schedule,
@@ -165,12 +167,18 @@ async def cmd_remove_post(message: Message):
 @router.message(Command("list_posts"))
 async def cmd_list_posts(message: Message):
     user_id = message.from_user.id
-    if not (is_owner(user_id) or is_ga(user_id)):
-        await message.answer("⛔ Команда доступна только владельцу и ГА.")
+    admin_role = get_admin_role(user_id)
+
+    if not (is_owner(user_id) or is_ga(user_id) or is_admin_nc(user_id) or is_stpromonc(user_id)):
+        await message.answer("⛔ Команда доступна только владельцу, ГА, Админу и Старшему Промоутеру.")
         return
 
     parts = message.text.split()
     post_filter = parts[1].lower() if len(parts) > 1 else None
+
+    # stpromonc видит только promonc
+    if admin_role == "stpromonc":
+        post_filter = "promonc"
 
     if post_filter and post_filter not in POSTS:
         await message.answer(
@@ -211,8 +219,8 @@ async def cmd_list_posts(message: Message):
 @router.message(Command("infopromo"))
 async def cmd_infopromo(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    if not (is_owner(user_id) or is_ga(user_id)):
-        await message.answer("⛔ Команда доступна только владельцу и ГА.")
+    if not (is_owner(user_id) or is_ga(user_id) or is_stpromonc(user_id)):
+        await message.answer("⛔ Команда доступна только владельцу, ГА и Старшему Промоутеру.")
         return
 
     parts = message.text.split()
