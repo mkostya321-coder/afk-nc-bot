@@ -76,7 +76,7 @@ def init_db():
             "yab_total": "INTEGER DEFAULT 0",
             "hh_passed": "INTEGER DEFAULT 0",
             "hh_total": "INTEGER DEFAULT 0",
-            # OPZ-счётчики (опубликован опз — оплата 70% прайса)
+            # OPZ-счётчики
             "yandex_opz_passed": "INTEGER DEFAULT 0",
             "google_opz_passed": "INTEGER DEFAULT 0",
             "gis_opz_passed": "INTEGER DEFAULT 0",
@@ -341,7 +341,6 @@ def has_post(user_id: int, post: str) -> bool:
 
 
 def remove_post(user_id: int) -> bool:
-    """Снимает должность. Возвращает True, если была хоть одна."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("SELECT post FROM posts WHERE user_id = ?", (user_id,))
@@ -354,7 +353,6 @@ def remove_post(user_id: int) -> bool:
 
 
 def list_posts(post_filter: str = None) -> list:
-    """Возвращает список {user_id, post} по фильтру или все."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         if post_filter:
