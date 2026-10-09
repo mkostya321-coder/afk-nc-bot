@@ -76,6 +76,10 @@ PLATFORM_TEMPLATES = {
         ),
         "extra_text": SNIPPET_REQ, "warning": WARNING
     },
+    "отзовик": {
+        "instruction": "🔥 Отзовик\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
+        "extra_text": SNIPPET_REQ, "warning": WARNING
+    },
     "докдок": {
         "instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
         "extra_text": SNIPPET_REQ, "warning": WARNING
@@ -243,7 +247,6 @@ async def cancel_task(message: Message):
             sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             batch = []
 
-            # Невыполненные — возвращаем в свободные
             for row_idx in remaining:
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
@@ -253,7 +256,6 @@ async def cancel_task(message: Message):
                     col = chr(64 + mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
 
-            # ВЫПОЛНЕННЫЕ — сразу переводим в ОПЗ (оплата 70%)
             for row_idx in completed_rows:
                 col_j = chr(64 + mapping["status_col"])
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
@@ -751,7 +753,6 @@ async def select_review(callback: CallbackQuery):
     platform = request.get("platform", "яндекс")
     sheet_title = request.get("sheet_title")
 
-    # === ЖЁСТКАЯ ПРОВЕРКА: sheet_title обязателен ===
     if not sheet_title:
         logger.error(f"❌ select_review: sheet_title пуст у user {user_id} — просим /resume")
         await callback.answer(
@@ -785,7 +786,6 @@ async def select_review(callback: CallbackQuery):
         await callback.answer("❌ Уже выполнен.", show_alert=True)
         return
 
-    # === ВАЛИДАЦИЯ: строка должна быть в assigned_rows ===
     if target_row not in request.get("assigned_rows", []):
         logger.error(
             f"❌ select_review: row {target_row} НЕ в assigned_rows "
@@ -807,7 +807,6 @@ async def select_review(callback: CallbackQuery):
         return
     spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
 
-    # === Только точный лист, БЕЗ fallback-перебора ===
     try:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
@@ -892,7 +891,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
         text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
 
-        # === photo_link берём из mapping (photo_col), БЕЗ хардкода row[17] ===
         photo_link = ""
         photo_col = mapping.get("photo_col")
         if photo_col and len(row) >= photo_col:
@@ -1038,7 +1036,6 @@ async def handle_screenshot(message: Message):
         await message.answer("❌ Активный отзыв не найден. Выберите заново через «🎯 Активный слот».")
         return
 
-    # === ВАЛИДАЦИЯ: активная строка должна быть в assigned_rows ===
     if active_row not in request.get("assigned_rows", []):
         logger.error(
             f"❌ handle_screenshot: row {active_row} НЕ в assigned_rows "
@@ -1074,7 +1071,6 @@ async def handle_screenshot(message: Message):
         return
     spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
 
-    # === Только точный лист, БЕЗ перебора ===
     try:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
