@@ -5,10 +5,11 @@ from aiogram.types import Message
 from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
-    get_admin_role, set_admin_role, is_owner, is_ga, is_moderator, is_comoderator,
+    get_admin_role, set_admin_role, remove_admin_role,
+    is_owner, is_ga, is_admin_nc, is_stmoderator, is_moderator, is_comoderator, is_stpromonc,
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout,
-    get_user_limit, set_user_limit, reset_user_limit, get_effective_limit
+    get_user_limit, set_user_limit, reset_user_limit, get_effective_limit,
 )
 from bot.helpers import match_platform, PRICES
 import sqlite3
@@ -74,66 +75,140 @@ async def cmd_helpadm(message: Message):
         return
 
     text = "🛠 Команды администратора:\n\n"
+
     if is_owner(user_id):
-        text += "👑 /setrole <user_id или username> <owner|ga|moderator|comoderator> — назначить роль\n"
-        text += "📊 /payout_report — запросить отчёт по выплатам (пользователи с балансом ≥150₽)\n"
-        text += "🔍 /infoga <@username или user_id> — полная информация о пользователе + редактирование\n"
+        text += (
+            "👑 /setrole <user> <role>\n"
+            "   доступно: ga, admin, stmoderator, moderator, comoderator, stpromonc, none\n"
+            "📊 /payout_report — отчёт по выплатам (≥150₽) + обнуление\n"
+            "🔍 /infoga <@username или user_id> — полная информация + редактирование\n"
+        )
+
     if is_ga(user_id):
         text += (
-            "👤 /userblock <user_id или username> — блокировка/разблокировка\n"
-            "💰 /useredit <user_id/username> <поле> <значение> — редактировать данные пользователя\n"
-            "💸 /pay <@username или user_id> <сумма> — пополнить баланс пользователю\n"
-            "➖ /subtract platform <@username или user_id> <платформа> <N> [ШТ] [...] — списать N отзывов\n"
-            "➖ /subtract many <@username или user_id> <сумма> — списать N рублей с баланса\n"
-            "ℹ️ /info <username или user_id> — краткий профиль пользователя\n"
-            "🔍 /infoga <@username или user_id> — полная информация о пользователе + редактирование\n"
+            "👑 /setrole <user> <role>\n"
+            "   доступно: admin, stmoderator, moderator, comoderator, stpromonc, none\n"
+            "👤 /userblock <user> — блок/разблок\n"
+            "💰 /useredit <user> <поле> <знач> — правка данных\n"
+            "💸 /pay <user> <сумма> — пополнить баланс\n"
+            "➖ /subtract platform <user> <платформа> <N> [ШТ] [...] — списать N отзывов\n"
+            "➖ /subtract many <user> <сумма> — списать N рублей\n"
+            "ℹ️ /info <user> — профиль\n"
             "🔄 /update_stats — обновить статистику\n"
-            "⚠️ /resetbalance — сбросить балансы у пользователей с payout >= 150\n"
-            "🎬 /tiktok_pay <user_id/username> <просмотры> — начислить выплату за Tik Tok\n"
-            "⛔ /stop_tiktok — закрыть участие в Tik Tok\n"
-            "▶️ /start_tiktok — возобновить участие в Tik Tok\n"
-            "📨 /smsuser <username или user_id> <текст> — отправить сообщение пользователю\n"
-            "📊 /set_limit <platform> <limit> — установить общий лимит отзывов\n"
-            "👤 /user_limit <username/user_id> <platform> <limit|reset> — персональный лимит\n"
+            "⚠️ /resetbalance — сбросить балансы ≥150₽\n"
+            "🎬 /tiktok_pay <user> <просмотры> — начислить за TikTok\n"
+            "⛔ /stop_tiktok — закрыть TikTok\n"
+            "▶️ /start_tiktok — возобновить TikTok\n"
+            "📨 /smsuser <user> <текст> — сообщение юзеру\n"
+            "📊 /set_limit <platform> <N> — общий лимит\n"
+            "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
+            "🎖 /set_post <post> <user> — выдать должность\n"
+            "🚫 /remove_post <user> — снять должность\n"
+            "📋 /list_posts [post] — список сотрудников\n"
+            "🏆 /infopromo <user> — карточка промоутера\n"
         )
-    if is_moderator(user_id) and not is_ga(user_id):
+
+    if is_admin_nc(user_id) and not is_ga(user_id):
         text += (
-            "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
-            "ℹ️ /info <username или user_id> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
-            "📨 /smsuser <username или user_id> <текст> — отправить сообщение\n"
+            "👤 /userblock <user> — блок/разблок\n"
+            "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение\n"
+            "💰 /useredit <user> <поле> <знач> — правка данных\n"
+            "💸 /pay <user> <сумма> — пополнить баланс\n"
+            "➖ /subtract platform <user> <платформа> <N> [ШТ] [...] — списать\n"
+            "➖ /subtract many <user> <сумма> — списать рублей\n"
+            "🔄 /update_stats — обновить статистику\n"
+            "📊 /set_limit <platform> <N> — общий лимит\n"
+            "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
+            "📋 /list_posts [post] — список сотрудников\n"
         )
-    if is_comoderator(user_id) and not is_ga(user_id):
+
+    if is_stmoderator(user_id) and not is_admin_nc(user_id):
         text += (
-            "👤 /userblock <user_id/username> — блокировка/разблокировка\n"
-            "ℹ️ /info <username или user_id> — профиль пользователя\n"
-            "⚠️ /warn <user_id/username> <причина> — предупреждение\n"
-            "📨 /smsuser <username или user_id> <текст> — отправить сообщение\n"
+            "👤 /userblock <user> — блок/разблок\n"
+            "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение\n"
         )
+
+    if is_moderator(user_id) and not is_stmoderator(user_id):
+        text += (
+            "👤 /userblock <user> — блок/разблок\n"
+            "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение\n"
+        )
+
+    if is_comoderator(user_id) and not is_moderator(user_id):
+        text += (
+            "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение\n"
+        )
+
+    if is_stpromonc(user_id) and not is_comoderator(user_id) and not is_admin_nc(user_id):
+        text += (
+            "📋 /list_posts [promonc] — список промоутеров\n"
+            "🏆 /infopromo <user> — карточка промоутера\n"
+        )
+
+    text += "\nПо всем вопросам: /support"
     await message.answer(text)
     log_action(message, "Просмотр списка админ-команд")
 
 
 @router.message(Command("setrole"))
 async def set_role(message: Message):
-    if not is_owner(message.from_user.id):
+    caller_id = message.from_user.id
+    if not (is_owner(caller_id) or is_ga(caller_id)):
         return
+
     try:
         parts = message.text.split()
         if len(parts) < 3:
-            await message.answer("❌ Использование: /setrole <user_id или username> <owner|ga|moderator|comoderator>")
+            await message.answer(
+                "❌ Использование: /setrole <user_id или username> <role>\n"
+                "Доступные роли: ga, admin, stmoderator, moderator, comoderator, stpromonc, none"
+            )
             return
+
         target = parts[1]
         role = parts[2].lower()
-        if role not in ['owner', 'ga', 'moderator', 'comoderator']:
-            await message.answer("❌ Неверная роль. Допустимо: owner, ga, moderator, comoderator")
+
+        if is_owner(caller_id):
+            allowed = {'ga', 'admin', 'stmoderator', 'moderator', 'comoderator', 'stpromonc', 'none'}
+        elif is_ga(caller_id):
+            allowed = {'admin', 'stmoderator', 'moderator', 'comoderator', 'stpromonc', 'none'}
+        else:
+            allowed = set()
+
+        if role not in allowed:
+            await message.answer(
+                f"❌ Неверная роль. Вам доступно: {', '.join(sorted(allowed))}\n"
+                f"<i>Роль owner назначается только через БД.</i>",
+                parse_mode="HTML"
+            )
             return
+
         user = find_user_by_target(target)
         if not user:
             await message.answer(f"❌ Пользователь '{target}' не найден.")
             return
+
+        target_current_role = get_admin_role(user["user_id"])
+        if target_current_role == "owner":
+            await message.answer("❌ Нельзя изменить роль владельца.")
+            return
+
+        if role == "none":
+            remove_admin_role(user["user_id"])
+            await message.answer(f"✅ С пользователя {user['user_id']} снята роль.")
+            log_action(message, f"Снята роль с {user['user_id']}")
+            return
+
         set_admin_role(user["user_id"], role)
-        await message.answer(f"✅ Роль {role} назначена пользователю {user['user_id']}")
+        await message.answer(f"✅ Роль «{role}» назначена пользователю {user['user_id']}")
         log_action(message, f"Назначена роль {role} пользователю {user['user_id']}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
@@ -208,7 +283,7 @@ async def sms_user(message: Message):
 
 @router.message(Command("userblock"))
 async def user_block(message: Message):
-    if not is_comoderator(message.from_user.id):
+    if not is_moderator(message.from_user.id):
         return
     try:
         parts = message.text.split()
@@ -243,7 +318,6 @@ async def cmd_info(message: Message):
     if not user:
         await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
         return
-    # === СКРЫТИЕ НЕКОТОРЫХ ПОЛЬЗОВАТЕЛЕЙ ===
     target_username = (user.get("tg_username") or "").lower().lstrip("@")
     if target_username in HIDDEN_USERNAMES:
         await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
@@ -310,7 +384,7 @@ async def cmd_info(message: Message):
 
 @router.message(Command("useredit"))
 async def user_edit(message: Message):
-    if not is_ga(message.from_user.id):
+    if not is_admin_nc(message.from_user.id):
         return
     parts = message.text.split()
     if len(parts) < 4:
@@ -360,8 +434,8 @@ async def user_edit(message: Message):
 
 @router.message(Command("pay"))
 async def cmd_pay(message: Message):
-    if not is_ga(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа.")
         return
 
     parts = message.text.split()
@@ -408,8 +482,8 @@ async def cmd_pay(message: Message):
 
 @router.message(Command("subtract"))
 async def cmd_subtract(message: Message):
-    if not is_ga(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа.")
         return
 
     parts = message.text.split()
@@ -559,7 +633,7 @@ async def cmd_subtract(message: Message):
 
 @router.message(Command("update_stats"))
 async def cmd_update_stats(message: Message):
-    if not is_ga(message.from_user.id):
+    if not is_admin_nc(message.from_user.id):
         return
     await message.answer("⏳ Запускаю обновление статистики...")
     log_action(message, "Запущено обновление статистики")
@@ -816,7 +890,7 @@ async def cmd_start_tiktok(message: Message):
 
 @router.message(Command("set_limit"))
 async def cmd_set_limit(message: Message):
-    if not is_ga(message.from_user.id):
+    if not is_admin_nc(message.from_user.id):
         return
     parts = message.text.split()
     if len(parts) < 3:
@@ -838,8 +912,8 @@ async def cmd_set_limit(message: Message):
 
 @router.message(Command("user_limit"))
 async def cmd_user_limit(message: Message):
-    if not is_ga(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа. Команда доступна только GA и владельцу.")
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа.")
         return
 
     parts = message.text.split()
