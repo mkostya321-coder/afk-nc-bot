@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
 PRICES = {
-    "яндекс": 150, "google": 50, "2гис": 50, "авито": 700, "вк": 50,
+    "яндекс": 150, "яндекс негатив": 150, "google": 50, "2гис": 50, "авито": 700, "вк": 50,
     "отзовик": 100, "доктору": 100, "докдок": 100, "про докторов": 250,
     "докту": 100, "32топ": 125, "zoon": 85, "яу": 100, "яб": 100, "h": 50,
     "yell": 50,
@@ -15,6 +15,7 @@ PRICES = {
 
 PLATFORM_ALIASES = {
     "яндекс": ["яндекс", "ян", "yandex"],
+    "яндекс негатив": ["яндекс негатив", "яндекс-негатив", "яндекснегатив", "кн"],
     "google": ["google", "гугл"],
     "2гис": ["2гис", "гис", "2 гис"],
     "авито": ["авито", "avito"],
@@ -35,6 +36,11 @@ PLATFORM_ALIASES = {
 SHEET_NAME_TO_PLATFORM = {
     # Яндекс
     "ЯНДЕКС (К)": "яндекс", "Яндекс (К)": "яндекс", "ЯНДЕКС": "яндекс", "Яндекс": "яндекс",
+    # Яндекс Негатив
+    "Яндекс Негатив (КН)": "яндекс негатив", "Яндекс Негатив (кн)": "яндекс негатив",
+    "ЯНДЕКС НЕГАТИВ (КН)": "яндекс негатив", "ЯНДЕКС НЕГАТИВ (кн)": "яндекс негатив",
+    "Яндекс Негатив": "яндекс негатив", "ЯНДЕКС НЕГАТИВ": "яндекс негатив",
+    "яндекс негатив": "яндекс негатив",
     # 2ГИС
     "2ГИС (Г)": "2гис", "2гис (Г)": "2гис", "2ГИС 2.0 (Г)": "2гис", "2ГИС 2.0": "2гис",
     "2ГИС": "2гис", "2гис": "2гис", "2 ГИС": "2гис",
@@ -76,14 +82,6 @@ SHEET_NAME_TO_PLATFORM = {
 
 def _find_col(headers: list, *keys, default: int = 0, default_idx: int = None,
               exclude: tuple = None) -> int:
-    """
-    Ищет номер колонки (1-based) по ключам в заголовке с приоритетами:
-      +1000 — точное совпадение
-      +100  — заголовок начинается с ключа
-      +10   — ключ содержится в заголовке
-      −∞    — если встречается слово из exclude (ответ, правка, жалоба и т.п.)
-    Побеждает колонка с наибольшим счётом.
-    """
     fallback = default if default else (default_idx if default_idx else 1)
     if not headers:
         return fallback
@@ -115,10 +113,6 @@ def _find_col(headers: list, *keys, default: int = 0, default_idx: int = None,
 
 
 def get_column_mapping(platform: str, headers: list = None):
-    """
-    Если headers передан — определяем колонки по названиям в первой строке таблицы.
-    Иначе — стандартный маппинг.
-    """
     if platform == "про докторов":
         default = {
             "date_col": 1, "time_col": 2, "stars_col": 3, "platform_col": 4,
@@ -157,7 +151,6 @@ def get_column_mapping(platform: str, headers: list = None):
         detected["photo_doc_col"] = _find_col(headers, "фото", "документ", default=default["photo_doc_col"])
         return detected
 
-    # ============ УНИВЕРСАЛЬНЫЙ ПОИСК ============
     TEXT_EXCLUDE = ("ответ", "правка", "жалоб", "коммент", "шаблон", "заготовк")
 
     detected = {
@@ -219,7 +212,6 @@ def platform_from_sheet_name(sheet_name: str):
 
 
 def business_day_key(now=None) -> str:
-    """Бизнес-день начинается в 4:30 МСК. Возвращает ISO-дату 'YYYY-MM-DD'."""
     if now is None:
         now = datetime.now(moscow_tz)
     if now.hour < 4 or (now.hour == 4 and now.minute < 30):
