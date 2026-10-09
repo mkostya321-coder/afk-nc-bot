@@ -16,7 +16,7 @@ from bot.google_sheets import (
     monitor_schedule, update_stats_from_sheet,
     mark_as_paid_in_table, cleanup_channel
 )
-from bot.handlers import user, admin, slots
+from bot.handlers import user, admin, slots, promo
 from bot.handlers.admin_advanced import router as admin_advanced_router
 from bot.middlewares import AutoMenuMiddleware
 from bot.username_checker import username_checker
@@ -225,6 +225,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(admin_advanced_router)
     dp.include_router(slots.router)
+    dp.include_router(promo.router)
 
     await validate_chat_ids(bot)
 
