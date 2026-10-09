@@ -375,8 +375,8 @@ async def cmd_resume(message: Message):
     )
 
 
-# ============ ВВОД КОЛИЧЕСТВА (catch-all, но НЕ для команд) ============
-@router.message(F.text, ~Command())
+# ============ ВВОД КОЛИЧЕСТВА (catch-all, НЕ для команд) ============
+@router.message(F.text, ~F.text.startswith("/"))
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
     if user_id not in slot_requests:
