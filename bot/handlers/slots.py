@@ -14,7 +14,7 @@ from bot.database import (
     is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
     add_review_take, count_review_takes_last_24h, get_limit, get_effective_limit
 )
-from bot.google_sheets import get_client, build_slot_message
+from bot.google_sheets import get_client, build_slot_message, retry_api_call
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
 from bot.state import active_slots, slot_requests
 import pytz
@@ -273,9 +273,9 @@ async def cancel_task(message: Message):
                 col_j = chr(64 + mapping["status_col"])
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
 
-            for i in range(0, len(batch), 50):
-                await asyncio.to_thread(sheet.batch_update, batch[i:i+50])
-                await asyncio.sleep(0.5)
+            for i in range(0, len(batch), 20):
+                await retry_api_call(sheet.batch_update, batch[i:i+20])
+                await asyncio.sleep(0.4)
             logger.info(f"✅ Очищено {len(remaining)} невыполненных + ОПЗ отмечено {len(completed_rows)} выполненных")
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
@@ -306,6 +306,21 @@ async def cmd_resume(message: Message):
 
     if user_id in slot_requests:
         req = slot_requests[user_id]
+        state = req.get("state")
+
+        # ── Если висит отложенная запись — попробуем выполнить сейчас ──
+        if state in ("write_pending", "screenshot_pending"):
+            await _try_flush_one(user_id, message.bot)
+            req = slot_requests.get(user_id)
+            if not req:
+                await message.answer("✅ Данные записаны в таблицу. Возвращайся в слот.")
+                return
+            if req.get("state") in ("write_pending", "screenshot_pending"):
+                await message.answer(
+                    "⏳ Таблица всё ещё перегружена. Подожди 1-2 минуты и попробуй /resume снова."
+                )
+                return
+
         total = len(req.get("ordered_reviews", []))
         done = len(req.get("completed_reviews", []))
         await message.answer(
@@ -338,7 +353,7 @@ async def cmd_resume(message: Message):
             continue
         mapping = get_column_mapping(platform)
         try:
-            records = await asyncio.to_thread(sheet.get_all_values)
+            records = await retry_api_call(sheet.get_all_values)
         except:
             continue
         for row_idx, row in enumerate(records[1:], start=2):
@@ -461,7 +476,7 @@ async def handle_quantity_input(message: Message):
 
     try:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
-        records = await asyncio.to_thread(sheet.get_all_values)
+        records = await retry_api_call(sheet.get_all_values)
     except Exception as e:
         await message.answer("❌ Ошибка доступа к листу.")
         del slot_requests[user_id]
@@ -524,33 +539,33 @@ async def handle_quantity_input(message: Message):
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
 
-    batch = []
-    for row_idx in assigned_rows:
-        col_j = chr(64 + mapping["status_col"])
-        col_k = chr(64 + mapping["executor_col"])
-        col_t = chr(64 + mapping["order_col"])
-        idx = assigned_rows.index(row_idx) + 1
-        batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
-        batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
-        batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
-
-    try:
-        for i in range(0, len(batch), 50):
-            await asyncio.to_thread(sheet.batch_update, batch[i:i+50])
-            await asyncio.sleep(0.5)
-        logger.info(f"✅ Записано {len(assigned_rows)} строк")
-    except Exception as e:
-        logger.error(f"❌ Ошибка batch: {e}")
-
+    # ─────────────── ЗАПИСЬ С RETRY И ОЧЕРЕДЬЮ ───────────────
     ordered_reviews = [(r, i) for i, r in enumerate(assigned_rows, start=1)]
+
     request["ordered_reviews"] = ordered_reviews
     request["completed_reviews"] = []
     request["active_review_row"] = None
-    request["state"] = "slot_selection"
     request["assigned_rows"] = assigned_rows
     request["extra_messages"] = []
     request["mapping"] = mapping
     request["created_business_day"] = business_day_key()
+    request["write_username"] = username
+
+    # Пробуем записать сразу
+    ok = await _write_slot_to_sheet(user_id, message.bot)
+    if not ok:
+        # Не удалось — оставляем в очереди, состояние write_pending
+        request["state"] = "write_pending"
+        slot_requests[user_id] = request
+        await message.answer(
+            "⏳ <b>Сервер перегружен.</b> Отмечаю слот за вами и записываю в таблицу в фоне.\n\n"
+            "Подождите 1-2 минуты и напишите /resume.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Успех — ставим slot_selection
+    request["state"] = "slot_selection"
     slot_requests[user_id] = request
 
     for _ in range(quantity):
@@ -570,6 +585,224 @@ async def handle_quantity_input(message: Message):
     if instr_id:
         request["instruction_msg_id"] = instr_id
         slot_requests[user_id] = request
+
+
+# ============ ОТЛОЖЕННАЯ ЗАПИСЬ В ТАБЛИЦУ ============
+async def _write_slot_to_sheet(user_id: int, bot) -> bool:
+    """
+    Пытается записать K/J/T для всех assigned_rows пользователя.
+    Возвращает True при успехе, False при неудаче (тогда состояние остаётся write_pending).
+    """
+    if user_id not in slot_requests:
+        return True
+    request = slot_requests[user_id]
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
+    sheet_title = request.get("sheet_title")
+    assigned_rows = request.get("assigned_rows", [])
+    username = request.get("write_username")
+    if not username:
+        u = get_user(user_id)
+        username = f"@{u['tg_username']}" if u and u.get("tg_username") else "unknown"
+
+    if not assigned_rows or not sheet_title:
+        return False
+
+    client = get_client()
+    if not client:
+        return False
+    try:
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+    except Exception as e:
+        logger.error(f"❌ _write_slot_to_sheet: не открыть лист '{sheet_title}': {e}")
+        return False
+
+    batch = []
+    for row_idx in assigned_rows:
+        col_j = chr(64 + mapping["status_col"])
+        col_k = chr(64 + mapping["executor_col"])
+        col_t = chr(64 + mapping["order_col"])
+        idx = assigned_rows.index(row_idx) + 1
+        batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
+        batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
+        batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
+
+    try:
+        for i in range(0, len(batch), 20):
+            await retry_api_call(sheet.batch_update, batch[i:i+20])
+            await asyncio.sleep(0.4)
+
+        # Верификация
+        await asyncio.sleep(0.5)
+        check = await retry_api_call(sheet.get_all_values)
+        bad = []
+        for row_idx in assigned_rows:
+            if row_idx - 1 >= len(check):
+                bad.append(row_idx)
+                continue
+            r = check[row_idx - 1]
+            k_val = r[mapping["executor_col"]-1].strip() if len(r) >= mapping["executor_col"] else ""
+            j_val = r[mapping["status_col"]-1].strip().lower() if len(r) >= mapping["status_col"] else ""
+            if not k_val or j_val != "в работе":
+                bad.append(row_idx)
+
+        if bad:
+            logger.warning(f"🔁 Повторная запись {len(bad)} строк для user {user_id}: {bad}")
+            retry_batch = []
+            for row_idx in bad:
+                col_j = chr(64 + mapping["status_col"])
+                col_k = chr(64 + mapping["executor_col"])
+                col_t = chr(64 + mapping["order_col"])
+                idx = assigned_rows.index(row_idx) + 1
+                retry_batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
+                retry_batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
+                retry_batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
+            try:
+                await retry_api_call(sheet.batch_update, retry_batch)
+            except Exception as e:
+                logger.error(f"❌ Повторная запись провалилась: {e}")
+                return False
+
+        logger.info(f"✅ Слот записан в таблицу: user={user_id}, строк={len(assigned_rows)}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка записи слота в таблицу: {e}")
+        return False
+
+
+# ============ ОТЛОЖЕННАЯ ЗАПИСЬ СКРИНШОТА ============
+async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
+    """
+    Пытается поставить 'на модерации', I=333 для active_review_row.
+    Возвращает True при успехе.
+    """
+    if user_id not in slot_requests:
+        return True
+    request = slot_requests[user_id]
+    platform = request.get("platform", "яндекс")
+    mapping = get_safe_mapping(request, platform)
+    sheet_title = request.get("sheet_title")
+    active_row = request.get("active_review_row")
+    review_id = request.get("screenshot_review_id")
+
+    if not active_row or not sheet_title:
+        return False
+
+    client = get_client()
+    if not client:
+        return False
+    try:
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+    except Exception as e:
+        logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
+        return False
+
+    col_j = chr(64 + mapping["status_col"])
+    col_i = chr(64 + mapping["flag_final_col"])
+    batch = [
+        {"range": f"{col_j}{active_row}", "values": [["на модерации"]]},
+        {"range": f"{col_i}{active_row}", "values": [[333]]},
+    ]
+    if review_id:
+        col_id = chr(64 + mapping["id_col"])
+        batch.append({"range": f"{col_id}{active_row}", "values": [[review_id]]})
+
+    try:
+        await retry_api_call(sheet.batch_update, batch)
+        await retry_api_call(
+            sheet.format,
+            f"{col_i}{active_row}",
+            {"backgroundColor": {"red": 0, "green": 0.8, "blue": 0}}
+        )
+        logger.info(f"✅ Скриншот записан: user={user_id}, строка={active_row}, id={review_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка записи скриншота: {e}")
+        return False
+
+
+# ============ ФОНОВЫЙ FLUSH (вызывается из monitor_schedule) ============
+async def flush_pending_writes(bot):
+    """
+    Проходит по всем сессиям в состоянии write_pending / screenshot_pending
+    и пытается выполнить отложенную запись. Вызывается из monitor_schedule.
+    """
+    if not slot_requests:
+        return
+    pending = []
+    for uid, req in list(slot_requests.items()):
+        if req.get("state") in ("write_pending", "screenshot_pending"):
+            pending.append((uid, req))
+    if not pending:
+        return
+
+    logger.info(f"🔁 FLUSH: отложенных записей: {len(pending)}")
+    for uid, req in pending:
+        state = req.get("state")
+        try:
+            if state == "write_pending":
+                ok = await _write_slot_to_sheet(uid, bot)
+                if ok:
+                    req["state"] = "slot_selection"
+                    slot_requests[uid] = req
+                    await _safe_send(
+                        bot, uid,
+                        "✅ Слот успешно записан в таблицу! Можете приступать.\n"
+                        "Нажмите /resume для продолжения."
+                    )
+            elif state == "screenshot_pending":
+                ok = await _write_screenshot_to_sheet(uid, bot)
+                if ok:
+                    # Обновляем completed_reviews
+                    active_row = req.get("active_review_row")
+                    ordered = req.get("ordered_reviews", [])
+                    completed = req.get("completed_reviews", [])
+                    for row_idx, num in ordered:
+                        if row_idx == active_row:
+                            if num not in completed:
+                                completed.append(num)
+                            break
+                    req["completed_reviews"] = completed
+                    req["active_review_row"] = None
+                    req["state"] = "slot_selection"
+                    slot_requests[uid] = req
+                    await _safe_send(
+                        bot, uid,
+                        "✅ Скриншот записан! Можете продолжить.\n"
+                        "Нажмите /resume для продолжения."
+                    )
+        except Exception as e:
+            logger.warning(f"⚠️ FLUSH user {uid}: {e}")
+
+
+async def _try_flush_one(user_id: int, bot):
+    """Быстрая попытка записать отложенные данные для одного юзера."""
+    if user_id not in slot_requests:
+        return
+    req = slot_requests[user_id]
+    state = req.get("state")
+    if state == "write_pending":
+        ok = await _write_slot_to_sheet(user_id, bot)
+        if ok:
+            req["state"] = "slot_selection"
+            slot_requests[user_id] = req
+    elif state == "screenshot_pending":
+        ok = await _write_screenshot_to_sheet(user_id, bot)
+        if ok:
+            active_row = req.get("active_review_row")
+            ordered = req.get("ordered_reviews", [])
+            completed = req.get("completed_reviews", [])
+            for row_idx, num in ordered:
+                if row_idx == active_row:
+                    if num not in completed:
+                        completed.append(num)
+                    break
+            req["completed_reviews"] = completed
+            req["active_review_row"] = None
+            req["state"] = "slot_selection"
+            slot_requests[user_id] = req
 
 
 # ============ ВЗЯТЬ СЛОТ ============
@@ -597,6 +830,13 @@ async def take_slot_start(callback: CallbackQuery):
         return
 
     if user_id in slot_requests:
+        state = slot_requests[user_id].get("state")
+        if state in ("write_pending", "screenshot_pending"):
+            await _safe_send(
+                callback.bot, user_id,
+                "⏳ Предыдущая запись ещё не завершена. Подожди 1-2 минуты и напиши /resume."
+            )
+            return
         await _safe_send(callback.bot, user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
         return
 
@@ -711,7 +951,11 @@ async def active_slot(callback: CallbackQuery):
     if user_id not in slot_requests:
         await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
         return
-    if slot_requests[user_id].get("state") != "slot_selection":
+    state = slot_requests[user_id].get("state")
+    if state in ("write_pending", "screenshot_pending"):
+        await callback.answer("⏳ Идёт запись в таблицу. Подожди 1-2 мин, потом /resume.", show_alert=True)
+        return
+    if state != "slot_selection":
         await callback.answer("❌ Уже в процессе.", show_alert=True)
         return
 
@@ -840,7 +1084,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         request["mapping"] = mapping
         slot_requests[user_id] = request
 
-    row = await asyncio.to_thread(sheet.row_values, row_idx)
+    row = await retry_api_call(sheet.row_values, row_idx)
     if len(row) < 30:
         row = row + [""] * (30 - len(row))
 
@@ -1033,6 +1277,14 @@ async def handle_screenshot(message: Message):
         return
 
     request = slot_requests[user_id]
+
+    # Если висит отложенная запись предыдущего скрина — просим подождать
+    if request.get("state") == "screenshot_pending":
+        await message.answer(
+            "⏳ Предыдущий скриншот ещё записывается в таблицу. Подожди 1-2 минуты, потом /resume."
+        )
+        return
+
     if request.get("state") != "working_on_review":
         await message.answer(
             "❌ Сначала выберите отзыв, к которому относится скриншот:\n"
@@ -1089,34 +1341,47 @@ async def handle_screenshot(message: Message):
         await message.answer("❌ Лист не найден. Введите /resume.")
         return
 
-    review_id = await asyncio.to_thread(sheet.cell, active_row, mapping["id_col"])
+    review_id = await retry_api_call(sheet.cell, active_row, mapping["id_col"])
     review_id = review_id.value if review_id else None
     if not review_id:
         review_id = secrets.token_hex(4)
-        await asyncio.to_thread(sheet.update_cell, active_row, mapping["id_col"], review_id)
 
-    try:
-        await asyncio.to_thread(sheet.update_cell, active_row, mapping["status_col"], "на модерации")
-        await asyncio.to_thread(sheet.update_cell, active_row, mapping["flag_final_col"], 333)
-        await asyncio.to_thread(
-            sheet.format,
-            f"{chr(64+mapping['flag_final_col'])}{active_row}",
-            {"backgroundColor": {"red": 0, "green": 0.8, "blue": 0}}
+    # Сохраняем review_id в request — понадобится при отложенной записи
+    request["screenshot_review_id"] = review_id
+    slot_requests[user_id] = request
+
+    # Пробуем записать сразу
+    ok = await _write_screenshot_to_sheet(user_id, message.bot)
+
+    if not ok:
+        # Оставляем в состоянии screenshot_pending — фоновый flush попробует снова
+        request["state"] = "screenshot_pending"
+        slot_requests[user_id] = request
+        await message.answer(
+            "⏳ <b>Сервер перегружен.</b> Скриншот принят, но ещё не записан в таблицу.\n"
+            "Бот запишет его в фоне и сообщит об этом.\n\n"
+            "Подожди 1-2 минуты, потом напиши /resume.",
+            parse_mode="HTML"
         )
-        logger.info(f"✅ Строка {active_row} (лист '{sheet_title}') → 'на модерации', id={review_id}")
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await message.answer("❌ Ошибка сохранения.")
+        # Всё равно отправляем скриншот в админ-канал — важно
+        try:
+            user = get_user(user_id)
+            user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
+            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
+            if SCREENSHOT_CHANNEL_ID:
+                await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
+        except Exception as e:
+            logger.error(f"Ошибка отправки скрина в канал: {e}")
         return
 
+    # Успех — всё записано
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
-        if not SCREENSHOT_CHANNEL_ID:
-            logger.warning("⚠️ SCREENSHOT_CHANNEL_ID не задан — скриншот не отправлен")
-        else:
+        if SCREENSHOT_CHANNEL_ID:
             await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
             logger.info(f"📤 Скриншот отправлен в {SCREENSHOT_CHANNEL_ID} от user {user_id}")
     except Exception as e:
@@ -1126,10 +1391,12 @@ async def handle_screenshot(message: Message):
     completed = request.get("completed_reviews", [])
     for row_idx, num in ordered:
         if row_idx == active_row:
-            completed.append(num)
+            if num not in completed:
+                completed.append(num)
             break
     request["completed_reviews"] = completed
     request["active_review_row"] = None
+    request["screenshot_review_id"] = None
     request["state"] = "slot_selection"
     slot_requests[user_id] = request
 
