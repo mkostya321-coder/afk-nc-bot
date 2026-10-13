@@ -36,6 +36,52 @@ def find_user_by_target(target: str):
     return get_user_by_username(t.lstrip("@"))
 
 
+def find_user_extended(target: str):
+    """
+    Расширенный поиск: user_id → tg_username → username → name.
+    Возвращает dict или None.
+    """
+    if not target:
+        return None
+    t = target.strip()
+    if t.isdigit():
+        return get_user(int(t))
+
+    clean = t.lstrip("@").strip().lower()
+    if not clean:
+        return None
+
+    # 1. get_user_by_username (tg_username или username)
+    user = get_user_by_username(clean)
+    if user:
+        return user
+
+    # 2. Поиск по name (точное или частичное)
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM users WHERE LOWER(name) = ? LIMIT 1",
+                (clean,)
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+            # Частичное совпадение по name
+            cur.execute(
+                "SELECT * FROM users WHERE LOWER(name) LIKE ? LIMIT 1",
+                (f"%{clean}%",)
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+    except Exception as e:
+        logger.warning(f"⚠️ find_user_extended: {e}")
+
+    return None
+
+
 def log_action(message: Message, action: str):
     if not LOG_CHANNEL_ID:
         return
@@ -80,6 +126,10 @@ async def cmd_helpadm(message: Message):
             "   доступно: ga, admin, stmoderator, moderator, comoderator, stpromonc, none\n"
             "📊 /payout_report — отчёт по выплатам (≥150₽) + обнуление\n"
             "🔍 /infoga <@username или user_id> — полная информация + редактирование\n"
+            "👤 /userblock <user> — блок/разблок\n"
+            "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение\n"
         )
 
     if is_ga(user_id):
@@ -92,12 +142,13 @@ async def cmd_helpadm(message: Message):
             "➖ /subtract platform <user> <платформа> <N> [ШТ] [...] — списать N отзывов\n"
             "➖ /subtract many <user> <сумма> — списать N рублей\n"
             "ℹ️ /info <user> — профиль\n"
+            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "📨 /smsuser <user> <текст> — сообщение юзеру\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы ≥150₽\n"
             "🎬 /tiktok_pay <user> <просмотры> — начислить за TikTok\n"
             "⛔ /stop_tiktok — закрыть TikTok\n"
             "▶️ /start_tiktok — возобновить TikTok\n"
-            "📨 /smsuser <user> <текст> — сообщение юзеру\n"
             "📊 /set_limit <platform> <N> — общий лимит\n"
             "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
             "🎖 /set_post <post> <user> — выдать должность\n"
@@ -214,40 +265,107 @@ async def set_role(message: Message):
 
 @router.message(Command("warn"))
 async def warn_user(message: Message):
-    if not is_comoderator(message.from_user.id):
+    caller_id = message.from_user.id
+    if not is_comoderator(caller_id):
         return
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
-            await message.answer("Использование: /warn <user_id или username> <причина>")
-            return
-        target = parts[1]
-        reason = parts[2]
-        user = find_user_by_target(target)
-        if not user:
-            await message.answer("❌ Пользователь не найден")
-            return
 
-        add_warning(user["user_id"], reason, message.from_user.id)
-        active_warnings = get_active_warnings(user["user_id"])
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/warn &lt;username или user_id&gt; &lt;причина&gt;</code>\n\n"
+            "<b>Примеры:</b>\n"
+            "<code>/warn @ivan спам</code>\n"
+            "<code>/warn 8635115842 спам</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    target_raw = parts[1].strip()
+    reason = parts[2].strip()
+
+    logger.info(f"⚠️ /warn: caller={caller_id}, target='{target_raw}', reason='{reason}'")
+
+    user = find_user_extended(target_raw)
+
+    if not user:
+        # Диагностика — покажем похожих из БД
+        hint = ""
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                clean = target_raw.lstrip("@").strip().lower()
+                cur.execute(
+                    "SELECT user_id, tg_username, name FROM users "
+                    "WHERE LOWER(tg_username) LIKE ? OR LOWER(username) LIKE ? OR LOWER(name) LIKE ? "
+                    "LIMIT 5",
+                    (f"%{clean}%", f"%{clean}%", f"%{clean}%")
+                )
+                similar = cur.fetchall()
+                if similar:
+                    lines = ["\n\n💡 <b>Похожие пользователи в БД:</b>"]
+                    for s in similar:
+                        lines.append(f"• {s['name'] or '—'} (@{s['tg_username'] or '—'}, ID: {s['user_id']})")
+                    hint = "\n".join(lines)
+        except Exception:
+            pass
+
+        await message.answer(
+            f"❌ Пользователь <code>{target_raw}</code> не найден в БД.{hint}\n\n"
+            f"<i>Подсказка: проверьте @username точно как в профиле юзера. "
+            f"Можно вводить и по user_id.</i>",
+            parse_mode="HTML"
+        )
+        logger.warning(f"⚠️ /warn: user '{target_raw}' не найден (caller={caller_id})")
+        return
+
+    user_id = user["user_id"]
+    logger.info(f"⚠️ /warn: user найден → id={user_id}, name='{user.get('name')}', @{user.get('tg_username')}")
+
+    try:
+        add_warning(user_id, reason, caller_id)
+        active_warnings = get_active_warnings(user_id)
         warn_count = len(active_warnings)
+
         if warn_count >= 3:
-            toggle_block(user["user_id"])
-            await message.answer(f"✅ Пользователь @{user.get('username') or user['user_id']} получил третье предупреждение и заблокирован.")
+            toggle_block(user_id)
+            await message.answer(
+                f"✅ Пользователь @{user.get('tg_username') or user_id} "
+                f"получил <b>третье предупреждение</b> и заблокирован.",
+                parse_mode="HTML"
+            )
             try:
-                await message.bot.send_message(user["user_id"], f"⛔ Вы получили третье предупреждение и заблокированы.\nПричина: {reason}\nВы можете обратиться в поддержку через /support.")
-            except:
-                pass
+                await message.bot.send_message(
+                    user_id,
+                    f"⛔ Вы получили третье предупреждение и заблокированы.\n"
+                    f"Причина: {reason}\n"
+                    f"Вы можете обратиться в поддержку через /support."
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ /warn: не удалось уведомить user {user_id}: {e}")
+            logger.warning(f"🚨 /warn: user {user_id} заблокирован после 3-го предупреждения")
         else:
             last_warn = active_warnings[-1]
             expires_str = datetime.fromisoformat(last_warn['expires_at']).strftime("%d.%m.%Y")
-            await message.answer(f"✅ Предупреждение ({warn_count}/3) отправлено пользователю @{user.get('username') or user['user_id']}.\nДата снятия: {expires_str}")
+            await message.answer(
+                f"✅ Предупреждение <b>{warn_count}/3</b> выдано "
+                f"@{user.get('tg_username') or user_id}.\n"
+                f"Дата снятия: {expires_str}",
+                parse_mode="HTML"
+            )
             try:
-                await message.bot.send_message(user["user_id"], f"⚠️ Предупреждение ({warn_count}/3): {reason}\nБудет снято: {expires_str}")
-            except:
-                pass
-        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user['user_id']} ({reason})")
+                await message.bot.send_message(
+                    user_id,
+                    f"⚠️ Предупреждение ({warn_count}/3): {reason}\n"
+                    f"Будет снято: {expires_str}"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ /warn: не удалось уведомить user {user_id}: {e}")
+
+        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user_id} ({reason})")
     except Exception as e:
+        logger.error(f"❌ /warn: ошибка при выдаче: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 
@@ -262,7 +380,7 @@ async def sms_user(message: Message):
             return
         target = parts[1]
         text = parts[2]
-        user = find_user_by_target(target)
+        user = find_user_extended(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
             return
@@ -289,7 +407,7 @@ async def user_block(message: Message):
             await message.answer("Использование: /userblock <user_id или username>")
             return
         target = parts[1]
-        user = find_user_by_target(target)
+        user = find_user_extended(target)
         if not user:
             await message.answer("❌ Пользователь не найден.")
             return
@@ -312,7 +430,7 @@ async def cmd_info(message: Message):
     if len(args) < 2:
         await message.answer("❌ Использование: /info <username или user_id>")
         return
-    user = find_user_by_target(args[1])
+    user = find_user_extended(args[1])
     if not user:
         await message.answer(f"❌ Пользователь '{args[1]}' не найден.")
         return
@@ -390,7 +508,7 @@ async def user_edit(message: Message):
         await message.answer("Использование: /useredit <user_id/username> <поле> <значение>\nПоля: payout, earned, phone, bank, myotz 1-13")
         return
     target = parts[1]
-    user = find_user_by_target(target)
+    user = find_user_extended(target)
     if not user:
         await message.answer("❌ Пользователь не найден.")
         return
@@ -456,7 +574,7 @@ async def cmd_pay(message: Message):
         await message.answer("❌ Сумма должна быть числом.")
         return
 
-    user = find_user_by_target(target)
+    user = find_user_extended(target)
     if not user:
         await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
@@ -502,7 +620,7 @@ async def cmd_subtract(message: Message):
     mode = parts[1].lower()
     target = parts[2]
 
-    user = find_user_by_target(target)
+    user = find_user_extended(target)
     if not user:
         await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
@@ -775,7 +893,7 @@ async def cmd_tiktok_pay(message: Message):
     except ValueError:
         await message.answer("❌ Количество просмотров должно быть числом.")
         return
-    user = find_user_by_target(target)
+    user = find_user_extended(target)
     if not user:
         await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
@@ -935,7 +1053,7 @@ async def cmd_user_limit(message: Message):
         return
 
     target = parts[1]
-    user = find_user_by_target(target)
+    user = find_user_extended(target)
     if not user:
         await message.answer(f"❌ Пользователь '{target}' не найден.")
         return
