@@ -89,15 +89,22 @@ def get_client():
     return gspread.authorize(creds)
 
 
-async def retry_api_call(func, *args, max_attempts=8, **kwargs):
+async def retry_api_call(func, *args, max_attempts=20, **kwargs):
+    """
+    Обёртка над gspread-вызовами.
+    До 20 попыток при 429 — терпит длительные перегрузки Google.
+    """
     for attempt in range(1, max_attempts + 1):
         try:
             return await asyncio.to_thread(func, *args, **kwargs)
         except gspread.exceptions.APIError as e:
             error_msg = str(e)
             if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower():
-                wait = min(2 ** attempt, 60)
-                logger.warning(f"⚠️ 429 (попытка {attempt}/{max_attempts}), ждём {wait} сек")
+                wait = min(2 ** attempt, 90)
+                logger.warning(
+                    f"⚠️ GOOGLE 429 — превышен лимит запросов "
+                    f"(попытка {attempt}/{max_attempts}), ждём {wait} сек"
+                )
                 await asyncio.sleep(wait)
                 continue
             raise
@@ -260,6 +267,13 @@ async def monitor_schedule(bot):
                 logger.error("❌ Нет credentials")
                 await asyncio.sleep(60)
                 continue
+
+            # ==== FLUSH отложенных записей перед обходом ====
+            try:
+                from bot.handlers.slots import flush_pending_writes
+                await flush_pending_writes(bot)
+            except Exception as e:
+                logger.warning(f"⚠️ flush_pending_writes: {e}")
 
             spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
             worksheets = await asyncio.to_thread(spreadsheet.worksheets)
@@ -692,7 +706,7 @@ async def monitor_schedule(bot):
 
         except Exception as e:
             logger.error(f"❌ Ошибка планировщика: {e}", exc_info=True)
-        await asyncio.sleep(120)
+        await asyncio.sleep(180)
 
 
 async def _check_republish(bot, client, now):
@@ -1295,7 +1309,7 @@ async def update_stats_from_sheet_once(bot=None):
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
-        # ===== ФИНАЛЬНЫЙ ПЕРЕСЧЁТ payout С УЧЁТОМ OPZ =====
+        # Финальный пересчёт payout с OPZ
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
