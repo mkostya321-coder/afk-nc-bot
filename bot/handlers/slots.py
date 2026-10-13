@@ -241,7 +241,6 @@ async def cancel_task(message: Message):
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
-    completed_rows = [r for r, n in ordered if n in completed]
     if not remaining:
         await delete_session_messages(user_id, message.bot, request, message.chat.id)
         await message.answer("✅ У вас нет невыполненных отзывов.")
@@ -251,7 +250,7 @@ async def cancel_task(message: Message):
     platform = request.get("platform", "яндекс")
     mapping = get_safe_mapping(request, platform)
     sheet_title = request.get("sheet_title")
-    logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}, выполненных: {len(completed_rows)}")
+    logger.info(f"🔄 Отмена: {user_id}, {platform}, невыполненных: {len(remaining)}, выполненных: {len(completed)}")
 
     client = get_client()
     if client and sheet_title:
@@ -260,6 +259,7 @@ async def cancel_task(message: Message):
             sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             batch = []
 
+            # Возвращаем НЕВЫПОЛНЕННЫЕ строки в свободные
             for row_idx in remaining:
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
@@ -269,14 +269,13 @@ async def cancel_task(message: Message):
                     col = chr(64 + mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
 
-            for row_idx in completed_rows:
-                col_j = chr(64 + mapping["status_col"])
-                batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
+            # ВЫПОЛНЕННЫЕ НЕ ТРОГАЕМ — они уже "на модерации" и пойдут по полной цене.
+            # (раньше тут был перевод в "на модерации с ОПЗ" — убрано)
 
             for i in range(0, len(batch), 20):
                 await retry_api_call(sheet.batch_update, batch[i:i+20])
                 await asyncio.sleep(0.4)
-            logger.info(f"✅ Очищено {len(remaining)} невыполненных + ОПЗ отмечено {len(completed_rows)} выполненных")
+            logger.info(f"✅ Очищено {len(remaining)} невыполненных (выполненные оставлены 'на модерации')")
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
 
@@ -287,8 +286,8 @@ async def cancel_task(message: Message):
     await _safe_send(
         message.bot, user_id,
         f"✅ Отказ принят.\n\n"
-        f"• Выполненные: {len(completed)} – на модерацию с ОПЗ (оплата 70%)\n"
-        f"• Невыполненные: {len(remaining)} – переопубликуются"
+        f"• Выполненные: {len(completed)} – остались на модерации (полная оплата)\n"
+        f"• Невыполненные: {len(remaining)} – вернулись в свободные"
     )
 
 
@@ -308,7 +307,6 @@ async def cmd_resume(message: Message):
         req = slot_requests[user_id]
         state = req.get("state")
 
-        # ── Если висит отложенная запись — попробуем выполнить сейчас ──
         if state in ("write_pending", "screenshot_pending"):
             await _try_flush_one(user_id, message.bot)
             req = slot_requests.get(user_id)
@@ -539,7 +537,6 @@ async def handle_quantity_input(message: Message):
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
 
-    # ─────────────── ЗАПИСЬ С RETRY И ОЧЕРЕДЬЮ ───────────────
     ordered_reviews = [(r, i) for i, r in enumerate(assigned_rows, start=1)]
 
     request["ordered_reviews"] = ordered_reviews
@@ -551,10 +548,8 @@ async def handle_quantity_input(message: Message):
     request["created_business_day"] = business_day_key()
     request["write_username"] = username
 
-    # Пробуем записать сразу
     ok = await _write_slot_to_sheet(user_id, message.bot)
     if not ok:
-        # Не удалось — оставляем в очереди, состояние write_pending
         request["state"] = "write_pending"
         slot_requests[user_id] = request
         await message.answer(
@@ -564,7 +559,6 @@ async def handle_quantity_input(message: Message):
         )
         return
 
-    # Успех — ставим slot_selection
     request["state"] = "slot_selection"
     slot_requests[user_id] = request
 
@@ -589,10 +583,6 @@ async def handle_quantity_input(message: Message):
 
 # ============ ОТЛОЖЕННАЯ ЗАПИСЬ В ТАБЛИЦУ ============
 async def _write_slot_to_sheet(user_id: int, bot) -> bool:
-    """
-    Пытается записать K/J/T для всех assigned_rows пользователя.
-    Возвращает True при успехе, False при неудаче (тогда состояние остаётся write_pending).
-    """
     if user_id not in slot_requests:
         return True
     request = slot_requests[user_id]
@@ -633,7 +623,6 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
             await retry_api_call(sheet.batch_update, batch[i:i+20])
             await asyncio.sleep(0.4)
 
-        # Верификация
         await asyncio.sleep(0.5)
         check = await retry_api_call(sheet.get_all_values)
         bad = []
@@ -673,10 +662,6 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
 
 # ============ ОТЛОЖЕННАЯ ЗАПИСЬ СКРИНШОТА ============
 async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
-    """
-    Пытается поставить 'на модерации', I=333 для active_review_row.
-    Возвращает True при успехе.
-    """
     if user_id not in slot_requests:
         return True
     request = slot_requests[user_id]
@@ -723,12 +708,8 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         return False
 
 
-# ============ ФОНОВЫЙ FLUSH (вызывается из monitor_schedule) ============
+# ============ ФОНОВЫЙ FLUSH ============
 async def flush_pending_writes(bot):
-    """
-    Проходит по всем сессиям в состоянии write_pending / screenshot_pending
-    и пытается выполнить отложенную запись. Вызывается из monitor_schedule.
-    """
     if not slot_requests:
         return
     pending = []
@@ -755,7 +736,6 @@ async def flush_pending_writes(bot):
             elif state == "screenshot_pending":
                 ok = await _write_screenshot_to_sheet(uid, bot)
                 if ok:
-                    # Обновляем completed_reviews
                     active_row = req.get("active_review_row")
                     ordered = req.get("ordered_reviews", [])
                     completed = req.get("completed_reviews", [])
@@ -778,7 +758,6 @@ async def flush_pending_writes(bot):
 
 
 async def _try_flush_one(user_id: int, bot):
-    """Быстрая попытка записать отложенные данные для одного юзера."""
     if user_id not in slot_requests:
         return
     req = slot_requests[user_id]
@@ -1278,7 +1257,6 @@ async def handle_screenshot(message: Message):
 
     request = slot_requests[user_id]
 
-    # Если висит отложенная запись предыдущего скрина — просим подождать
     if request.get("state") == "screenshot_pending":
         await message.answer(
             "⏳ Предыдущий скриншот ещё записывается в таблицу. Подожди 1-2 минуты, потом /resume."
@@ -1346,15 +1324,12 @@ async def handle_screenshot(message: Message):
     if not review_id:
         review_id = secrets.token_hex(4)
 
-    # Сохраняем review_id в request — понадобится при отложенной записи
     request["screenshot_review_id"] = review_id
     slot_requests[user_id] = request
 
-    # Пробуем записать сразу
     ok = await _write_screenshot_to_sheet(user_id, message.bot)
 
     if not ok:
-        # Оставляем в состоянии screenshot_pending — фоновый flush попробует снова
         request["state"] = "screenshot_pending"
         slot_requests[user_id] = request
         await message.answer(
@@ -1363,7 +1338,6 @@ async def handle_screenshot(message: Message):
             "Подожди 1-2 минуты, потом напиши /resume.",
             parse_mode="HTML"
         )
-        # Всё равно отправляем скриншот в админ-канал — важно
         try:
             user = get_user(user_id)
             user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
@@ -1375,7 +1349,6 @@ async def handle_screenshot(message: Message):
             logger.error(f"Ошибка отправки скрина в канал: {e}")
         return
 
-    # Успех — всё записано
     try:
         user = get_user(user_id)
         user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
