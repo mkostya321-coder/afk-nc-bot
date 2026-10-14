@@ -18,7 +18,7 @@ from bot.database import (
     add_user, get_user, get_user_by_username,
     is_registered, update_user_field, is_blocked,
     get_active_warnings, get_setting, set_setting,
-    get_admin_role, has_post,
+    get_admin_role, has_post, get_post,
 )
 from bot.keyboards.reply import main_menu_keyboard
 from bot.middlewares import is_subscribed
@@ -27,6 +27,22 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 REFERRAL_DEADLINE_DAYS = 28
+
+
+# ============ ОТОБРАЖЕНИЕ РОЛЕЙ И ДОЛЖНОСТЕЙ ============
+ROLE_DISPLAY = {
+    "owner": "👑 Владелец",
+    "ga": "🛡️ ГА (Главный администратор)",
+    "admin": "🎩 Администратор NC",
+    "stmoderator": "⭐ Старший модератор",
+    "moderator": "🔨 Модератор",
+    "comoderator": "🧰 Комодер",
+    "stpromonc": "🏆 Старший промоутер",
+}
+
+POST_DISPLAY = {
+    "promonc": "🏆 Промоутер NC",
+}
 
 
 class RegForm(StatesGroup):
@@ -272,6 +288,7 @@ async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
         await show_intro(callback.message, state)
 
 
+# ---------- Профиль ----------
 @router.message(F.text == "📋 Профиль")
 @router.message(Command("profile"))
 async def menu_profile(message: Message):
@@ -366,6 +383,17 @@ async def menu_profile(message: Message):
             "━━━━━━━━━━━━━━━━━━\n\n"
         )
 
+    # === РОЛЬ И ДОЛЖНОСТЬ ===
+    role_code = get_admin_role(user_id)
+    post_code = get_post(user_id)
+    status_lines = ""
+    if role_code:
+        status_lines += f"🎖 Роль: <b>{ROLE_DISPLAY.get(role_code, role_code)}</b>\n"
+    if post_code:
+        status_lines += f"🎖 Должность: <b>{POST_DISPLAY.get(post_code, post_code)}</b>\n"
+    if status_lines:
+        status_lines = status_lines + "\n"
+
     text = (
         username_warning +
         "🤖 Версия бота 1.0.0\n\n"
@@ -373,6 +401,7 @@ async def menu_profile(message: Message):
         f"Имя: {user['name']}\n"
         f"Время от МСК: {user['timezone']}\n"
         f"Город: {user['city']}\n\n"
+        f"{status_lines}"
         f"С нами уже: {time_str}\n"
         f"К выплате чт: {user['payout']}₽\n"
         f"Заработано за всё время: {user['total_earned']}₽\n\n"
@@ -853,6 +882,7 @@ async def ref_page_navigate(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ============ ДРУГИЕ ЗАДАНИЯ ============
 @router.message(F.text == "🎯 Другие задания")
 async def other_tasks(message: Message):
     user_id = message.from_user.id
@@ -1055,6 +1085,7 @@ async def process_tiktok_screenshot_views_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото скриншота с просмотрами.")
 
 
+# ---------- СОТРУДНИЧЕСТВО ----------
 @router.message(F.text == "🤝 Сотрудничество с NC")
 async def collaboration_start(message: Message):
     if is_blocked(message.from_user.id):
