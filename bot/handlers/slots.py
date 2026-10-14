@@ -23,6 +23,8 @@ router = Router()
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
+MAX_SCREENSHOT_ATTEMPTS = 3
+
 
 async def _safe_send(bot, chat_id: int, text: str, **kwargs):
     try:
@@ -243,13 +245,11 @@ async def cancel_task(message: Message):
     if user_id not in slot_requests:
         await message.answer("❌ У вас нет активного задания.")
         return
-
     request = slot_requests[user_id]
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
 
-    # ВАЖНО: удаляем сессию СРАЗУ, чтобы повторный /cancel не сработал
     del slot_requests[user_id]
 
     if not remaining:
@@ -679,6 +679,11 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
     sheet_title = request.get("sheet_title")
     active_row = request.get("active_review_row")
     review_id = request.get("screenshot_review_id")
+    assigned_rows = request.get("assigned_rows", [])
+    write_username = request.get("write_username")
+    if not write_username:
+        u = get_user(user_id)
+        write_username = f"@{u['tg_username']}" if u and u.get("tg_username") else ""
 
     if not active_row or not sheet_title:
         return False
@@ -693,6 +698,7 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
         return False
 
+    # === ПРОВЕРКА / ВОССТАНОВЛЕНИЕ K ===
     try:
         check = await retry_api_call(sheet.get_all_values)
         if active_row - 1 >= len(check):
@@ -703,18 +709,49 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         j_val = r[mapping["status_col"]-1].strip().lower() if len(r) >= mapping["status_col"] else ""
         u = get_user(user_id)
         my_user = (u.get("tg_username") or "").lstrip("@").lower() if u else ""
-        if my_user and k_val != my_user:
-            logger.error(
-                f"🚫 _write_screenshot: ОТКАЗ — K='{k_val}' ≠ @{my_user}. "
-                f"Юзер {user_id} не владелец строки {active_row}"
-            )
-            return False
-        if j_val != "в работе":
-            logger.warning(f"⚠️ _write_screenshot: J='{j_val}' ≠ 'в работе' — но пишем всё равно")
+
+        # Строка в assigned_rows этой сессии?
+        row_belongs = active_row in assigned_rows
+
+        if not k_val:
+            # K пустое — запись слота ранее не прошла. Восстанавливаем.
+            if row_belongs:
+                logger.warning(
+                    f"🔧 _write_screenshot: K пустое, но строка {active_row} в assigned_rows "
+                    f"user {user_id} — восстанавливаю K={write_username}"
+                )
+                restore_batch = [
+                    {"range": f"{chr(64+mapping['status_col'])}{active_row}", "values": [["в работе"]]},
+                    {"range": f"{chr(64+mapping['executor_col'])}{active_row}", "values": [[write_username]]},
+                    {"range": f"{chr(64+mapping['flag_final_col'])}{active_row}", "values": [[0]]},
+                ]
+                try:
+                    await retry_api_call(sheet.batch_update, restore_batch)
+                    logger.info(f"✅ Восстановлен K={write_username} для строки {active_row}")
+                except Exception as e:
+                    logger.error(f"❌ Не удалось восстановить K: {e}")
+                    return False
+            else:
+                logger.error(
+                    f"🚫 _write_screenshot: K пустое, строка {active_row} НЕ в assigned_rows "
+                    f"user {user_id} — отказ"
+                )
+                return False
+        else:
+            # K не пустое — проверяем, что это именно наш юзер
+            if my_user and k_val != my_user:
+                logger.error(
+                    f"🚫 _write_screenshot: ОТКАЗ — K='{k_val}' ≠ @{my_user}. "
+                    f"Юзер {user_id} не владелец строки {active_row}"
+                )
+                return False
+            if j_val != "в работе":
+                logger.warning(f"⚠️ _write_screenshot: J='{j_val}' ≠ 'в работе' — но пишем всё равно")
     except Exception as e:
         logger.warning(f"⚠️ _write_screenshot: не удалось проверить K для строки {active_row}: {e}")
         return False
 
+    # === ЗАПИСЬ J="на модерации", I=333 ===
     col_j = chr(64 + mapping["status_col"])
     col_i = chr(64 + mapping["flag_final_col"])
     batch = [
@@ -753,11 +790,34 @@ async def flush_pending_writes(bot):
     logger.info(f"🔁 FLUSH: отложенных записей: {len(pending)}")
     for uid, req in pending:
         state = req.get("state")
+
+        # Инкремент попытки
+        attempts = req.get("_flush_attempts", 0) + 1
+        req["_flush_attempts"] = attempts
+
+        if attempts > MAX_SCREENSHOT_ATTEMPTS:
+            # Слишком много неудачных попыток — сбрасываем в slot_selection
+            logger.warning(f"🚨 FLUSH user {uid}: превышено {MAX_SCREENSHOT_ATTEMPTS} попыток — сбрасываю сессию")
+            req["state"] = "slot_selection"
+            req["_flush_attempts"] = 0
+            slot_requests[uid] = req
+            try:
+                await _safe_send(
+                    bot, uid,
+                    "⚠️ Не удалось записать данные в таблицу (технический сбой).\n\n"
+                    "Проверьте таблицу вручную — если ваши строки не отмечены, "
+                    "свяжитесь с /support."
+                )
+            except Exception:
+                pass
+            continue
+
         try:
             if state == "write_pending":
                 ok = await _write_slot_to_sheet(uid, bot)
                 if ok:
                     req["state"] = "slot_selection"
+                    req["_flush_attempts"] = 0
                     slot_requests[uid] = req
                     await _safe_send(
                         bot, uid,
@@ -778,6 +838,7 @@ async def flush_pending_writes(bot):
                     req["completed_reviews"] = completed
                     req["active_review_row"] = None
                     req["state"] = "slot_selection"
+                    req["_flush_attempts"] = 0
                     slot_requests[uid] = req
                     await _safe_send(
                         bot, uid,
@@ -797,6 +858,7 @@ async def _try_flush_one(user_id: int, bot):
         ok = await _write_slot_to_sheet(user_id, bot)
         if ok:
             req["state"] = "slot_selection"
+            req["_flush_attempts"] = 0
             slot_requests[user_id] = req
     elif state == "screenshot_pending":
         ok = await _write_screenshot_to_sheet(user_id, bot)
@@ -812,6 +874,7 @@ async def _try_flush_one(user_id: int, bot):
             req["completed_reviews"] = completed
             req["active_review_row"] = None
             req["state"] = "slot_selection"
+            req["_flush_attempts"] = 0
             slot_requests[user_id] = req
 
 
