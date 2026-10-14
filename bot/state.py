@@ -41,7 +41,10 @@ class _ActiveSlotsProxy(dict):
         save_active_slot(key, value)
 
     def __delitem__(self, key):
-        super().__delitem__(key)
+        try:
+            super().__delitem__(key)
+        except KeyError:
+            pass
         delete_active_slot(key)
 
     def items(self):
@@ -100,7 +103,10 @@ class _SlotRequestsProxy(dict):
         save_slot_request(key, value)
 
     def __delitem__(self, key):
-        super().__delitem__(key)
+        try:
+            super().__delitem__(key)
+        except KeyError:
+            pass
         delete_slot_request(key)
 
     def items(self):
