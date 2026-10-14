@@ -2,7 +2,7 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH
+from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH, SHEET_ID
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, remove_admin_role,
@@ -37,10 +37,6 @@ def find_user_by_target(target: str):
 
 
 def find_user_extended(target: str):
-    """
-    Расширенный поиск: user_id → tg_username → username → name.
-    Возвращает dict или None.
-    """
     if not target:
         return None
     t = target.strip()
@@ -51,28 +47,19 @@ def find_user_extended(target: str):
     if not clean:
         return None
 
-    # 1. get_user_by_username (tg_username или username)
     user = get_user_by_username(clean)
     if user:
         return user
 
-    # 2. Поиск по name (точное или частичное)
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM users WHERE LOWER(name) = ? LIMIT 1",
-                (clean,)
-            )
+            cur.execute("SELECT * FROM users WHERE LOWER(name) = ? LIMIT 1", (clean,))
             row = cur.fetchone()
             if row:
                 return dict(row)
-            # Частичное совпадение по name
-            cur.execute(
-                "SELECT * FROM users WHERE LOWER(name) LIKE ? LIMIT 1",
-                (f"%{clean}%",)
-            )
+            cur.execute("SELECT * FROM users WHERE LOWER(name) LIKE ? LIMIT 1", (f"%{clean}%",))
             row = cur.fetchone()
             if row:
                 return dict(row)
@@ -130,6 +117,7 @@ async def cmd_helpadm(message: Message):
             "ℹ️ /info <user> — профиль\n"
             "⚠️ /warn <user> <причина> — предупреждение\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
+            "🎯 /unslot <user> — снять активный слот\n"
         )
 
     if is_ga(user_id):
@@ -155,6 +143,7 @@ async def cmd_helpadm(message: Message):
             "🚫 /remove_post <user> — снять должность\n"
             "📋 /list_posts [post] — список сотрудников\n"
             "🏆 /infopromo <user> — карточка промоутера\n"
+            "🎯 /unslot <user> — снять активный слот\n"
         )
 
     if is_admin_nc(user_id) and not is_ga(user_id):
@@ -171,6 +160,7 @@ async def cmd_helpadm(message: Message):
             "📊 /set_limit <platform> <N> — общий лимит\n"
             "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
             "📋 /list_posts [post] — список сотрудников\n"
+            "🎯 /unslot <user> — снять активный слот\n"
         )
 
     if is_stmoderator(user_id) and not is_admin_nc(user_id):
@@ -289,7 +279,6 @@ async def warn_user(message: Message):
     user = find_user_extended(target_raw)
 
     if not user:
-        # Диагностика — покажем похожих из БД
         hint = ""
         try:
             with sqlite3.connect(DB_PATH) as conn:
@@ -1103,3 +1092,123 @@ async def cmd_user_limit(message: Message):
         parse_mode="HTML"
     )
     log_action(message, f"Установлен персональный лимит {limit} '{platform}' для {uid}")
+
+
+# ============ /unslot — снять активный слот с юзера ============
+@router.message(Command("unslot"))
+async def cmd_unslot(message: Message):
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ Команда доступна только владельцу, ГА и Админу NC.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/unslot &lt;@username или user_id&gt;</code>\n\n"
+            "Снимает активный слот с пользователя и очищает строки в таблице:\n"
+            "• J → «не принят в работу»\n"
+            "• K → пусто\n"
+            "• I, O, P, Q → 0\n"
+            "• S, T → пусто",
+            parse_mode="HTML"
+        )
+        return
+
+    target = parts[1]
+    user = find_user_extended(target)
+    if not user:
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
+        return
+
+    uid = user["user_id"]
+
+    from bot.state import slot_requests
+    if uid not in slot_requests:
+        await message.answer(f"❌ У @{user.get('tg_username') or uid} нет активного слота.")
+        return
+
+    req = slot_requests[uid]
+    platform = req.get("platform", "?")
+    assigned_rows = req.get("assigned_rows", [])
+    sheet_title = req.get("sheet_title")
+    mapping = req.get("mapping")
+    completed = len(req.get("completed_reviews", []))
+    state = req.get("state")
+
+    cleaned_ok = False
+    if sheet_title and assigned_rows:
+        try:
+            from bot.google_sheets import get_client, retry_api_call
+            from bot.helpers import get_column_mapping
+
+            if not mapping or "status_col" not in mapping:
+                mapping = get_column_mapping(platform)
+
+            client = get_client()
+            if client:
+                spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+                sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+
+                batch = []
+                for row_idx in assigned_rows:
+                    for key, val in [
+                        ("status_col", "не принят в работу"),
+                        ("executor_col", ""),
+                        ("flag_final_col", 0),
+                        ("flag_third_col", 0),
+                        ("flag_second_col", 0),
+                        ("flag_first_col", 0),
+                        ("id_col", ""),
+                        ("order_col", ""),
+                    ]:
+                        if key not in mapping:
+                            continue
+                        col = chr(64 + mapping[key])
+                        batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
+
+                for i in range(0, len(batch), 20):
+                    await retry_api_call(sheet.batch_update, batch[i:i+20])
+                    await asyncio.sleep(0.4)
+                cleaned_ok = True
+                logger.info(f"✅ /unslot: {uid} — очищено {len(assigned_rows)} строк на '{sheet_title}'")
+        except Exception as e:
+            logger.error(f"❌ /unslot: ошибка очистки таблицы: {e}")
+    else:
+        cleaned_ok = True
+
+    try:
+        del slot_requests[uid]
+    except KeyError:
+        pass
+
+    try:
+        if sheet_title and assigned_rows:
+            msg = (
+                f"⚠️ <b>Ваш слот снят администратором.</b>\n\n"
+                f"📋 Платформа: {platform}\n"
+                f"📊 Строк было: {len(assigned_rows)}\n"
+                f"✅ Выполнено: {completed}\n\n"
+                f"Если это ошибка — обратитесь в /support."
+            )
+        else:
+            msg = (
+                f"⚠️ <b>Ваш активный слот снят администратором.</b>\n\n"
+                f"📋 Платформа: {platform}\n\n"
+                f"Если это ошибка — обратитесь в /support."
+            )
+        await message.bot.send_message(uid, msg, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"⚠️ /unslot: не удалось уведомить user {uid}: {e}")
+
+    await message.answer(
+        f"✅ <b>Слот снят</b>\n\n"
+        f"👤 @{user.get('tg_username') or uid}\n"
+        f"📋 Платформа: {platform}\n"
+        f"📊 Строк в сессии: {len(assigned_rows)}\n"
+        f"✅ Выполнено: {completed}\n"
+        f"🧹 Таблица: {'✅ очищена' if cleaned_ok else '⚠️ ошибка очистки'}\n"
+        f"🔧 Состояние было: {state}",
+        parse_mode="HTML"
+    )
+    log_action(message, f"/unslot: снят слот с {uid} ({platform}), строк: {len(assigned_rows)}, выполнено: {completed}")
