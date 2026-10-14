@@ -48,19 +48,19 @@ PIN_REMINDER = "📸 Инструкция по скриншотам — закр
 PLATFORM_TEMPLATES = {
     "яндекс": {
         "instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "яндекс негатив": {
         "instruction": "🔥 Яндекс Негатив\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "google": {
         "instruction": "🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "2гис": {
         "instruction": "🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "авито": {
         "instruction": (
@@ -77,7 +77,7 @@ PLATFORM_TEMPLATES = {
             "   – Нельзя: копировать текст, делать скриншоты.\n"
             "   – Дополнительно: оставить отзыв через «ждут оценки», если получится."
         ),
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "вк": {
         "instruction": (
@@ -87,23 +87,23 @@ PLATFORM_TEMPLATES = {
             "ДЛЯ 90% прохода:\n"
             "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
         ),
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "отзовик": {
         "instruction": "🔥 Отзовик\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "докдок": {
         "instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "докту": {
         "instruction": "🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "32топ": {
         "instruction": "🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "zoon": {
         "instruction": (
@@ -111,11 +111,11 @@ PLATFORM_TEMPLATES = {
             "1. Переходим по ссылке, прокладываем маршрут и просматриваем всю информацию.\n"
             "2. Через 30 минут оставляем отзыв."
         ),
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "яу": {
         "instruction": "🔥 Яндекс Услуги\n\n1. Переходим по ссылке.\n2. Оставляем отзыв.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "яб": {
         "instruction": (
@@ -124,7 +124,7 @@ PLATFORM_TEMPLATES = {
             "2. Открывается сайт компании — в нижнем или верхнем правом углу жмём 3 точки.\n"
             "3. Жмём на количество отзывов и оставляем отзыв с текстом."
         ),
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "h": {
         "instruction": (
@@ -133,18 +133,12 @@ PLATFORM_TEMPLATES = {
             "2. Просматриваем фото/видео, лайкаем хорошие отзывы.\n"
             "3. Оставить отзыв."
         ),
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
     "yell": {
         "instruction": "🔥 Yell\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "extra_text": SNIPPET_REQ, "warning": WARNING
+        "warning": WARNING
     },
-}
-
-DEFAULT_MAPPING = {
-    "status_col": 10, "executor_col": 11,
-    "flag_third_col": 15, "flag_second_col": 16, "flag_first_col": 17,
-    "id_col": 19, "order_col": 20,
 }
 
 
@@ -259,7 +253,6 @@ async def cancel_task(message: Message):
             sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             batch = []
 
-            # Возвращаем НЕВЫПОЛНЕННЫЕ в свободные + СБРАСЫВАЕМ I, O, P, Q, S, T
             for row_idx in remaining:
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
                                  ("flag_final_col", 0),
@@ -269,8 +262,6 @@ async def cancel_task(message: Message):
                         continue
                     col = chr(64 + mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
-
-            # ВЫПОЛНЕННЫЕ НЕ ТРОГАЕМ — они уже "на модерации" и пойдут по полной цене.
 
             for i in range(0, len(batch), 20):
                 await retry_api_call(sheet.batch_update, batch[i:i+20])
@@ -391,7 +382,7 @@ async def cmd_resume(message: Message):
     )
 
 
-# ============ ВВОД КОЛИЧЕСТВА (catch-all, НЕ для команд) ============
+# ============ ВВОД КОЛИЧЕСТВА ============
 @router.message(F.text, ~F.text.startswith("/"))
 async def handle_quantity_input(message: Message):
     user_id = message.from_user.id
@@ -618,7 +609,6 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
         batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
         batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
         batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
-        # ВАЖНО: сбрасываем I=0 принудительно (защита от старых 333/222)
         batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
 
     try:
@@ -689,7 +679,6 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
         return False
 
-    # === ЗАЩИТА: проверяем, что в K стоит именно @username юзера ===
     try:
         check = await retry_api_call(sheet.get_all_values)
         if active_row - 1 >= len(check):
@@ -1098,6 +1087,14 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     extra_ids = []
     logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping.text_col={mapping.get('text_col')}")
 
+    # ============================================================
+    # ЛОГИКА ПОРЯДКА:
+    # 1) Сначала редактируем СТАРОЕ сообщение (кнопки номеров) в первый
+    #    промежуточный текст (ТЗ / пример / SNIPPET).
+    # 2) Отправляем остальные промежуточные по одному.
+    # 3) В САМОМ КОНЦЕ — основное сообщение (врач/отзыв/важно) с кнопкой.
+    # ============================================================
+
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
         doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
@@ -1113,11 +1110,39 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
+        # Сначала — примеры (ТЗ, документ, истории) + требования к скрину
+        mid_messages = []
+        if tz_link:
+            mid_messages.append(f"📄 <b>ТЗ</b>\n\n{tz_link}")
+        if doc_link:
+            mid_messages.append(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}")
+        if history:
+            mid_messages.append(f"1️⃣ <b>История</b>\n\n{history}")
+        if like:
+            mid_messages.append(f"2️⃣ <b>Больше понравилось</b>\n\n{like}")
+        if minus:
+            mid_messages.append(f"3️⃣ <b>Не понравилось</b>\n\n{minus}")
+        mid_messages.append(SNIPPET_REQ)
+
+        # 1. Первое промежуточное — редактируем старое
+        try:
+            await message.edit_text(mid_messages[0], parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Не удалось отредактировать: {e}")
+            sent = await message.answer(mid_messages[0], parse_mode="HTML")
+            extra_ids.append(sent.message_id)
+
+        # 2. Остальные промежуточные
+        for t in mid_messages[1:]:
+            sent = await message.answer(t, parse_mode="HTML")
+            extra_ids.append(sent.message_id)
+
+        # 3. ОСНОВНОЕ — последним, с кнопкой
         info_msg = (
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
             f"Направление: {doctor_direction}\n\n"
-            f"<b>Информация по отзыву:</b>\n"
+            f"<b>📋 Информация по отзыву:</b>\n"
             f"Пол: {gender_text}\n"
             f"Кол-во звезд: {stars}\n"
             f"Платформа: {platform_name}\n"
@@ -1127,27 +1152,12 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"Если нет даты посещения, укажите в течение последних 7 дней.\n\n"
             f"{PIN_REMINDER}"
         )
-        await message.edit_text(info_msg, parse_mode="HTML",
-            reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
-
-        if tz_link:
-            sent = await message.answer(f"📄 <b>ТЗ</b>\n\n{tz_link}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-        if doc_link:
-            sent = await message.answer(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-        if history:
-            sent = await message.answer(f"1️⃣ <b>История</b>\n\n{history}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-        if like:
-            sent = await message.answer(f"2️⃣ <b>Больше понравилось</b>\n\n{like}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-        if minus:
-            sent = await message.answer(f"3️⃣ <b>Не понравилось</b>\n\n{minus}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-
-        # Требования к скриншоту — внизу
-        sent = await message.answer(SNIPPET_REQ, parse_mode="HTML")
+        sent = await message.answer(
+            info_msg, parse_mode="HTML",
+            reply_markup=InlineKeyboardBuilder().button(
+                text="🔙 Вернуться к слоту", callback_data="back_to_slot"
+            ).as_markup()
+        )
         extra_ids.append(sent.message_id)
 
     else:
@@ -1178,7 +1188,53 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
-        # Основное сообщение — БЕЗ SNIPPET_REQ (требования уйдут вниз)
+        # Промежуточные сообщения: пример и требования
+        mid_messages = []
+        mid_messages.append(SNIPPET_REQ)  # 📌 Требования к скриншоту — вверху
+        if link:
+            mid_messages.append(link)
+        if text:
+            mid_messages.append(f"📝 <b>Текст отзыва:</b>\n\n{text}")
+        else:
+            mid_messages.append("⚠️ <b>Текст отзыва не найден.</b>")
+
+        if gender_kind == "ж":
+            mid_messages.append(
+                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
+                "Этот текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.\n\n"
+                "Если отзыв напишет парень или с мужского имени — "
+                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
+                "Пожалуйста, будьте внимательны!"
+            )
+        elif gender_kind == "м":
+            mid_messages.append(
+                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
+                "Этот текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.\n\n"
+                "Если отзыв напишет девушка или с женского имени — "
+                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
+                "Пожалуйста, будьте внимательны!"
+            )
+
+        if photo_link:
+            mid_messages.append(
+                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n{photo_link}\n\n"
+                f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>"
+            )
+
+        # 1. Первое промежуточное — редактируем старое
+        try:
+            await message.edit_text(mid_messages[0], parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Не удалось отредактировать: {e}")
+            sent = await message.answer(mid_messages[0], parse_mode="HTML")
+            extra_ids.append(sent.message_id)
+
+        # 2. Остальные промежуточные
+        for t in mid_messages[1:]:
+            sent = await message.answer(t, parse_mode="HTML")
+            extra_ids.append(sent.message_id)
+
+        # 3. ОСНОВНОЕ — последним, с кнопкой
         final_msg = (
             f"{instruction_text}\n\n"
             f"⭐ Количество звёзд: {stars}\n"
@@ -1189,52 +1245,12 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             "Если хотите отказаться от оставшихся заданий — /cancel.\n\n"
             f"{warning}"
         )
-
-        await message.edit_text(final_msg, parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardBuilder().button(text="🔙 Вернуться к слоту", callback_data="back_to_slot").as_markup())
-
-        if link:
-            sent = await message.answer(link)
-            extra_ids.append(sent.message_id)
-
-        if text:
-            sent = await message.answer(f"📝 <b>Текст отзыва:</b>\n\n{text}", parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-        else:
-            sent = await message.answer("⚠️ <b>Текст отзыва не найден.</b>")
-            extra_ids.append(sent.message_id)
-
-        if gender_kind == "ж":
-            sent = await message.answer(
-                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
-                "Этот текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.\n\n"
-                "Если отзыв напишет парень или с мужского имени — "
-                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
-                "Пожалуйста, будьте внимательны!",
-                parse_mode="HTML"
-            )
-            extra_ids.append(sent.message_id)
-        elif gender_kind == "м":
-            sent = await message.answer(
-                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
-                "Этот текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.\n\n"
-                "Если отзыв напишет девушка или с женского имени — "
-                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
-                "Пожалуйста, будьте внимательны!",
-                parse_mode="HTML"
-            )
-            extra_ids.append(sent.message_id)
-
-        if photo_link:
-            sent = await message.answer(
-                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n{photo_link}\n\n"
-                f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>",
-                parse_mode="HTML"
-            )
-            extra_ids.append(sent.message_id)
-
-        # Требования к скриншоту — ВНИЗУ, после фото
-        sent = await message.answer(SNIPPET_REQ, parse_mode="HTML")
+        sent = await message.answer(
+            final_msg, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardBuilder().button(
+                text="🔙 Вернуться к слоту", callback_data="back_to_slot"
+            ).as_markup()
+        )
         extra_ids.append(sent.message_id)
 
     request["extra_messages"] = extra_ids
