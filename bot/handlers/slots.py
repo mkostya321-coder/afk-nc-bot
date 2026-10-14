@@ -572,7 +572,7 @@ async def handle_quantity_input(message: Message):
         slot_requests[user_id] = request
 
 
-# ============ ЗАПИСЬ СЛОТА (с принудительным I=0) ============
+# ============ ЗАПИСЬ СЛОТА ============
 async def _write_slot_to_sheet(user_id: int, bot) -> bool:
     if user_id not in slot_requests:
         return True
@@ -655,7 +655,7 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
         return False
 
 
-# ============ ЗАПИСЬ СКРИНШОТА (с проверкой K == @username) ============
+# ============ ЗАПИСЬ СКРИНШОТА ============
 async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
     if user_id not in slot_requests:
         return True
@@ -1087,14 +1087,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     extra_ids = []
     logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping.text_col={mapping.get('text_col')}")
 
-    # ============================================================
-    # ЛОГИКА ПОРЯДКА:
-    # 1) Сначала редактируем СТАРОЕ сообщение (кнопки номеров) в первый
-    #    промежуточный текст (ТЗ / пример / SNIPPET).
-    # 2) Отправляем остальные промежуточные по одному.
-    # 3) В САМОМ КОНЦЕ — основное сообщение (врач/отзыв/важно) с кнопкой.
-    # ============================================================
-
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
         doctor_name = row[mapping["doctor_name_col"]-1] if len(row) >= mapping["doctor_name_col"] else ""
@@ -1110,8 +1102,16 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
-        # Сначала — примеры (ТЗ, документ, истории) + требования к скрину
-        mid_messages = []
+        # === ПОРЯДОК ===
+        # 1) 📌 SNIPPET_REQ
+        # 2) ТЗ
+        # 3) Документ
+        # 4) История
+        # 5) Понравилось
+        # 6) Не понравилось
+        # 7) 👨‍⚕️ Врач + инфо по отзыву + важно + PIN — с кнопкой
+
+        mid_messages = [SNIPPET_REQ]
         if tz_link:
             mid_messages.append(f"📄 <b>ТЗ</b>\n\n{tz_link}")
         if doc_link:
@@ -1122,9 +1122,8 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             mid_messages.append(f"2️⃣ <b>Больше понравилось</b>\n\n{like}")
         if minus:
             mid_messages.append(f"3️⃣ <b>Не понравилось</b>\n\n{minus}")
-        mid_messages.append(SNIPPET_REQ)
 
-        # 1. Первое промежуточное — редактируем старое
+        # 1. Первое промежуточное — редактируем старое сообщение (с кнопками номеров)
         try:
             await message.edit_text(mid_messages[0], parse_mode="HTML")
         except Exception as e:
@@ -1137,7 +1136,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(t, parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 3. ОСНОВНОЕ — последним, с кнопкой
+        # 3. ОСНОВНОЕ — врач + инфо по отзыву + важно + закреп, с кнопкой
         info_msg = (
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
@@ -1188,9 +1187,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
-        # Промежуточные сообщения: пример и требования
-        mid_messages = []
-        mid_messages.append(SNIPPET_REQ)  # 📌 Требования к скриншоту — вверху
+        mid_messages = [SNIPPET_REQ]
         if link:
             mid_messages.append(link)
         if text:
@@ -1234,7 +1231,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(t, parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 3. ОСНОВНОЕ — последним, с кнопкой
+        # 3. ОСНОВНОЕ — с кнопкой внизу
         final_msg = (
             f"{instruction_text}\n\n"
             f"⭐ Количество звёзд: {stars}\n"
