@@ -187,7 +187,11 @@ async def unpin_instruction(user_id: int, bot):
         await bot.unpin_all_chat_messages(chat_id=user_id)
         logger.info(f"📌 Инструкция откреплена у {user_id}")
     except Exception as e:
-        logger.warning(f"⚠️ Не удалось открепить: {e}")
+        err = str(e).lower()
+        if "flood control" in err or "too many requests" in err:
+            logger.debug(f"📌 Открепление отложено из-за лимита у {user_id}")
+        else:
+            logger.warning(f"⚠️ Не удалось открепить: {e}")
 
 
 async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int = None):
@@ -237,8 +241,8 @@ async def cancel_task(message: Message):
     remaining = [r for r, n in ordered if n not in completed]
     if not remaining:
         await delete_session_messages(user_id, message.bot, request, message.chat.id)
-        await message.answer("✅ У вас нет невыполненных отзывов.")
         del slot_requests[user_id]
+        await message.answer("✅ У вас нет невыполненных отзывов.")
         return
 
     platform = request.get("platform", "яндекс")
@@ -1102,15 +1106,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
-        # === ПОРЯДОК ===
-        # 1) 📌 SNIPPET_REQ
-        # 2) ТЗ
-        # 3) Документ
-        # 4) История
-        # 5) Понравилось
-        # 6) Не понравилось
-        # 7) 👨‍⚕️ Врач + инфо по отзыву + важно + PIN — с кнопкой
-
         mid_messages = [SNIPPET_REQ]
         if tz_link:
             mid_messages.append(f"📄 <b>ТЗ</b>\n\n{tz_link}")
@@ -1123,7 +1118,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         if minus:
             mid_messages.append(f"3️⃣ <b>Не понравилось</b>\n\n{minus}")
 
-        # 1. Первое промежуточное — редактируем старое сообщение (с кнопками номеров)
         try:
             await message.edit_text(mid_messages[0], parse_mode="HTML")
         except Exception as e:
@@ -1131,12 +1125,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(mid_messages[0], parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 2. Остальные промежуточные
         for t in mid_messages[1:]:
             sent = await message.answer(t, parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 3. ОСНОВНОЕ — врач + инфо по отзыву + важно + закреп, с кнопкой
         info_msg = (
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
@@ -1218,7 +1210,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
                 f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>"
             )
 
-        # 1. Первое промежуточное — редактируем старое
         try:
             await message.edit_text(mid_messages[0], parse_mode="HTML")
         except Exception as e:
@@ -1226,12 +1217,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(mid_messages[0], parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 2. Остальные промежуточные
         for t in mid_messages[1:]:
             sent = await message.answer(t, parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
-        # 3. ОСНОВНОЕ — с кнопкой внизу
         final_msg = (
             f"{instruction_text}\n\n"
             f"⭐ Количество звёзд: {stars}\n"
