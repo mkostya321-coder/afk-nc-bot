@@ -1,4 +1,4 @@
-import os, sqlite3, logging, asyncio, secrets
+import os, sqlite3, logging, asyncio, secrets, time
 from datetime import datetime, timedelta, date, timezone
 from collections import defaultdict
 import pytz, gspread
@@ -20,6 +20,10 @@ from bot.helpers import (
 
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
+
+# ============ КЭШ ПУСТЫХ ЛИСТОВ ============
+_empty_sheets_cache = {}  # sheet_name -> timestamp последней проверки
+EMPTY_SHEETS_TTL = 600     # 10 минут — не читаем пустой лист повторно
 
 BLOCKED_STATUSES = (
     "в работе",
@@ -285,6 +289,12 @@ async def monitor_schedule(bot):
                     logger.info(f"⏭️ Лист '{sheet_name}' — платформа не определена")
                     continue
 
+                # Пропускаем лист, если был пуст в последние 10 минут
+                last_empty = _empty_sheets_cache.get(sheet_name)
+                if last_empty and (time.time() - last_empty) < EMPTY_SHEETS_TTL:
+                    logger.debug(f"⏭️ '{sheet_name}' в кэше пустых — пропускаю")
+                    continue
+
                 try:
                     records = await retry_api_call(sheet.get_all_values)
                 except Exception as e:
@@ -295,9 +305,12 @@ async def monitor_schedule(bot):
                 mapping = get_column_mapping(platform, headers_row)
 
                 if not records or len(records) < 2:
-                    logger.info(f"ℹ️ '{sheet_name}' ({platform}): пусто / только заголовок")
+                    _empty_sheets_cache[sheet_name] = time.time()
+                    logger.info(f"ℹ️ '{sheet_name}' ({platform}): пусто / только заголовок (кэширую на 10 мин)")
                     await asyncio.sleep(0.3)
                     continue
+                else:
+                    _empty_sheets_cache.pop(sheet_name, None)
 
                 to_publish = []
                 stats = {
@@ -701,10 +714,12 @@ async def monitor_schedule(bot):
 
         except Exception as e:
             logger.error(f"❌ Ошибка планировщика: {e}", exc_info=True)
-        await asyncio.sleep(180)
+        # ОПТИМИЗАЦИЯ: 300 сек вместо 180 — снижает нагрузку на CPU на ~40%
+        await asyncio.sleep(300)
 
 
 async def _check_republish(bot, client, now):
+    """Оптимизированная версия: один раз читаем каждый нужный лист, потом обрабатываем слоты."""
     spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
     expired_slots = []
 
@@ -722,6 +737,32 @@ async def _check_republish(bot, client, now):
             f"attempt={_slot.get('attempt')} rows={len(_slot.get('row_ids', []))} age={_age}"
         )
 
+    # ===== 1. Собираем уникальные листы, которые надо перечитать =====
+    sheets_to_read = set()
+    for msg_id, slot in list(active_slots.items()):
+        if slot.get("attempt", 1) >= 4:
+            continue
+        publish_time = slot.get("publish_time")
+        if not publish_time:
+            continue
+        if (now - publish_time).total_seconds() < 7200:
+            continue
+        st = slot.get("sheet_title")
+        if st:
+            sheets_to_read.add(st)
+
+    # ===== 2. Читаем каждый лист ОДИН раз =====
+    sheet_data = {}
+    for sheet_title in sheets_to_read:
+        try:
+            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
+            records = await retry_api_call(sheet.get_all_values)
+            sheet_data[sheet_title] = records
+        except Exception as e:
+            logger.warning(f"⚠️ _check_republish: не читается '{sheet_title}': {e}")
+            sheet_data[sheet_title] = []
+
+    # ===== 3. Перебираем слоты, используя готовые данные =====
     for msg_id, slot in list(active_slots.items()):
         if slot.get("attempt", 1) >= 4:
             continue
@@ -733,23 +774,17 @@ async def _check_republish(bot, client, now):
 
         platform = slot.get("platform", "яндекс")
         sheet_title = slot.get("sheet_title")
-        slot_mapping = slot.get("mapping")
-        if not slot_mapping or "status_col" not in slot_mapping:
-            slot_mapping = get_column_mapping(platform)
-            slot["mapping"] = slot_mapping
-            active_slots[msg_id] = slot
-            logger.warning(f"⚠️ mapping восстановлен для слота {msg_id}, платформа {platform}")
-
-        try:
-            sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
-            records = await retry_api_call(sheet.get_all_values)
-        except:
+        records = sheet_data.get(sheet_title, [])
+        if not records:
             continue
 
-        if records:
+        slot_mapping = slot.get("mapping")
+        if not slot_mapping or "status_col" not in slot_mapping:
+            slot_mapping = get_column_mapping(platform, records[0] if records else None)
+        else:
             slot_mapping = get_column_mapping(platform, records[0])
-            slot["mapping"] = slot_mapping
-            active_slots[msg_id] = slot
+        slot["mapping"] = slot_mapping
+        active_slots[msg_id] = slot
 
         available = []
         for row_idx in slot["row_ids"]:
@@ -772,6 +807,7 @@ async def _check_republish(bot, client, now):
         if available:
             expired_slots.append((msg_id, slot, available, slot_mapping))
 
+    # ===== 4. Переопубликовываем =====
     for msg_id, slot, available_rows, slot_mapping in expired_slots:
         new_attempt = slot["attempt"] + 1
         logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt}, строк {len(available_rows)})")
@@ -783,7 +819,10 @@ async def _check_republish(bot, client, now):
             )
         except:
             pass
-        del active_slots[msg_id]
+        try:
+            del active_slots[msg_id]
+        except KeyError:
+            pass
 
         col = None
         if new_attempt == 2:
@@ -1117,7 +1156,11 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 await bot.delete_message(chat_id=user_id, message_id=instr_id)
                 logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
             except Exception as e:
-                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+                err = str(e).lower()
+                if "message to delete not found" in err:
+                    logger.debug(f"🗑️ user {user_id}: инструкция уже удалена")
+                else:
+                    logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
         try:
             await bot.unpin_all_chat_messages(chat_id=user_id)
         except Exception as e:
