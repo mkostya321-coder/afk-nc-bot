@@ -90,10 +90,6 @@ def get_client():
 
 
 async def retry_api_call(func, *args, max_attempts=20, **kwargs):
-    """
-    Обёртка над gspread-вызовами.
-    До 20 попыток при 429 — терпит длительные перегрузки Google.
-    """
     for attempt in range(1, max_attempts + 1):
         try:
             return await asyncio.to_thread(func, *args, **kwargs)
@@ -268,7 +264,7 @@ async def monitor_schedule(bot):
                 await asyncio.sleep(60)
                 continue
 
-            # ==== FLUSH отложенных записей перед обходом ====
+            # ==== FLUSH отложенных записей ====
             try:
                 from bot.handlers.slots import flush_pending_writes
                 await flush_pending_writes(bot)
@@ -898,9 +894,13 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if q_val != "1":
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
 
+            # «на модерации» → «на модерации с ОПЗ» (устойчиво к пробелам)
             if _is_status(j_val, "на модерации") and not _is_status(j_val, "на модерации с опз"):
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
+
             elif _is_status(j_val, "в работе"):
+                # J → "не принят в работу", K → "", I → 222
+                batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                 if no_show:
                     cells_to_red.append((row_idx, mapping["executor_col"]))
                 else:
@@ -1086,16 +1086,19 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if not executor:
                 continue
 
+            col_j = chr(64 + mapping_s["status_col"])
             col_i = chr(64 + mapping_s["flag_final_col"])
             col_q = chr(64 + mapping_s["flag_first_col"])
             q_val = row[mapping_s["flag_first_col"]-1].strip() if len(row) >= mapping_s["flag_first_col"] else ""
             if q_val != "1":
                 batch_s.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+            # J → "не принят в работу", I → 222
+            batch_s.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
             batch_s.append({"range": f"{col_i}{row_idx}", "values": [[222]]})
             cells_s.append((row_idx, mapping_s["flag_final_col"]))
             cells_red_s.append((row_idx, mapping_s["executor_col"]))
             orphans += 1
-            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', K красный")
+            logger.info(f"🧹 Сирота '{sheet_name_s}' строка {row_idx}: был '{executor}', J сброшен, K красный")
 
         if batch_s:
             try:
