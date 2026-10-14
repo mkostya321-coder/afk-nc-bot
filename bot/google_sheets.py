@@ -264,7 +264,6 @@ async def monitor_schedule(bot):
                 await asyncio.sleep(60)
                 continue
 
-            # ==== FLUSH отложенных записей ====
             try:
                 from bot.handlers.slots import flush_pending_writes
                 await flush_pending_writes(bot)
@@ -894,12 +893,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if q_val != "1":
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
 
-            # «на модерации» → «на модерации с ОПЗ» (устойчиво к пробелам)
             if _is_status(j_val, "на модерации") and not _is_status(j_val, "на модерации с опз"):
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
-
             elif _is_status(j_val, "в работе"):
-                # J → "не принят в работу", K → "", I → 222
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                 if no_show:
                     cells_to_red.append((row_idx, mapping["executor_col"]))
@@ -1092,7 +1088,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             q_val = row[mapping_s["flag_first_col"]-1].strip() if len(row) >= mapping_s["flag_first_col"] else ""
             if q_val != "1":
                 batch_s.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
-            # J → "не принят в работу", I → 222
             batch_s.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
             batch_s.append({"range": f"{col_i}{row_idx}", "values": [[222]]})
             cells_s.append((row_idx, mapping_s["flag_final_col"]))
@@ -1312,7 +1307,6 @@ async def update_stats_from_sheet_once(bot=None):
             except Exception as e:
                 logger.error(f"❌ E: {e}")
 
-        # Финальный пересчёт payout с OPZ
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -1398,7 +1392,7 @@ async def mark_as_paid_in_table(user_ids: list):
                 if e_val != "1":
                     continue
                 status = _norm(row[mapping["status_col"]-1])
-                if status not in ("опубликован", "опубликовано"):
+                if status not in ("опубликован", "опубликовано", "опубликован опз", "опубликовано опз"):
                     continue
                 executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
                 if not executor:
