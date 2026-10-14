@@ -118,6 +118,7 @@ async def cmd_helpadm(message: Message):
             "⚠️ /warn <user> <причина> — предупреждение\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
             "🎯 /unslot <user> — снять активный слот\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I\n"
         )
 
     if is_ga(user_id):
@@ -144,6 +145,7 @@ async def cmd_helpadm(message: Message):
             "📋 /list_posts [post] — список сотрудников\n"
             "🏆 /infopromo <user> — карточка промоутера\n"
             "🎯 /unslot <user> — снять активный слот\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I\n"
         )
 
     if is_admin_nc(user_id) and not is_ga(user_id):
@@ -161,6 +163,7 @@ async def cmd_helpadm(message: Message):
             "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
             "📋 /list_posts [post] — список сотрудников\n"
             "🎯 /unslot <user> — снять активный слот\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I\n"
         )
 
     if is_stmoderator(user_id) and not is_admin_nc(user_id):
@@ -824,7 +827,7 @@ async def cmd_payout_report(message: Message):
             try:
                 from bot.google_sheets import mark_as_paid_in_table
                 await mark_as_paid_in_table(user_ids)
-                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' отмечены как 'В отчете ИСПЛ'.")
+                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' (в т.ч. ОПЗ) отмечены как 'В отчете ИСПЛ'.")
             except Exception as e:
                 logger.error(f"Ошибка обновления статуса в таблице: {e}")
                 await message.answer(f"⚠️ Ошибка при обновлении статуса: {e}")
@@ -1212,3 +1215,90 @@ async def cmd_unslot(message: Message):
         parse_mode="HTML"
     )
     log_action(message, f"/unslot: снят слот с {uid} ({platform}), строк: {len(assigned_rows)}, выполнено: {completed}")
+
+
+# ============ /cleanflags — сброс неправильных флагов I ============
+@router.message(Command("cleanflags"))
+async def cmd_cleanflags(message: Message):
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ Команда доступна только владельцу, ГА и Админу NC.")
+        return
+
+    await message.answer("⏳ Прохожу по всем листам, ищу неправильные флаги I...")
+
+    try:
+        from bot.google_sheets import get_client, retry_api_call
+        from bot.helpers import platform_from_sheet_name, get_column_mapping
+
+        client = get_client()
+        if not client:
+            await message.answer("❌ Нет доступа к Google Sheets.")
+            return
+
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+
+        VALID_FOR_333 = (
+            "на модерации", "на модерации с опз",
+            "опубликован", "опубликовано", "опубликован опз", "опубликовано опз",
+            "удален", "в отчете испол",
+        )
+
+        total_cleaned = 0
+        details = []
+
+        for sheet in worksheets:
+            sheet_name = sheet.title
+            platform = platform_from_sheet_name(sheet_name)
+            if not platform:
+                continue
+
+            try:
+                records = await retry_api_call(sheet.get_all_values)
+            except Exception as e:
+                logger.warning(f"cleanflags: не читается '{sheet_name}': {e}")
+                continue
+            if len(records) < 2:
+                continue
+
+            headers_row = records[0] if records else None
+            mapping = get_column_mapping(platform, headers_row)
+            col_i = chr(64 + mapping["flag_final_col"])
+
+            batch = []
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(mapping["status_col"], mapping["flag_final_col"]):
+                    continue
+                i_val = (row[mapping["flag_final_col"]-1] or "").strip()
+                j_val = (row[mapping["status_col"]-1] or "").strip().lower() if len(row) >= mapping["status_col"] else ""
+
+                if i_val in ("", "0"):
+                    continue
+
+                if i_val == "333":
+                    if not any(j_val.startswith(s) for s in VALID_FOR_333):
+                        batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
+                        logger.info(f"🧹 cleanflags '{sheet_name}' row {row_idx}: I=333 → 0 (J='{j_val}')")
+
+            if batch:
+                try:
+                    for i in range(0, len(batch), 50):
+                        await retry_api_call(sheet.batch_update, batch[i:i+50])
+                        await asyncio.sleep(0.6)
+                    total_cleaned += len(batch)
+                    details.append(f"• {sheet_name}: сброшено {len(batch)}")
+                except Exception as e:
+                    logger.error(f"cleanflags '{sheet_name}': {e}")
+                    details.append(f"• {sheet_name}: ⚠️ ошибка: {e}")
+
+        if total_cleaned == 0:
+            await message.answer("✅ Всё чисто — неправильных флагов I не найдено.")
+        else:
+            text = f"✅ <b>Готово</b>\n\nСброшено флагов: <b>{total_cleaned}</b>\n\n" + "\n".join(details)
+            await message.answer(text, parse_mode="HTML")
+
+        log_action(message, f"/cleanflags: сброшено {total_cleaned} неправильных I")
+
+    except Exception as e:
+        logger.error(f"cleanflags: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
