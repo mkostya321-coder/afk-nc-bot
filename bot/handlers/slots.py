@@ -152,6 +152,29 @@ def get_safe_mapping(request: dict, platform: str) -> dict:
     return mapping
 
 
+def _build_review_buttons(user_id: int):
+    request = slot_requests[user_id]
+    ordered = request.get("ordered_reviews", [])
+    completed = request.get("completed_reviews", [])
+    platform = request.get("platform", "яндекс")
+    names = {
+        "яндекс": "Яндекс", "яндекс негатив": "Я.Негатив",
+        "google": "Google", "2гис": "2ГИС", "авито": "Авито",
+        "вк": "ВК", "отзовик": "Отзовик", "доктору": "Doctoru", "докдок": "ДокДок",
+        "про докторов": "Про Докторов", "докту": "ДокТу", "32топ": "32ТОП",
+        "zoon": "ZOON", "яу": "ЯУ", "яб": "ЯБ", "h": "HH", "yell": "Yell"
+    }
+    name = names.get(platform, platform.capitalize())
+    builder = InlineKeyboardBuilder()
+    has_any = False
+    for row_idx, num in ordered:
+        if num not in completed:
+            builder.button(text=f"{name} {num}", callback_data=f"select_review|{num}")
+            has_any = True
+    builder.adjust(3)
+    return builder.as_markup() if has_any else None
+
+
 async def send_instruction(user_id: int, bot):
     try:
         caption = (
@@ -485,7 +508,9 @@ async def handle_quantity_input(message: Message):
         del slot_requests[user_id]
         return
 
+    today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
     free_rows = []
+    skipped_wrong_date = []
     for row_idx in row_ids:
         if row_idx - 1 >= len(records):
             continue
@@ -496,7 +521,20 @@ async def handle_quantity_input(message: Message):
             continue
         if executor:
             continue
+
+        # 🛡️ Проверка даты: только сегодняшние строки
+        row_date = row[mapping["date_col"]-1].strip().replace("..", ".") if len(row) >= mapping["date_col"] else ""
+        if row_date and row_date != today_str:
+            skipped_wrong_date.append(f"{row_idx} ({row_date})")
+            continue
+
         free_rows.append(row_idx)
+
+    if skipped_wrong_date:
+        logger.warning(
+            f"🛡️ handle_quantity_input: пропущено {len(skipped_wrong_date)} строк "
+            f"не на сегодня: {skipped_wrong_date}"
+        )
 
     if len(free_rows) < quantity:
         await message.answer(f"⚠️ Свободно только {len(free_rows)}. Возьмите меньше или /resume.")
@@ -698,7 +736,6 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
         return False
 
-    # === ПРОВЕРКА / ВОССТАНОВЛЕНИЕ K ===
     try:
         check = await retry_api_call(sheet.get_all_values)
         if active_row - 1 >= len(check):
@@ -710,11 +747,19 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         u = get_user(user_id)
         my_user = (u.get("tg_username") or "").lstrip("@").lower() if u else ""
 
-        # Строка в assigned_rows этой сессии?
         row_belongs = active_row in assigned_rows
 
+        # 🛡️ Проверка даты: не даём записывать скрин в строку не на сегодня
+        today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+        row_date = r[mapping["date_col"]-1].strip().replace("..", ".") if len(r) >= mapping["date_col"] else ""
+        if row_date and row_date != today_str:
+            logger.error(
+                f"🚫 _write_screenshot: ОТКАЗ — строка {active_row} дата '{row_date}' ≠ "
+                f"сегодня '{today_str}'. Юзер {user_id}, скрин не принят."
+            )
+            return False
+
         if not k_val:
-            # K пустое — запись слота ранее не прошла. Восстанавливаем.
             if row_belongs:
                 logger.warning(
                     f"🔧 _write_screenshot: K пустое, но строка {active_row} в assigned_rows "
@@ -738,7 +783,6 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
                 )
                 return False
         else:
-            # K не пустое — проверяем, что это именно наш юзер
             if my_user and k_val != my_user:
                 logger.error(
                     f"🚫 _write_screenshot: ОТКАЗ — K='{k_val}' ≠ @{my_user}. "
@@ -751,7 +795,6 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         logger.warning(f"⚠️ _write_screenshot: не удалось проверить K для строки {active_row}: {e}")
         return False
 
-    # === ЗАПИСЬ J="на модерации", I=333 ===
     col_j = chr(64 + mapping["status_col"])
     col_i = chr(64 + mapping["flag_final_col"])
     batch = [
@@ -791,12 +834,10 @@ async def flush_pending_writes(bot):
     for uid, req in pending:
         state = req.get("state")
 
-        # Инкремент попытки
         attempts = req.get("_flush_attempts", 0) + 1
         req["_flush_attempts"] = attempts
 
         if attempts > MAX_SCREENSHOT_ATTEMPTS:
-            # Слишком много неудачных попыток — сбрасываем в slot_selection
             logger.warning(f"🚨 FLUSH user {uid}: превышено {MAX_SCREENSHOT_ATTEMPTS} попыток — сбрасываю сессию")
             req["state"] = "slot_selection"
             req["_flush_attempts"] = 0
@@ -1057,9 +1098,14 @@ async def show_slot_buttons(message: Message, user_id: int):
     }
     name = names.get(platform, platform.capitalize())
     builder = InlineKeyboardBuilder()
+    has_any = False
     for row_idx, num in ordered:
         if num not in completed:
             builder.button(text=f"{name} {num}", callback_data=f"select_review|{num}")
+            has_any = True
+    if not has_any:
+        await message.edit_text("✅ Все отзывы из этого слота уже выполнены.")
+        return
     builder.adjust(3)
     await message.edit_text("📋 Выберите номер отзыва:", reply_markup=builder.as_markup())
 
@@ -1160,6 +1206,37 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     row = await retry_api_call(sheet.row_values, row_idx)
     if len(row) < 30:
         row = row + [""] * (30 - len(row))
+
+    # 🛡️ ЗАЩИТА: проверяем что строка действительно наша и актуальна
+    k_val = (row[mapping["executor_col"]-1] if len(row) >= mapping["executor_col"] else "").strip().lstrip("@").lower()
+    j_val = (row[mapping["status_col"]-1] if len(row) >= mapping["status_col"] else "").strip().lower()
+    row_date = (row[mapping["date_col"]-1] if len(row) >= mapping["date_col"] else "").strip().replace("..", ".")
+    today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+    u = get_user(user_id)
+    my_user = (u.get("tg_username") or "").lstrip("@").lower() if u else ""
+
+    problems = []
+    if my_user and k_val and k_val != my_user:
+        problems.append(f"K='{k_val}' ≠ @{my_user}")
+    if j_val and j_val not in ("в работе", "на модерации"):
+        problems.append(f"J='{j_val}'")
+    if row_date and row_date != today_str:
+        problems.append(f"дата '{row_date}' ≠ '{today_str}'")
+
+    if problems:
+        err_msg = "; ".join(problems)
+        logger.error(f"🚫 show_review_info: ОТКАЗ — строка {row_idx}: {err_msg}")
+        try:
+            del slot_requests[user_id]
+        except KeyError:
+            pass
+        await message.edit_text(
+            "❌ <b>Строка изменилась.</b>\n\n"
+            "Возможно, в таблице вставили или удалили строку, и номера сдвинулись.\n\n"
+            "Нажми /resume — бот заново найдёт твой слот по нику.",
+            parse_mode="HTML"
+        )
+        return
 
     extra_ids = []
     logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping.text_col={mapping.get('text_col')}")
@@ -1321,24 +1398,46 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. Введите /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request.get("state") != "working_on_review":
         await callback.answer("❌ Не в просмотре.", show_alert=True)
         return
+
     chat_id = callback.message.chat.id
+
+    # 1. Удаляем ВСЕ промежуточные сообщения, включая текущее с кнопкой "Вернуться"
     for msg_id in request.get("extra_messages", []):
         try:
             await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except:
+        except Exception:
             pass
+    try:
+        await callback.bot.delete_message(chat_id=chat_id, message_id=callback.message.message_id)
+    except Exception:
+        pass
+
+    # 2. Сбрасываем состояние
     request["extra_messages"] = []
     request["state"] = "slot_selection"
     request["active_review_row"] = None
     slot_requests[user_id] = request
+
     await callback.answer()
-    await show_slot_buttons(callback.message, user_id)
+
+    # 3. Отправляем НОВОЕ сообщение с кнопками отзывов
+    kb = _build_review_buttons(user_id)
+    if kb is None:
+        sent = await callback.message.answer("✅ Все отзывы из этого слота уже выполнены.")
+    else:
+        sent = await callback.message.answer("📋 Выберите номер отзыва:", reply_markup=kb)
+
+    # 4. Сохраняем ID нового сообщения
+    if user_id in slot_requests:
+        req = slot_requests[user_id]
+        req["controls_msg_id"] = sent.message_id
+        slot_requests[user_id] = req
 
 
 # ============ СКРИНШОТ ============
