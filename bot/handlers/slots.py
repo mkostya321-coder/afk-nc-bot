@@ -208,14 +208,22 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
             await bot.delete_message(chat_id=chat_id, message_id=instr_id)
             logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
         except Exception as e:
-            logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+            err = str(e).lower()
+            if "message to delete not found" in err or "message can't be deleted" in err:
+                logger.debug(f"🗑️ user {user_id}: инструкция уже удалена")
+            else:
+                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
     controls_id = request.get("controls_msg_id")
     if controls_id:
         try:
             await bot.delete_message(chat_id=chat_id, message_id=controls_id)
             logger.info(f"🗑️ user {user_id}: controls удалено (msg {controls_id})")
         except Exception as e:
-            logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
+            err = str(e).lower()
+            if "message to delete not found" in err or "message can't be deleted" in err:
+                logger.debug(f"🗑️ user {user_id}: controls уже удалено")
+            else:
+                logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
     try:
         await bot.unpin_all_chat_messages(chat_id=chat_id)
     except Exception:
@@ -235,13 +243,17 @@ async def cancel_task(message: Message):
     if user_id not in slot_requests:
         await message.answer("❌ У вас нет активного задания.")
         return
+
     request = slot_requests[user_id]
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
+
+    # ВАЖНО: удаляем сессию СРАЗУ, чтобы повторный /cancel не сработал
+    del slot_requests[user_id]
+
     if not remaining:
         await delete_session_messages(user_id, message.bot, request, message.chat.id)
-        del slot_requests[user_id]
         await message.answer("✅ У вас нет невыполненных отзывов.")
         return
 
@@ -275,8 +287,6 @@ async def cancel_task(message: Message):
             logger.error(f"❌ Ошибка отмены: {e}")
 
     await delete_session_messages(user_id, message.bot, request, message.chat.id)
-
-    del slot_requests[user_id]
 
     await _safe_send(
         message.bot, user_id,
