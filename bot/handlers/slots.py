@@ -259,9 +259,10 @@ async def cancel_task(message: Message):
             sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
             batch = []
 
-            # Возвращаем НЕВЫПОЛНЕННЫЕ строки в свободные
+            # Возвращаем НЕВЫПОЛНЕННЫЕ в свободные + СБРАСЫВАЕМ I, O, P, Q, S, T
             for row_idx in remaining:
                 for key, val in [("status_col", "не принят в работу"), ("executor_col", ""),
+                                 ("flag_final_col", 0),
                                  ("flag_third_col", 0), ("flag_second_col", 0), ("flag_first_col", 0),
                                  ("id_col", ""), ("order_col", "")]:
                     if key not in mapping:
@@ -270,12 +271,11 @@ async def cancel_task(message: Message):
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
 
             # ВЫПОЛНЕННЫЕ НЕ ТРОГАЕМ — они уже "на модерации" и пойдут по полной цене.
-            # (раньше тут был перевод в "на модерации с ОПЗ" — убрано)
 
             for i in range(0, len(batch), 20):
                 await retry_api_call(sheet.batch_update, batch[i:i+20])
                 await asyncio.sleep(0.4)
-            logger.info(f"✅ Очищено {len(remaining)} невыполненных (выполненные оставлены 'на модерации')")
+            logger.info(f"✅ Очищено {len(remaining)} невыполненных (I=0, K='', J='не принят в работу')")
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
 
@@ -581,7 +581,7 @@ async def handle_quantity_input(message: Message):
         slot_requests[user_id] = request
 
 
-# ============ ОТЛОЖЕННАЯ ЗАПИСЬ В ТАБЛИЦУ ============
+# ============ ЗАПИСЬ СЛОТА (с принудительным I=0) ============
 async def _write_slot_to_sheet(user_id: int, bot) -> bool:
     if user_id not in slot_requests:
         return True
@@ -613,10 +613,13 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
         col_j = chr(64 + mapping["status_col"])
         col_k = chr(64 + mapping["executor_col"])
         col_t = chr(64 + mapping["order_col"])
+        col_i = chr(64 + mapping["flag_final_col"])
         idx = assigned_rows.index(row_idx) + 1
         batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
         batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
         batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
+        # ВАЖНО: сбрасываем I=0 принудительно (защита от старых 333/222)
+        batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
 
     try:
         for i in range(0, len(batch), 20):
@@ -643,24 +646,26 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
                 col_j = chr(64 + mapping["status_col"])
                 col_k = chr(64 + mapping["executor_col"])
                 col_t = chr(64 + mapping["order_col"])
+                col_i = chr(64 + mapping["flag_final_col"])
                 idx = assigned_rows.index(row_idx) + 1
                 retry_batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
                 retry_batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
                 retry_batch.append({"range": f"{col_t}{row_idx}", "values": [[idx]]})
+                retry_batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
             try:
                 await retry_api_call(sheet.batch_update, retry_batch)
             except Exception as e:
                 logger.error(f"❌ Повторная запись провалилась: {e}")
                 return False
 
-        logger.info(f"✅ Слот записан в таблицу: user={user_id}, строк={len(assigned_rows)}")
+        logger.info(f"✅ Слот записан в таблицу: user={user_id}, строк={len(assigned_rows)} (I=0)")
         return True
     except Exception as e:
         logger.error(f"❌ Ошибка записи слота в таблицу: {e}")
         return False
 
 
-# ============ ОТЛОЖЕННАЯ ЗАПИСЬ СКРИНШОТА ============
+# ============ ЗАПИСЬ СКРИНШОТА (с проверкой K == @username) ============
 async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
     if user_id not in slot_requests:
         return True
@@ -682,6 +687,29 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
         logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
+        return False
+
+    # === ЗАЩИТА: проверяем, что в K стоит именно @username юзера ===
+    try:
+        check = await retry_api_call(sheet.get_all_values)
+        if active_row - 1 >= len(check):
+            logger.error(f"❌ _write_screenshot: строка {active_row} за пределами листа")
+            return False
+        r = check[active_row - 1]
+        k_val = r[mapping["executor_col"]-1].strip().lstrip("@").lower() if len(r) >= mapping["executor_col"] else ""
+        j_val = r[mapping["status_col"]-1].strip().lower() if len(r) >= mapping["status_col"] else ""
+        u = get_user(user_id)
+        my_user = (u.get("tg_username") or "").lstrip("@").lower() if u else ""
+        if my_user and k_val != my_user:
+            logger.error(
+                f"🚫 _write_screenshot: ОТКАЗ — K='{k_val}' ≠ @{my_user}. "
+                f"Юзер {user_id} не владелец строки {active_row}"
+            )
+            return False
+        if j_val != "в работе":
+            logger.warning(f"⚠️ _write_screenshot: J='{j_val}' ≠ 'в работе' — но пишем всё равно")
+    except Exception as e:
+        logger.warning(f"⚠️ _write_screenshot: не удалось проверить K для строки {active_row}: {e}")
         return False
 
     col_j = chr(64 + mapping["status_col"])
@@ -1086,7 +1114,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         gender_text = "Без пола" if not gender else ("Мужской" if gender.upper() == "М" else "Женский")
 
         info_msg = (
-            f"{SNIPPET_REQ}\n\n"
             f"👨‍⚕️ <b>Информация по врачу:</b>\n"
             f"Имя врача: {doctor_name}\n"
             f"Направление: {doctor_direction}\n\n"
@@ -1119,6 +1146,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             sent = await message.answer(f"3️⃣ <b>Не понравилось</b>\n\n{minus}", parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
+        # Требования к скриншоту — внизу
+        sent = await message.answer(SNIPPET_REQ, parse_mode="HTML")
+        extra_ids.append(sent.message_id)
+
     else:
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
@@ -1132,7 +1163,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
         instruction_text = template["instruction"]
-        extra_text = template["extra_text"]
         warning = template["warning"]
 
         gender_clean = (gender or "").strip().upper()
@@ -1148,8 +1178,8 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         else:
             gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
 
+        # Основное сообщение — БЕЗ SNIPPET_REQ (требования уйдут вниз)
         final_msg = (
-            f"{extra_text}\n\n"
             f"{instruction_text}\n\n"
             f"⭐ Количество звёзд: {stars}\n"
             f"👥 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
@@ -1202,6 +1232,10 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
                 parse_mode="HTML"
             )
             extra_ids.append(sent.message_id)
+
+        # Требования к скриншоту — ВНИЗУ, после фото
+        sent = await message.answer(SNIPPET_REQ, parse_mode="HTML")
+        extra_ids.append(sent.message_id)
 
     request["extra_messages"] = extra_ids
     request["active_review_row"] = row_idx
