@@ -66,3 +66,11 @@ SUPPORT_THREAD_ID = _opt_int("SUPPORT_THREAD_ID", 0)
 # Промоутер NC
 PROMO_REPORT_CHAT_ID = os.getenv("PROMO_REPORT_CHAT_ID") or None
 PROMO_REPORT_THREAD_ID = _opt_int("PROMO_REPORT_THREAD_ID", 0)
+
+# 🆕 Логирование событий пользователей
+LOG_USER_ID = os.getenv("LOG_USER_ID") or None
+LOG_USER_THREAD_ID = _opt_int("LOG_USER_THREAD_ID", 0)
+
+# 🆕 Беседа с темами для вывода списка юзеров (команда /users)
+LOG_USERS_CHAT_ID = os.getenv("LOG_USERS_CHAT_ID") or None
+LOG_USERS_THREAD_ID = _opt_int("LOG_USERS_THREAD_ID", 0)
