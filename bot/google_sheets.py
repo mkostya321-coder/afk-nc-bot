@@ -296,7 +296,7 @@ async def monitor_schedule(bot):
 
                 to_publish = []
                 orphan_reset_q = []
-                expired_rows = []   # строки с датой в прошлом → I=888
+                expired_rows = []
                 stats = {"total": 0, "no_date_time": 0, "already_flagged": 0,
                          "blocked_status": 0, "has_executor": 0, "future_time": 0,
                          "bad_date_format": 0, "too_short": 0, "orphans_fixed": 0,
@@ -320,17 +320,24 @@ async def monitor_schedule(bot):
                         flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
                         flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
 
-                        # 🔧 АВТО-ФИКС СИРОТ: Q/P/O=1, I пусто, K пусто, J пусто/не принят
+                        _d_norm = (date_str or "").strip().replace("..", ".")
+
+                        # 🔧 АВТО-ФИКС СИРОТ: только если дата = СЕГОДНЯ
                         has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                         if (has_qpo_flag
                                 and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
                             _status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
                             _executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
                             if not _executor and _status in ("", "не принят в работу"):
-                                orphan_reset_q.append(row_idx)
-                                flag_first = "0"
-                                flag_second = "0"
-                                flag_third = "0"
+                                if _d_norm == current_bd_str:
+                                    orphan_reset_q.append(row_idx)
+                                    flag_first = "0"
+                                    flag_second = "0"
+                                    flag_third = "0"
+                                elif _d_norm and _d_norm < current_bd_str:
+                                    stats["expired_date"] += 1
+                                    expired_rows.append(row_idx)
+                                    continue
 
                         if (flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                                 or flag_final in ("1", "999", "333", "666", "888", "222", "7")):
@@ -351,11 +358,9 @@ async def monitor_schedule(bot):
                         # 🛡️ ФИЛЬТР ПО ДАТЕ: только текущий бизнес-день
                         if _d and _d != current_bd_str:
                             if _d < current_bd_str:
-                                # Дата в прошлом → ставим I=888, больше не публикуем
                                 stats["expired_date"] += 1
                                 expired_rows.append(row_idx)
                             else:
-                                # Дата в будущем → ждём
                                 stats["future_time"] += 1
                             continue
 
@@ -370,7 +375,7 @@ async def monitor_schedule(bot):
                         else:
                             stats["future_time"] += 1
 
-                # 🔧 Сброс Q/P/O и S у строк-сирот
+                # 🔧 Сброс Q/P/O и S у строк-сирот (только сегодняшние)
                 if orphan_reset_q:
                     try:
                         batch_orphan = []
@@ -396,7 +401,7 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
 
-                # 🔧 Строки с просроченной датой → I=888 (не публикуем больше)
+                # 🔧 Строки с просроченной датой → I=888
                 if expired_rows:
                     try:
                         col_i = chr(64 + mapping["flag_final_col"])
@@ -411,6 +416,16 @@ async def monitor_schedule(bot):
                         )
                     except Exception as e:
                         logger.error(f"❌ Просроченные даты '{sheet_name}': {e}")
+
+                # 🛡️ Финальная защита: убираем из to_publish строки не на сегодня
+                clean_to_publish = []
+                for r_idx, r_row in to_publish:
+                    r_date = r_row[mapping["date_col"]-1].strip().replace("..", ".") if len(r_row) >= mapping["date_col"] else ""
+                    if r_date == current_bd_str:
+                        clean_to_publish.append((r_idx, r_row))
+                    elif r_date and r_date < current_bd_str:
+                        expired_rows.append(r_idx)
+                to_publish = clean_to_publish
 
                 if not to_publish:
                     logger.info(
@@ -808,7 +823,6 @@ async def _check_republish(bot, client, now):
         new_attempt = slot["attempt"] + 1
         logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt}, строк {len(available_rows)})")
 
-        # 1. СНАЧАЛА публикуем — если упадёт, флаг НЕ ставим
         new_text, kb = build_slot_message(slot["platform"], len(available_rows), slot["date"], slot["time"])
         sent_msg = None
         try:
@@ -819,7 +833,6 @@ async def _check_republish(bot, client, now):
             logger.error(f"❌ Переопубликация {slot['platform']}: не удалось отправить: {e} — флаги НЕ ставлю")
             continue
 
-        # 2. После успешной публикации — удаляем старый слот и ставим флаг
         await _delete_slot_message(bot, msg_id)
         try:
             del active_slots[msg_id]
@@ -984,7 +997,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         to_remove.append(user_id)
 
-    # Обработка слотов — неразобранные строки → 888 + сброс Q/P/O/S + удаление сообщения
     taken_rows_by_sheet = {}
     for _uid, _req in all_requests:
         _st = _req.get("sheet_title")
@@ -1075,7 +1087,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         if slot_ok:
             ok_slots_to_delete.append(msg_id)
 
-    # Сироты
     worksheets_all = await asyncio.to_thread(spreadsheet.worksheets)
     for sheet in worksheets_all:
         sheet_name_s = sheet.title
