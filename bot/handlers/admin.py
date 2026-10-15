@@ -13,8 +13,9 @@ from bot.database import (
     add_warning, get_warning_count, get_active_warnings, get_setting, set_setting,
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout,
     get_user_limit, set_user_limit, reset_user_limit, get_effective_limit,
+    remove_last_warning, remove_all_warnings, get_all_users_with_active_warnings,
 )
-from bot.helpers import match_platform, PRICES
+from bot.helpers import match_platform, PRICES, platform_from_sheet_name
 from bot.logging_helpers import log_user_event
 import sqlite3
 import asyncio
@@ -29,6 +30,12 @@ HIDDEN_USERNAMES = {
     "new_chapterr97",
     "molostovk",
 }
+
+
+def _norm(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lower().replace("\xa0", " ").replace("\u200b", "")
 
 
 def find_user_by_target(target: str):
@@ -119,10 +126,14 @@ async def cmd_helpadm(message: Message):
             "🔍 /infoga <@username или user_id> — полная информация + редактирование\n"
             "👤 /userblock <user> — блок/разблок\n"
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение на N дней\n"
+            "✅ /unwarn <user> — снять 1 предупреждение\n"
+            "🧹 /clearwarns <user> — снять ВСЕ предупреждения\n"
+            "📋 /warnlist — список юзеров с активными W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
             "🎯 /unslot <user> — снять активный слот\n"
             "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🔧 /resetflags <платформа> — сбросить Q/P/O/I у висящих строк\n"
             "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
             "👥 /users — список всех зарегистрированных\n"
         )
@@ -137,7 +148,10 @@ async def cmd_helpadm(message: Message):
             "➖ /subtract platform <user> <платформа> <N> [ШТ] [...] — списать N отзывов\n"
             "➖ /subtract many <user> <сумма> — списать N рублей\n"
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение\n"
+            "✅ /unwarn <user> — снять 1 предупреждение\n"
+            "🧹 /clearwarns <user> — снять ВСЕ предупреждения\n"
+            "📋 /warnlist — список юзеров с W\n"
             "📨 /smsuser <user> <текст> — сообщение юзеру\n"
             "🔄 /update_stats — обновить статистику\n"
             "⚠️ /resetbalance — сбросить балансы ≥150₽\n"
@@ -152,6 +166,7 @@ async def cmd_helpadm(message: Message):
             "🏆 /infopromo <user> — карточка промоутера\n"
             "🎯 /unslot <user> — снять активный слот\n"
             "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🔧 /resetflags <платформа> — сбросить Q/P/O/I у висящих строк\n"
             "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
             "👥 /users — список всех зарегистрированных\n"
         )
@@ -160,7 +175,9 @@ async def cmd_helpadm(message: Message):
         text += (
             "👤 /userblock <user> — блок/разблок\n"
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение\n"
+            "✅ /unwarn <user> — снять 1 предупреждение\n"
+            "📋 /warnlist — список юзеров с W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
             "💰 /useredit <user> <поле> <знач> — правка данных\n"
             "💸 /pay <user> <сумма> — пополнить баланс\n"
@@ -172,13 +189,16 @@ async def cmd_helpadm(message: Message):
             "📋 /list_posts [post] — список сотрудников\n"
             "🎯 /unslot <user> — снять активный слот\n"
             "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🔧 /resetflags <платформа> — сбросить Q/P/O/I у висящих строк\n"
         )
 
     if is_stmoderator(user_id) and not is_admin_nc(user_id):
         text += (
             "👤 /userblock <user> — блок/разблок\n"
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение\n"
+            "✅ /unwarn <user> — снять 1 предупреждение\n"
+            "📋 /warnlist — список юзеров с W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
         )
 
@@ -186,14 +206,17 @@ async def cmd_helpadm(message: Message):
         text += (
             "👤 /userblock <user> — блок/разблок\n"
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение\n"
+            "✅ /unwarn <user> — снять 1 предупреждение\n"
+            "📋 /warnlist — список юзеров с W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
         )
 
     if is_comoderator(user_id) and not is_moderator(user_id):
         text += (
             "ℹ️ /info <user> — профиль\n"
-            "⚠️ /warn <user> <причина> — предупреждение\n"
+            "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение\n"
+            "📋 /warnlist — список юзеров с W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
         )
 
@@ -264,28 +287,40 @@ async def set_role(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 
+# ============ /warn — предупреждение на N дней (7..30) ============
 @router.message(Command("warn"))
 async def warn_user(message: Message):
     caller_id = message.from_user.id
     if not is_comoderator(caller_id):
         return
 
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
         await message.answer(
             "❌ <b>Использование:</b>\n"
-            "<code>/warn &lt;username или user_id&gt; &lt;причина&gt;</code>\n\n"
+            "<code>/warn &lt;username или user_id&gt; &lt;дни 7-30&gt; &lt;причина&gt;</code>\n\n"
             "<b>Примеры:</b>\n"
-            "<code>/warn @ivan спам</code>\n"
-            "<code>/warn 8635115842 спам</code>",
+            "<code>/warn @ivan 9 спам в чате</code>\n"
+            "<code>/warn 8635115842 14 не доделывает слоты</code>",
             parse_mode="HTML"
         )
         return
 
     target_raw = parts[1].strip()
-    reason = parts[2].strip()
+    days_raw = parts[2].strip()
+    reason = parts[3].strip()
 
-    logger.info(f"⚠️ /warn: caller={caller_id}, target='{target_raw}', reason='{reason}'")
+    try:
+        days = int(days_raw)
+    except ValueError:
+        await message.answer("❌ Количество дней должно быть числом от 7 до 30.")
+        return
+
+    if days < 7 or days > 30:
+        await message.answer("❌ Количество дней должно быть от <b>7 до 30</b>.", parse_mode="HTML")
+        return
+
+    logger.info(f"⚠️ /warn: caller={caller_id}, target='{target_raw}', days={days}, reason='{reason}'")
 
     user = find_user_extended(target_raw)
 
@@ -313,8 +348,7 @@ async def warn_user(message: Message):
 
         await message.answer(
             f"❌ Пользователь <code>{target_raw}</code> не найден в БД.{hint}\n\n"
-            f"<i>Подсказка: проверьте @username точно как в профиле юзера. "
-            f"Можно вводить и по user_id.</i>",
+            f"<i>Подсказка: проверьте @username точно как в профиле юзера.</i>",
             parse_mode="HTML"
         )
         logger.warning(f"⚠️ /warn: user '{target_raw}' не найден (caller={caller_id})")
@@ -324,7 +358,7 @@ async def warn_user(message: Message):
     logger.info(f"⚠️ /warn: user найден → id={user_id}, name='{user.get('name')}', @{user.get('tg_username')}")
 
     try:
-        add_warning(user_id, reason, caller_id)
+        add_warning(user_id, reason, caller_id, days=days)
         active_warnings = get_active_warnings(user_id)
         warn_count = len(active_warnings)
 
@@ -332,7 +366,8 @@ async def warn_user(message: Message):
             toggle_block(user_id)
             await message.answer(
                 f"✅ Пользователь @{user.get('tg_username') or user_id} "
-                f"получил <b>третье предупреждение</b> и заблокирован.",
+                f"получил <b>третье предупреждение</b> и заблокирован.\n"
+                f"📅 Варн выдан на {days} дней.",
                 parse_mode="HTML"
             )
             try:
@@ -340,7 +375,8 @@ async def warn_user(message: Message):
                     user_id,
                     f"⛔ Вы получили третье предупреждение и заблокированы.\n"
                     f"Причина: {reason}\n"
-                    f"Вы можете обратиться в поддержку через /support."
+                    f"Срок: {days} дней\n"
+                    f"Обратитесь в /support."
                 )
             except Exception as e:
                 logger.warning(f"⚠️ /warn: не удалось уведомить user {user_id}: {e}")
@@ -351,22 +387,176 @@ async def warn_user(message: Message):
             await message.answer(
                 f"✅ Предупреждение <b>{warn_count}/3</b> выдано "
                 f"@{user.get('tg_username') or user_id}.\n"
-                f"Дата снятия: {expires_str}",
+                f"📅 Срок: <b>{days} дней</b> (снимется {expires_str})",
                 parse_mode="HTML"
             )
             try:
                 await message.bot.send_message(
                     user_id,
                     f"⚠️ Предупреждение ({warn_count}/3): {reason}\n"
+                    f"Срок: {days} дней\n"
                     f"Будет снято: {expires_str}"
                 )
             except Exception as e:
                 logger.warning(f"⚠️ /warn: не удалось уведомить user {user_id}: {e}")
 
-        log_action(message, f"Выдано предупреждение {warn_count}/3 пользователю {user_id} ({reason})")
+        log_action(message, f"Выдано предупреждение {warn_count}/3 на {days}дн. пользователю {user_id} ({reason})")
     except Exception as e:
-        logger.error(f"❌ /warn: ошибка при выдаче: {e}", exc_info=True)
+        logger.error(f"❌ /warn: ошибка: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
+
+
+# ============ /unwarn — снять 1 предупреждение ============
+@router.message(Command("unwarn"))
+async def cmd_unwarn(message: Message):
+    caller_id = message.from_user.id
+    if not is_moderator(caller_id):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/unwarn &lt;@username или user_id&gt;</code>\n\n"
+            "Снимает <b>последнее</b> активное предупреждение.",
+            parse_mode="HTML"
+        )
+        return
+
+    target = parts[1]
+    user = find_user_extended(target)
+    if not user:
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
+        return
+
+    uid = user["user_id"]
+    uname = user.get("tg_username") or uid
+
+    active = get_active_warnings(uid)
+    if not active:
+        await message.answer(f"❌ У @{uname} нет активных предупреждений.")
+        return
+
+    ok = remove_last_warning(uid)
+    if not ok:
+        await message.answer("❌ Не удалось снять предупреждение.")
+        return
+
+    try:
+        await message.bot.send_message(
+            uid,
+            "✅ С вас снято одно предупреждение администрацией проекта."
+        )
+    except Exception:
+        pass
+
+    remaining = len(get_active_warnings(uid))
+    await message.answer(
+        f"✅ <b>Снято 1 предупреждение</b>\n\n"
+        f"👤 @{uname} (ID: {uid})\n"
+        f"📊 Осталось активных: <b>{remaining}/3</b>",
+        parse_mode="HTML"
+    )
+    log_action(message, f"/unwarn: снято 1 W с {uid} (@{uname}), осталось {remaining}")
+
+
+# ============ /clearwarns — снять ВСЕ предупреждения ============
+@router.message(Command("clearwarns"))
+async def cmd_clearwarns(message: Message):
+    caller_id = message.from_user.id
+    if not (is_owner(caller_id) or is_ga(caller_id)):
+        await message.answer("⛔ Доступно только владельцу и ГА.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/clearwarns &lt;@username или user_id&gt;</code>\n\n"
+            "Снимает <b>все</b> активные предупреждения.",
+            parse_mode="HTML"
+        )
+        return
+
+    target = parts[1]
+    user = find_user_extended(target)
+    if not user:
+        await message.answer(f"❌ Пользователь '{target}' не найден.")
+        return
+
+    uid = user["user_id"]
+    uname = user.get("tg_username") or uid
+
+    removed = remove_all_warnings(uid)
+    if removed == 0:
+        await message.answer(f"❌ У @{uname} нет активных предупреждений.")
+        return
+
+    try:
+        await message.bot.send_message(
+            uid,
+            f"✅ С вас сняты все предупреждения администрацией проекта.\nСнято: {removed}."
+        )
+    except Exception:
+        pass
+
+    await message.answer(
+        f"✅ <b>Снято предупреждений: {removed}</b>\n\n"
+        f"👤 @{uname} (ID: {uid})",
+        parse_mode="HTML"
+    )
+    log_action(message, f"/clearwarns: снято {removed} W с {uid} (@{uname})")
+
+
+# ============ /warnlist — список юзеров с активными W ============
+@router.message(Command("warnlist"))
+async def cmd_warnlist(message: Message):
+    if not is_comoderator(message.from_user.id):
+        return
+
+    data = get_all_users_with_active_warnings()
+    if not data:
+        await message.answer("📭 Активных предупреждений ни у кого нет.")
+        return
+
+    total_warns = sum(len(u["warnings"]) for u in data)
+    lines = [
+        f"⚠️ <b>Активные предупреждения</b>",
+        f"<i>Юзеров: {len(data)} · Всего варнов: {total_warns}</i>\n",
+    ]
+
+    for u in data:
+        uname = u["tg_username"]
+        name = u["name"]
+        cnt = len(u["warnings"])
+        lines.append(f"\n<b>{name}</b> (@{uname}, ID: {u['user_id']}) — <b>{cnt}/3</b>")
+        for i, w in enumerate(u["warnings"], 1):
+            try:
+                created = datetime.fromisoformat(w["created_at"]).strftime("%d.%m.%Y")
+            except Exception:
+                created = "—"
+            try:
+                expires = datetime.fromisoformat(w["expires_at"]).strftime("%d.%m.%Y")
+            except Exception:
+                expires = "—"
+            lines.append(f"  {i}. {w['reason']}")
+            lines.append(f"     📅 Выдан: {created} → снимется: {expires}")
+
+    text = "\n".join(lines)
+    max_len = 4000
+
+    if len(text) <= max_len:
+        await message.answer(text, parse_mode="HTML")
+    else:
+        total_parts = (len(text) + max_len - 1) // max_len
+        for i in range(0, len(text), max_len):
+            part_num = i // max_len + 1
+            chunk = text[i:i+max_len]
+            if part_num > 1:
+                chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
+            await message.answer(chunk, parse_mode="HTML")
+
+    log_action(message, f"/warnlist: показано {len(data)} юзеров")
 
 
 @router.message(Command("smsuser"))
@@ -559,8 +749,7 @@ async def cmd_pay(message: Message):
     if len(parts) < 3:
         await message.answer(
             "❌ Использование: /pay <@username или user_id> <сумма>\n"
-            "Пример: /pay @ivan 500\n"
-            "Пример: /pay 8635115842 500"
+            "Пример: /pay @ivan 500"
         )
         return
 
@@ -611,9 +800,7 @@ async def cmd_subtract(message: Message):
             "• /subtract many <@username или user_id> <сумма>\n\n"
             "Примеры:\n"
             "• /subtract platform @ivan 2ГИС 10 ШТ\n"
-            "• /subtract platform 8635115842 2ГИС 10 ШТ Яндекс 5 ШТ\n"
-            "• /subtract many @ivan 300\n"
-            "• /subtract many 8635115842 300"
+            "• /subtract many @ivan 300"
         )
         return
 
@@ -662,7 +849,7 @@ async def cmd_subtract(message: Message):
             plat_raw = tokens[i]
             i += 1
             if i >= len(tokens):
-                await message.answer(f"❌ После '{plat_raw}' ожидалось число.\nПример: /subtract platform @ivan 2ГИС 10 ШТ")
+                await message.answer(f"❌ После '{plat_raw}' ожидалось число.")
                 return
             try:
                 cnt = int(tokens[i])
@@ -699,11 +886,7 @@ async def cmd_subtract(message: Message):
         for plat_raw, cnt in ops:
             plat = match_platform(plat_raw)
             if not plat:
-                await message.answer(
-                    f"❌ Не распознал платформу '{plat_raw}'.\n"
-                    f"Допустимые: Яндекс, Яндекс Негатив, Google, 2ГИС, Авито, ВК, Отзовик, Doctoru, "
-                    f"ДокДок, Про Докторов, ДокТу, 32ТОП, ZOON, Yell, ЯУ, ЯБ, HH."
-                )
+                await message.answer(f"❌ Не распознал платформу '{plat_raw}'.")
                 return
             fp = field_map[plat]
             price = PRICES.get(plat, 0)
@@ -743,9 +926,7 @@ async def cmd_subtract(message: Message):
         return
 
     await message.answer(
-        "❌ Первый аргумент должен быть 'platform' или 'many'.\n"
-        "Пример: /subtract platform @ivan 2ГИС 10 ШТ\n"
-        "Или:    /subtract many @ivan 300"
+        "❌ Первый аргумент должен быть 'platform' или 'many'."
     )
 
 
@@ -820,7 +1001,7 @@ async def cmd_payout_report(message: Message):
         from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
 
         if not REPORT_CHAT_ID:
-            await message.answer("⚠️ REPORT_CHAT_ID не задан в переменных окружения — отчёт некуда отправить.")
+            await message.answer("⚠️ REPORT_CHAT_ID не задан.")
         else:
             for i in range(0, len(full_text), max_len):
                 chunk = full_text[i:i+max_len]
@@ -835,44 +1016,30 @@ async def cmd_payout_report(message: Message):
             try:
                 from bot.google_sheets import mark_as_paid_in_table
                 await mark_as_paid_in_table(user_ids)
-                await message.answer("✅ Строки с E=1 и статусом 'опубликовано' (в т.ч. ОПЗ) отмечены как 'В отчете ИСПЛ'.")
+                await message.answer("✅ Строки отмечены как 'В отчете ИСПЛ'.")
             except Exception as e:
-                logger.error(f"Ошибка обновления статуса в таблице: {e}")
-                await message.answer(f"⚠️ Ошибка при обновлении статуса: {e}")
+                logger.error(f"Ошибка обновления статуса: {e}")
+                await message.answer(f"⚠️ Ошибка: {e}")
 
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
                 placeholders = ','.join(['?'] * len(user_ids))
                 cur.execute(f"""
                     UPDATE users SET
-                        payout = 0,
-                        admin_topup = 0,
-                        yandex_passed = 0,
-                        yandex_neg_passed = 0,
-                        yandex_neg_opz_passed = 0,
-                        google_passed = 0,
-                        gis_passed = 0,
-                        avito_passed = 0,
-                        vk_passed = 0,
-                        otzovik_passed = 0,
-                        doctoru_passed = 0,
-                        dokdok_passed = 0,
-                        prodoctors_passed = 0,
-                        doctu_passed = 0,
-                        top32_passed = 0,
-                        zoon_passed = 0,
-                        yell_passed = 0,
-                        yau_passed = 0,
-                        yab_passed = 0,
-                        hh_passed = 0
+                        payout = 0, admin_topup = 0,
+                        yandex_passed = 0, yandex_neg_passed = 0, yandex_neg_opz_passed = 0,
+                        google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0,
+                        otzovik_passed = 0, doctoru_passed = 0, dokdok_passed = 0,
+                        prodoctors_passed = 0, doctu_passed = 0, top32_passed = 0,
+                        zoon_passed = 0, yell_passed = 0, yau_passed = 0, yab_passed = 0, hh_passed = 0
                     WHERE user_id IN ({placeholders})
                 """, user_ids)
                 conn.commit()
-            await message.answer(f"✅ Отчёт отправлен, балансы и текущая статистика обнулены у {len(user_ids)} пользователей.")
+            await message.answer(f"✅ Отчёт отправлен, балансы обнулены у {len(user_ids)} пользователей.")
 
-        log_action(message, f"Запрошен отчёт по выплатам (команда /payout_report), обнулено {len(user_ids)} пользователей")
+        log_action(message, f"/payout_report: обнулено {len(user_ids)} пользователей")
     except Exception as e:
-        await message.answer(f"❌ Ошибка при формировании отчёта: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
         log_action(message, f"Ошибка в /payout_report: {e}")
 
 
@@ -882,16 +1049,16 @@ async def cmd_tiktok_pay(message: Message):
         return
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("❌ Использование: /tiktok_pay <user_id или username> <количество_просмотров>\nПример: /tiktok_pay 123456789 1500000")
+        await message.answer("❌ Использование: /tiktok_pay <user_id или username> <просмотры>")
         return
     target = parts[1]
     try:
         views = int(parts[2])
         if views <= 0:
-            await message.answer("❌ Количество просмотров должно быть больше 0.")
+            await message.answer("❌ Просмотры должны быть > 0.")
             return
     except ValueError:
-        await message.answer("❌ Количество просмотров должно быть числом.")
+        await message.answer("❌ Просмотры — число.")
         return
     user = find_user_extended(target)
     if not user:
@@ -900,30 +1067,26 @@ async def cmd_tiktok_pay(message: Message):
     user_id = user["user_id"]
     amount = calculate_tiktok_payout(views)
     if amount == 0:
-        await message.answer("❌ Сумма выплаты равна 0. Проверьте количество просмотров.")
+        await message.answer("❌ Сумма = 0.")
         return
     update_user_field(user_id, "payout", user["payout"] + amount)
     update_user_field(user_id, "total_earned", user["total_earned"] + amount)
-    log_msg = (
-        f"🎬 Начисление за Tik Tok\n"
-        f"👤 Пользователь: @{user.get('tg_username', user_id)} (ID: {user_id})\n"
-        f"📊 Просмотров: {views}\n"
-        f"💰 Сумма: {amount}₽\n"
-        f"🕒 Выполнил: @{message.from_user.username} (ID: {message.from_user.id})"
-    )
     if LOG_CHANNEL_ID:
         try:
-            await message.bot.send_message(LOG_CHANNEL_ID, log_msg)
-        except Exception as e:
-            logger.warning(f"Не удалось отправить лог Tik Tok: {e}")
+            await message.bot.send_message(
+                LOG_CHANNEL_ID,
+                f"🎬 TikTok: @{user.get('tg_username', user_id)} (ID: {user_id})\n"
+                f"📊 {views} просмотров\n💰 {amount}₽\n"
+                f"🕒 @{message.from_user.username}"
+            )
+        except Exception:
+            pass
     await message.answer(
-        f"✅ Выплата за Tik Tok начислена!\n"
-        f"Пользователь: @{user.get('tg_username', user_id)}\n"
+        f"✅ Начислено {amount}₽ за TikTok.\n"
         f"Просмотров: {views}\n"
-        f"Сумма: {amount}₽\n"
-        f"Новый баланс к выплате: {user['payout'] + amount}₽"
+        f"Новый баланс: {user['payout'] + amount}₽"
     )
-    log_action(message, f"Начислено {amount}₽ за Tik Tok пользователю {user_id} (просмотров: {views})")
+    log_action(message, f"TikTok +{amount}₽ → {user_id}")
 
 
 @router.message(Command("stop_tiktok"))
@@ -935,17 +1098,8 @@ async def cmd_stop_tiktok(message: Message):
         now = datetime.now(moscow_tz)
         date_str = now.strftime("%d.%m.%Y")
         set_setting("tiktok_stop_date", date_str)
-        await message.answer(f"✅ Участие в Tik Tok остановлено с {date_str}.\nВсе ролики, опубликованные после этой даты, не будут оплачиваться.")
-        log_action(message, f"Установлена дата остановки Tik Tok: {date_str}")
-        if LOG_CHANNEL_ID:
-            try:
-                await message.bot.send_message(
-                    LOG_CHANNEL_ID,
-                    f"⛔ Tik Tok остановлен с {date_str}. Все новые ролики не оплачиваются."
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось отправить лог: {e}")
-
+        await message.answer(f"✅ TikTok остановлен с {date_str}.")
+        log_action(message, f"TikTok stop: {date_str}")
         users = get_all_registered_users()
         if users:
             sent = 0
@@ -953,18 +1107,14 @@ async def cmd_stop_tiktok(message: Message):
                 try:
                     await message.bot.send_message(
                         user["user_id"],
-                        f"⛔ <b>Внимание!</b> Участие в Tik Tok приостановлено с <b>{date_str}</b>.\n"
-                        "Все ролики, опубликованные после этой даты, <b>не оплачиваются</b>.\n"
-                        "Пожалуйста, будьте внимательны!",
+                        f"⛔ <b>Внимание!</b> TikTok приостановлен с <b>{date_str}</b>.",
                         parse_mode="HTML"
                     )
                     sent += 1
                     await asyncio.sleep(0.1)
                 except:
                     pass
-            await message.answer(f"📨 Уведомление отправлено {sent} пользователям.")
-        else:
-            await message.answer("Нет зарегистрированных пользователей для уведомления.")
+            await message.answer(f"📨 Уведомлено: {sent}.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -975,17 +1125,8 @@ async def cmd_start_tiktok(message: Message):
         return
     try:
         set_setting("tiktok_stop_date", "")
-        await message.answer("✅ Участие в Tik Tok возобновлено.\nТеперь вы можете публиковать ролики и получать выплаты.")
-        log_action(message, "Возобновлено участие в Tik Tok")
-        if LOG_CHANNEL_ID:
-            try:
-                await message.bot.send_message(
-                    LOG_CHANNEL_ID,
-                    "▶️ Tik Tok открыт для публикаций. Все новые ролики оплачиваются."
-                )
-            except Exception as e:
-                logger.warning(f"Не удалось отправить лог: {e}")
-
+        await message.answer("✅ TikTok возобновлён.")
+        log_action(message, "TikTok start")
         users = get_all_registered_users()
         if users:
             sent = 0
@@ -993,18 +1134,14 @@ async def cmd_start_tiktok(message: Message):
                 try:
                     await message.bot.send_message(
                         user["user_id"],
-                        "▶️ <b>Хорошие новости!</b> Участие в Tik Tok возобновлено!\n"
-                        "Теперь вы можете публиковать рекламные ролики и получать выплаты.\n"
-                        "Удачи в творчестве! 🚀",
+                        "▶️ <b>Хорошие новости!</b> TikTok возобновлён!",
                         parse_mode="HTML"
                     )
                     sent += 1
                     await asyncio.sleep(0.1)
                 except:
                     pass
-            await message.answer(f"📨 Уведомление отправлено {sent} пользователям.")
-        else:
-            await message.answer("Нет зарегистрированных пользователей для уведомления.")
+            await message.answer(f"📨 Уведомлено: {sent}.")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -1015,40 +1152,34 @@ async def cmd_set_limit(message: Message):
         return
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("❌ Использование: /set_limit <platform> <limit>\n"
-                             "Пример: /set_limit яндекс 15")
+        await message.answer("❌ Использование: /set_limit <platform> <limit>")
         return
     platform = parts[1].lower()
     try:
         limit = int(parts[2])
         if limit < 1:
-            await message.answer("❌ Лимит должен быть положительным числом.")
+            await message.answer("❌ Лимит > 0.")
             return
         set_limit(platform, limit)
-        await message.answer(f"✅ Лимит для платформы '{platform}' установлен на {limit} отзывов за 24 часа.")
-        log_action(message, f"Установлен лимит {limit} для платформы {platform}")
+        await message.answer(f"✅ Лимит для '{platform}' = {limit} отзывов / 24ч.")
+        log_action(message, f"Лимит {limit} для {platform}")
     except ValueError:
-        await message.answer("❌ Лимит должен быть числом.")
+        await message.answer("❌ Лимит — число.")
 
 
 @router.message(Command("user_limit"))
 async def cmd_user_limit(message: Message):
     if not is_admin_nc(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа.")
+        await message.answer("⛔ Нет доступа.")
         return
 
     parts = message.text.split()
     if len(parts) < 3:
         await message.answer(
             "❌ Использование:\n"
-            "• /user_limit <@username или user_id> <platform> <limit>\n"
-            "• /user_limit <@username или user_id> <platform> reset\n"
-            "• /user_limit <@username или user_id> reset\n\n"
-            "Примеры:\n"
-            "• /user_limit @ivan яндекс 20\n"
-            "• /user_limit 8635115842 2ГИС 50\n"
-            "• /user_limit @ivan яндекс reset\n"
-            "• /user_limit @ivan reset"
+            "• /user_limit <user> <platform> <limit>\n"
+            "• /user_limit <user> <platform> reset\n"
+            "• /user_limit <user> reset"
         )
         return
 
@@ -1062,15 +1193,12 @@ async def cmd_user_limit(message: Message):
 
     if len(parts) == 3 and parts[2].lower() == "reset":
         reset_user_limit(uid)
-        await message.answer(
-            f"✅ Все персональные лимиты @{user.get('tg_username') or uid} сброшены.\n"
-            f"Теперь действуют общие лимиты (по платформам)."
-        )
-        log_action(message, f"Сброшены все персональные лимиты у {uid}")
+        await message.answer(f"✅ Все персональные лимиты @{user.get('tg_username') or uid} сброшены.")
+        log_action(message, f"Сброшены все лимиты у {uid}")
         return
 
     if len(parts) < 4:
-        await message.answer("❌ Укажите платформу и значение (или reset).\nПример: /user_limit @ivan яндекс 20")
+        await message.answer("❌ Укажите платформу и значение (или reset).")
         return
 
     platform = parts[2].lower()
@@ -1079,49 +1207,42 @@ async def cmd_user_limit(message: Message):
     if value == "reset":
         reset_user_limit(uid, platform)
         await message.answer(
-            f"✅ Персональный лимит на '{platform}' для @{user.get('tg_username') or uid} сброшен.\n"
-            f"Теперь действует общий лимит: {get_limit(platform)} отзывов в день."
+            f"✅ Персональный лимит '{platform}' для @{user.get('tg_username') or uid} сброшен.\n"
+            f"Общий: {get_limit(platform)} в день."
         )
-        log_action(message, f"Сброшен персональный лимит '{platform}' у {uid}")
+        log_action(message, f"Сброшен лимит '{platform}' у {uid}")
         return
 
     try:
         limit = int(value)
         if limit < 1:
-            await message.answer("❌ Лимит должен быть положительным числом.")
+            await message.answer("❌ Лимит > 0.")
             return
     except ValueError:
-        await message.answer("❌ Лимит должен быть числом или 'reset'.")
+        await message.answer("❌ Лимит — число или 'reset'.")
         return
 
     set_user_limit(uid, platform, limit)
     await message.answer(
-        f"✅ Для @{user.get('tg_username') or uid} установлен персональный лимит:\n"
-        f"• Платформа: <b>{platform}</b>\n"
-        f"• Лимит: <b>{limit} отзывов в день</b>\n\n"
-        f"<i>Общий лимит на эту платформу: {get_limit(platform)}</i>",
+        f"✅ @{user.get('tg_username') or uid}: лимит '{platform}' = <b>{limit}</b> в день.\n"
+        f"<i>Общий: {get_limit(platform)}</i>",
         parse_mode="HTML"
     )
-    log_action(message, f"Установлен персональный лимит {limit} '{platform}' для {uid}")
+    log_action(message, f"Лимит {limit} '{platform}' для {uid}")
 
 
 # ============ /unslot — снять активный слот с юзера ============
 @router.message(Command("unslot"))
 async def cmd_unslot(message: Message):
     if not is_admin_nc(message.from_user.id):
-        await message.answer("⛔ Команда доступна только владельцу, ГА и Админу NC.")
+        await message.answer("⛔ Только для владельца, ГА и Админа NC.")
         return
 
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
             "❌ <b>Использование:</b>\n"
-            "<code>/unslot &lt;@username или user_id&gt;</code>\n\n"
-            "Снимает активный слот с пользователя и очищает строки в таблице:\n"
-            "• J → «не принят в работу»\n"
-            "• K → пусто\n"
-            "• I, O, P, Q → 0\n"
-            "• S, T → пусто",
+            "<code>/unslot &lt;@username или user_id&gt;</code>",
             parse_mode="HTML"
         )
         return
@@ -1182,9 +1303,9 @@ async def cmd_unslot(message: Message):
                     await retry_api_call(sheet.batch_update, batch[i:i+20])
                     await asyncio.sleep(0.4)
                 cleaned_ok = True
-                logger.info(f"✅ /unslot: {uid} — очищено {len(assigned_rows)} строк на '{sheet_title}'")
+                logger.info(f"✅ /unslot: {uid} — очищено {len(assigned_rows)} строк")
         except Exception as e:
-            logger.error(f"❌ /unslot: ошибка очистки таблицы: {e}")
+            logger.error(f"❌ /unslot: очистка: {e}")
     else:
         cleaned_ok = True
 
@@ -1194,49 +1315,40 @@ async def cmd_unslot(message: Message):
         pass
 
     try:
-        if sheet_title and assigned_rows:
-            msg = (
-                f"⚠️ <b>Ваш слот снят администратором.</b>\n\n"
-                f"📋 Платформа: {platform}\n"
-                f"📊 Строк было: {len(assigned_rows)}\n"
-                f"✅ Выполнено: {completed}\n\n"
-                f"Если это ошибка — обратитесь в /support."
-            )
-        else:
-            msg = (
-                f"⚠️ <b>Ваш активный слот снят администратором.</b>\n\n"
-                f"📋 Платформа: {platform}\n\n"
-                f"Если это ошибка — обратитесь в /support."
-            )
+        msg = (
+            f"⚠️ <b>Ваш слот снят администратором.</b>\n\n"
+            f"📋 Платформа: {platform}\n"
+            f"📊 Строк было: {len(assigned_rows)}\n"
+            f"✅ Выполнено: {completed}"
+        )
         await message.bot.send_message(uid, msg, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"⚠️ /unslot: не удалось уведомить user {uid}: {e}")
+        logger.warning(f"⚠️ /unslot: уведомление {uid}: {e}")
 
     await message.answer(
         f"✅ <b>Слот снят</b>\n\n"
         f"👤 @{user.get('tg_username') or uid}\n"
         f"📋 Платформа: {platform}\n"
-        f"📊 Строк в сессии: {len(assigned_rows)}\n"
+        f"📊 Строк: {len(assigned_rows)}\n"
         f"✅ Выполнено: {completed}\n"
-        f"🧹 Таблица: {'✅ очищена' if cleaned_ok else '⚠️ ошибка очистки'}\n"
-        f"🔧 Состояние было: {state}",
+        f"🧹 Таблица: {'✅' if cleaned_ok else '⚠️ ошибка'}",
         parse_mode="HTML"
     )
-    log_action(message, f"/unslot: снят слот с {uid} ({platform}), строк: {len(assigned_rows)}, выполнено: {completed}")
+    log_action(message, f"/unslot: снят с {uid} ({platform})")
 
 
 # ============ /cleanflags — сброс неправильных флагов I ============
 @router.message(Command("cleanflags"))
 async def cmd_cleanflags(message: Message):
     if not is_admin_nc(message.from_user.id):
-        await message.answer("⛔ Команда доступна только владельцу, ГА и Админу NC.")
+        await message.answer("⛔ Только для владельца, ГА и Админа NC.")
         return
 
-    await message.answer("⏳ Прохожу по всем листам, ищу неправильные флаги I...")
+    await message.answer("⏳ Прохожу по всем листам...")
 
     try:
         from bot.google_sheets import get_client, retry_api_call
-        from bot.helpers import platform_from_sheet_name, get_column_mapping
+        from bot.helpers import get_column_mapping
 
         client = get_client()
         if not client:
@@ -1264,7 +1376,7 @@ async def cmd_cleanflags(message: Message):
             try:
                 records = await retry_api_call(sheet.get_all_values)
             except Exception as e:
-                logger.warning(f"cleanflags: не читается '{sheet_name}': {e}")
+                logger.warning(f"cleanflags '{sheet_name}': {e}")
                 continue
             if len(records) < 2:
                 continue
@@ -1286,7 +1398,6 @@ async def cmd_cleanflags(message: Message):
                 if i_val == "333":
                     if not any(j_val.startswith(s) for s in VALID_FOR_333):
                         batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
-                        logger.info(f"🧹 cleanflags '{sheet_name}' row {row_idx}: I=333 → 0 (J='{j_val}')")
 
             if batch:
                 try:
@@ -1297,18 +1408,144 @@ async def cmd_cleanflags(message: Message):
                     details.append(f"• {sheet_name}: сброшено {len(batch)}")
                 except Exception as e:
                     logger.error(f"cleanflags '{sheet_name}': {e}")
-                    details.append(f"• {sheet_name}: ⚠️ ошибка: {e}")
+                    details.append(f"• {sheet_name}: ⚠️ {e}")
 
         if total_cleaned == 0:
-            await message.answer("✅ Всё чисто — неправильных флагов I не найдено.")
+            await message.answer("✅ Всё чисто.")
         else:
-            text = f"✅ <b>Готово</b>\n\nСброшено флагов: <b>{total_cleaned}</b>\n\n" + "\n".join(details)
+            text = f"✅ <b>Готово</b>\n\nСброшено: <b>{total_cleaned}</b>\n\n" + "\n".join(details)
             await message.answer(text, parse_mode="HTML")
 
-        log_action(message, f"/cleanflags: сброшено {total_cleaned} неправильных I")
-
+        log_action(message, f"/cleanflags: сброшено {total_cleaned}")
     except Exception as e:
         logger.error(f"cleanflags: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+# ============ /resetflags — сброс Q/P/O/I у "висящих" строк ============
+@router.message(Command("resetflags"))
+async def cmd_resetflags(message: Message):
+    if not is_admin_nc(message.from_user.id):
+        await message.answer("⛔ Только для владельца, ГА и Админа NC.")
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/resetflags &lt;платформа&gt;</code>\n\n"
+            "Сбрасывает Q, P, O, I у всех строк, где:\n"
+            "• статус пустой или «не принят в работу»\n"
+            "• исполнитель пустой\n\n"
+            "Примеры: <code>/resetflags 2гис</code>, <code>/resetflags яндекс</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    platform_raw = parts[1].lower()
+    platform = match_platform(platform_raw)
+    if not platform:
+        await message.answer(f"❌ Не распознал платформу '{platform_raw}'.")
+        return
+
+    await message.answer(f"⏳ Ищу зависшие строки на «{platform}»...", parse_mode="HTML")
+
+    try:
+        from bot.google_sheets import get_client, retry_api_call
+        from bot.helpers import get_column_mapping
+
+        client = get_client()
+        if not client:
+            await message.answer("❌ Нет доступа к Google Sheets.")
+            return
+
+        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+
+        target_sheets = []
+        for sheet in worksheets:
+            if platform_from_sheet_name(sheet.title) == platform:
+                target_sheets.append(sheet)
+
+        if not target_sheets:
+            await message.answer(f"❌ Не нашёл лист для «{platform}».")
+            return
+
+        total_reset = 0
+        details = []
+
+        for sheet in target_sheets:
+            sheet_name = sheet.title
+            try:
+                records = await retry_api_call(sheet.get_all_values)
+            except Exception as e:
+                logger.error(f"resetflags '{sheet_name}': {e}")
+                continue
+            if len(records) < 2:
+                continue
+
+            headers_row = records[0] if records else None
+            mapping = get_column_mapping(platform, headers_row)
+
+            batch = []
+            for row_idx, row in enumerate(records[1:], start=2):
+                if len(row) < max(
+                    mapping["status_col"],
+                    mapping["executor_col"],
+                    mapping["flag_first_col"],
+                    mapping["flag_second_col"],
+                    mapping["flag_third_col"],
+                    mapping["flag_final_col"],
+                ):
+                    continue
+
+                status = _norm(row[mapping["status_col"]-1])
+                executor = row[mapping["executor_col"]-1].strip()
+
+                if executor:
+                    continue
+                if status and status not in ("не принят в работу",):
+                    continue
+
+                q = row[mapping["flag_first_col"]-1].strip()
+                p = row[mapping["flag_second_col"]-1].strip()
+                o = row[mapping["flag_third_col"]-1].strip()
+                i = row[mapping["flag_final_col"]-1].strip()
+
+                if q in ("1", "999"):
+                    batch.append({"range": f"{chr(64+mapping['flag_first_col'])}{row_idx}", "values": [[0]]})
+                if p == "1":
+                    batch.append({"range": f"{chr(64+mapping['flag_second_col'])}{row_idx}", "values": [[0]]})
+                if o == "1":
+                    batch.append({"range": f"{chr(64+mapping['flag_third_col'])}{row_idx}", "values": [[0]]})
+                if i in ("1", "888", "222"):
+                    batch.append({"range": f"{chr(64+mapping['flag_final_col'])}{row_idx}", "values": [[0]]})
+
+            if batch:
+                try:
+                    for i in range(0, len(batch), 50):
+                        await retry_api_call(sheet.batch_update, batch[i:i+50])
+                        await asyncio.sleep(0.6)
+                    total_reset += len(batch)
+                    details.append(f"• {sheet_name}: сброшено {len(batch)} ячеек")
+                except Exception as e:
+                    logger.error(f"resetflags '{sheet_name}': {e}")
+                    details.append(f"• {sheet_name}: ⚠️ {e}")
+
+        if total_reset == 0:
+            await message.answer(f"✅ Зависших строк на «{platform}» не найдено.")
+        else:
+            text = (
+                f"✅ <b>Готово</b>\n\n"
+                f"Сброшено флагов: <b>{total_reset}</b> ячеек\n\n" +
+                "\n".join(details) +
+                f"\n\n<i>Через 5 минут монитор соберёт их в слот.</i>"
+            )
+            await message.answer(text, parse_mode="HTML")
+
+        log_action(message, f"/resetflags {platform}: сброшено {total_reset} ячеек")
+    except Exception as e:
+        logger.error(f"resetflags: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 
@@ -1317,35 +1554,30 @@ async def cmd_cleanflags(message: Message):
 async def cmd_smsall(message: Message):
     caller_id = message.from_user.id
     if not (is_owner(caller_id) or is_ga(caller_id)):
-        await message.answer("⛔ Доступно только владельцу и ГА.")
+        await message.answer("⛔ Только для владельца и ГА.")
         return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
             "❌ <b>Использование:</b>\n"
-            "<code>/smsall &lt;текст&gt;</code>\n\n"
-            "Рассылка всем зарегистрированным пользователям бота.",
+            "<code>/smsall &lt;текст&gt;</code>",
             parse_mode="HTML"
         )
         return
 
     text = parts[1].strip()
     if len(text) < 3:
-        await message.answer("❌ Текст слишком короткий.")
+        await message.answer("❌ Текст короткий.")
         return
 
     users = get_all_registered_users()
     if not users:
-        await message.answer("📭 Нет зарегистрированных пользователей.")
+        await message.answer("📭 Нет зарегистрированных.")
         return
 
-    await message.answer(
-        f"📤 Начинаю рассылку на <b>{len(users)}</b> пользователей...\n\n"
-        f"Это может занять пару минут.",
-        parse_mode="HTML"
-    )
-    log_action(message, f"/smsall на {len(users)} юзеров, текст: {text[:100]}")
+    await message.answer(f"📤 Рассылка на {len(users)} юзеров...", parse_mode="HTML")
+    log_action(message, f"/smsall на {len(users)}")
 
     sent = 0
     blocked = 0
@@ -1362,11 +1594,11 @@ async def cmd_smsall(message: Message):
             sent += 1
         except Exception as e:
             err = str(e).lower()
-            if "blocked" in err or "deactivated" in err or "chat not found" in err or "user is deactivated" in err:
+            if "blocked" in err or "deactivated" in err or "chat not found" in err:
                 blocked += 1
             else:
                 failed += 1
-                logger.warning(f"⚠️ /smsall: не доставить {uid}: {e}")
+                logger.warning(f"/smsall {uid}: {e}")
         await asyncio.sleep(0.05)
 
     summary = (
@@ -1377,7 +1609,7 @@ async def cmd_smsall(message: Message):
         f"📊 Всего: <b>{len(users)}</b>"
     )
     await message.answer(summary, parse_mode="HTML")
-    log_action(message, f"/smsall завершена: sent={sent}, blocked={blocked}, failed={failed}")
+    log_action(message, f"/smsall: sent={sent}, blocked={blocked}, failed={failed}")
 
 
 # ============ /users — список зарегистрированных ============
@@ -1385,12 +1617,12 @@ async def cmd_smsall(message: Message):
 async def cmd_users(message: Message):
     caller_id = message.from_user.id
     if not (is_owner(caller_id) or is_ga(caller_id)):
-        await message.answer("⛔ Доступно только владельцу и ГА.")
+        await message.answer("⛔ Только для владельца и ГА.")
         return
 
     users = get_all_registered_users()
     if not users:
-        await message.answer("📭 Нет зарегистрированных пользователей.")
+        await message.answer("📭 Нет зарегистрированных.")
         return
 
     lines = [
@@ -1404,7 +1636,6 @@ async def cmd_users(message: Message):
     text = "\n".join(lines)
     max_len = 4000
 
-    # Если задана беседа с темами — отправляем туда
     if LOG_USERS_CHAT_ID:
         try:
             total_parts = (len(text) + max_len - 1) // max_len
@@ -1423,17 +1654,13 @@ async def cmd_users(message: Message):
                 await asyncio.sleep(0.4)
 
             await message.answer(
-                f"✅ Список из <b>{len(users)}</b> пользователей "
-                f"отправлен в беседу с темами.",
+                f"✅ Список из <b>{len(users)}</b> пользователей отправлен в беседу.",
                 parse_mode="HTML"
             )
-            log_action(message, f"/users: список {len(users)} отправлен в LOG_USERS_CHAT_ID")
+            log_action(message, f"/users: список {len(users)} → LOG_USERS_CHAT_ID")
         except Exception as e:
-            logger.error(f"❌ /users: не удалось отправить в LOG_USERS_CHAT_ID: {e}")
-            await message.answer(
-                f"⚠️ Не удалось отправить в беседу: {e}\n\n"
-                f"Отправляю в личку администратору."
-            )
+            logger.error(f"/users: {e}")
+            await message.answer(f"⚠️ Не удалось отправить в беседу: {e}\nОтправляю в личку.")
             if len(text) <= max_len:
                 await message.answer(text, parse_mode="HTML")
             else:
@@ -1456,4 +1683,4 @@ async def cmd_users(message: Message):
                     chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
                 await message.answer(chunk, parse_mode="HTML")
 
-        log_action(message, f"/users: показано {len(users)} зарегистрированных")
+        log_action(message, f"/users: показано {len(users)}")
