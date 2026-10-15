@@ -385,14 +385,22 @@ def get_promo_schedule(user_id: int) -> dict:
         return {}
 
 
-def add_warning(user_id: int, reason: str, warned_by: int):
-    extend_warnings_expiry(user_id, 45)
+# ============ WARNINGS ============
+def add_warning(user_id: int, reason: str, warned_by: int, days: int = 30):
+    """
+    Выдаёт предупреждение на N дней (7..30).
+    Активные предупреждения НЕ продлеваются — каждый варн живёт свои дни.
+    """
+    if days < 7:
+        days = 7
+    if days > 30:
+        days = 30
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO warnings (user_id, reason, warned_by, expires_at)
-            VALUES (?, ?, ?, datetime('now', '+30 days'))
-        """, (user_id, reason, warned_by))
+            VALUES (?, ?, ?, datetime('now', '+' || ? || ' days'))
+        """, (user_id, reason, warned_by, days))
         conn.commit()
 
 
@@ -417,6 +425,7 @@ def get_active_warnings(user_id: int) -> list:
 
 
 def extend_warnings_expiry(user_id: int, days: int = 45):
+    """Оставлено для совместимости. Не вызывается при add_warning."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -427,6 +436,77 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
         conn.commit()
 
 
+def remove_last_warning(user_id: int) -> bool:
+    """Удаляет последнее активное предупреждение. True если удалилось."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id FROM warnings
+            WHERE user_id = ? AND expires_at > datetime('now')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        cur.execute("DELETE FROM warnings WHERE id = ?", (row[0],))
+        conn.commit()
+        return True
+
+
+def remove_all_warnings(user_id: int) -> int:
+    """Удаляет все активные предупреждения. Возвращает количество удалённых."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM warnings
+            WHERE user_id = ? AND expires_at > datetime('now')
+        """, (user_id,))
+        count = cur.rowcount
+        conn.commit()
+        return count
+
+
+def get_all_users_with_active_warnings() -> list:
+    """
+    Все юзеры, у кого есть активные варны.
+    Возвращает: [{user_id, tg_username, name, warnings: [{reason, created_at, expires_at, warned_by}]}]
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT w.id, w.user_id, w.reason, w.created_at, w.expires_at, w.warned_by,
+                   u.tg_username, u.name
+            FROM warnings w
+            LEFT JOIN users u ON u.user_id = w.user_id
+            WHERE w.expires_at > datetime('now')
+            ORDER BY w.user_id, w.created_at DESC
+        """)
+        rows = cur.fetchall()
+
+    users_map = {}
+    for r in rows:
+        uid = r["user_id"]
+        if uid not in users_map:
+            users_map[uid] = {
+                "user_id": uid,
+                "tg_username": r["tg_username"] or "—",
+                "name": r["name"] or "—",
+                "warnings": [],
+            }
+        users_map[uid]["warnings"].append({
+            "id": r["id"],
+            "reason": r["reason"],
+            "created_at": r["created_at"],
+            "expires_at": r["expires_at"],
+            "warned_by": r["warned_by"],
+        })
+
+    return list(users_map.values())
+
+
+# ============ SETTINGS ============
 def get_setting(key: str) -> Optional[str]:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
