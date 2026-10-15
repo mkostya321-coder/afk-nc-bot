@@ -2,7 +2,10 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.config import OWNER_ID, LOG_CHANNEL_ID, DB_PATH, SHEET_ID
+from bot.config import (
+    OWNER_ID, LOG_CHANNEL_ID, DB_PATH, SHEET_ID,
+    LOG_USERS_CHAT_ID, LOG_USERS_THREAD_ID,
+)
 from bot.database import (
     get_user, get_user_by_username, toggle_block, update_user_field,
     get_admin_role, set_admin_role, remove_admin_role,
@@ -12,6 +15,7 @@ from bot.database import (
     get_user_limit, set_user_limit, reset_user_limit, get_effective_limit,
 )
 from bot.helpers import match_platform, PRICES
+from bot.logging_helpers import log_user_event
 import sqlite3
 import asyncio
 import logging
@@ -119,6 +123,8 @@ async def cmd_helpadm(message: Message):
             "📨 /smsuser <user> <текст> — сообщение\n"
             "🎯 /unslot <user> — снять активный слот\n"
             "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
+            "👥 /users — список всех зарегистрированных\n"
         )
 
     if is_ga(user_id):
@@ -146,6 +152,8 @@ async def cmd_helpadm(message: Message):
             "🏆 /infopromo <user> — карточка промоутера\n"
             "🎯 /unslot <user> — снять активный слот\n"
             "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
+            "👥 /users — список всех зарегистрированных\n"
         )
 
     if is_admin_nc(user_id) and not is_ga(user_id):
@@ -1302,3 +1310,150 @@ async def cmd_cleanflags(message: Message):
     except Exception as e:
         logger.error(f"cleanflags: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
+
+
+# ============ /smsall — рассылка всем зарегистрированным ============
+@router.message(Command("smsall"))
+async def cmd_smsall(message: Message):
+    caller_id = message.from_user.id
+    if not (is_owner(caller_id) or is_ga(caller_id)):
+        await message.answer("⛔ Доступно только владельцу и ГА.")
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Использование:</b>\n"
+            "<code>/smsall &lt;текст&gt;</code>\n\n"
+            "Рассылка всем зарегистрированным пользователям бота.",
+            parse_mode="HTML"
+        )
+        return
+
+    text = parts[1].strip()
+    if len(text) < 3:
+        await message.answer("❌ Текст слишком короткий.")
+        return
+
+    users = get_all_registered_users()
+    if not users:
+        await message.answer("📭 Нет зарегистрированных пользователей.")
+        return
+
+    await message.answer(
+        f"📤 Начинаю рассылку на <b>{len(users)}</b> пользователей...\n\n"
+        f"Это может занять пару минут.",
+        parse_mode="HTML"
+    )
+    log_action(message, f"/smsall на {len(users)} юзеров, текст: {text[:100]}")
+
+    sent = 0
+    blocked = 0
+    failed = 0
+
+    for u in users:
+        uid = u["user_id"]
+        try:
+            await message.bot.send_message(
+                uid,
+                f"📢 <b>Сообщение от администрации NC:</b>\n\n{text}",
+                parse_mode="HTML"
+            )
+            sent += 1
+        except Exception as e:
+            err = str(e).lower()
+            if "blocked" in err or "deactivated" in err or "chat not found" in err or "user is deactivated" in err:
+                blocked += 1
+            else:
+                failed += 1
+                logger.warning(f"⚠️ /smsall: не доставить {uid}: {e}")
+        await asyncio.sleep(0.05)
+
+    summary = (
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"📤 Отправлено: <b>{sent}</b>\n"
+        f"🚫 Заблокировали бота: <b>{blocked}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>\n"
+        f"📊 Всего: <b>{len(users)}</b>"
+    )
+    await message.answer(summary, parse_mode="HTML")
+    log_action(message, f"/smsall завершена: sent={sent}, blocked={blocked}, failed={failed}")
+
+
+# ============ /users — список зарегистрированных ============
+@router.message(Command("users"))
+async def cmd_users(message: Message):
+    caller_id = message.from_user.id
+    if not (is_owner(caller_id) or is_ga(caller_id)):
+        await message.answer("⛔ Доступно только владельцу и ГА.")
+        return
+
+    users = get_all_registered_users()
+    if not users:
+        await message.answer("📭 Нет зарегистрированных пользователей.")
+        return
+
+    lines = [
+        f"👥 <b>Зарегистрированные пользователи</b> ({len(users)}):",
+        f"<i>Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>\n",
+    ]
+    for i, u in enumerate(users, 1):
+        uname = u.get("tg_username") or "—"
+        lines.append(f"{i}. @{uname} (ID: {u['user_id']})")
+
+    text = "\n".join(lines)
+    max_len = 4000
+
+    # Если задана беседа с темами — отправляем туда
+    if LOG_USERS_CHAT_ID:
+        try:
+            total_parts = (len(text) + max_len - 1) // max_len
+            for i in range(0, len(text), max_len):
+                part_num = i // max_len + 1
+                chunk = text[i:i+max_len]
+                if part_num > 1:
+                    chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
+                await message.bot.send_message(
+                    chat_id=LOG_USERS_CHAT_ID,
+                    text=chunk,
+                    message_thread_id=LOG_USERS_THREAD_ID or None,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                await asyncio.sleep(0.4)
+
+            await message.answer(
+                f"✅ Список из <b>{len(users)}</b> пользователей "
+                f"отправлен в беседу с темами.",
+                parse_mode="HTML"
+            )
+            log_action(message, f"/users: список {len(users)} отправлен в LOG_USERS_CHAT_ID")
+        except Exception as e:
+            logger.error(f"❌ /users: не удалось отправить в LOG_USERS_CHAT_ID: {e}")
+            await message.answer(
+                f"⚠️ Не удалось отправить в беседу: {e}\n\n"
+                f"Отправляю в личку администратору."
+            )
+            if len(text) <= max_len:
+                await message.answer(text, parse_mode="HTML")
+            else:
+                total_parts = (len(text) + max_len - 1) // max_len
+                for i in range(0, len(text), max_len):
+                    part_num = i // max_len + 1
+                    chunk = text[i:i+max_len]
+                    if part_num > 1:
+                        chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
+                    await message.answer(chunk, parse_mode="HTML")
+    else:
+        if len(text) <= max_len:
+            await message.answer(text, parse_mode="HTML")
+        else:
+            total_parts = (len(text) + max_len - 1) // max_len
+            for i in range(0, len(text), max_len):
+                part_num = i // max_len + 1
+                chunk = text[i:i+max_len]
+                if part_num > 1:
+                    chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
+                await message.answer(chunk, parse_mode="HTML")
+
+        log_action(message, f"/users: показано {len(users)} зарегистрированных")
