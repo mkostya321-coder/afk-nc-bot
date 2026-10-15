@@ -12,7 +12,8 @@ from bot.config import (
 )
 from bot.database import (
     is_registered, is_blocked, get_user, is_ga, is_moderator, get_user_by_username,
-    add_review_take, count_review_takes_last_24h, get_limit, get_effective_limit
+    add_review_take, count_review_takes_last_24h, get_limit, get_effective_limit,
+    remove_review_takes,
 )
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
@@ -49,99 +50,21 @@ WARNING = (
 PIN_REMINDER = "📸 Инструкция по скриншотам — закреплена выше ⬆️"
 
 PLATFORM_TEMPLATES = {
-    "яндекс": {
-        "instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "яндекс негатив": {
-        "instruction": "🔥 Яндекс Негатив\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "google": {
-        "instruction": "🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "2гис": {
-        "instruction": "🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.",
-        "warning": WARNING
-    },
-    "авито": {
-        "instruction": (
-            "🔥 Авито\n\n"
-            "1. Поиск объявлений.\n"
-            "   – Найти и изучить похожие объявления (критерии уточнить у администратора).\n"
-            "2. Диалог с продавцом.\n"
-            "   – Задать 5–6 вопросов о товаре/услуге.\n"
-            "   – Важно: без скриншотов переписки!\n"
-            "3. Ожидание.\n"
-            "   – Выждать 2–3 дня после диалога.\n"
-            "4. Отзыв.\n"
-            "   – Написать отзыв (согласовать текст с администратором).\n"
-            "   – Нельзя: копировать текст, делать скриншоты.\n"
-            "   – Дополнительно: оставить отзыв через «ждут оценки», если получится."
-        ),
-        "warning": WARNING
-    },
-    "вк": {
-        "instruction": (
-            "🔥 ВКонтакте\n\n"
-            "1. Переходим по ссылке.\n2. Переписываем текст.\n\n"
-            "На данной платформе обязательно перепишите текст от руки, иначе отзыв может просто заблокироваться.\n"
-            "ДЛЯ 90% прохода:\n"
-            "Оставьте отзыв несколько раз 3-4 раза, в этом случае он точно опубликуется, оставили 1 раз с другого устройства проверили появился ли он, если нет оставляете еще раз и так 3-4 раза."
-        ),
-        "warning": WARNING
-    },
-    "отзовик": {
-        "instruction": "🔥 Отзовик\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "докдок": {
-        "instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "докту": {
-        "instruction": "🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "32топ": {
-        "instruction": "🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
-    "zoon": {
-        "instruction": (
-            "🔥 ZOON\n\n"
-            "1. Переходим по ссылке, прокладываем маршрут и просматриваем всю информацию.\n"
-            "2. Через 30 минут оставляем отзыв."
-        ),
-        "warning": WARNING
-    },
-    "яу": {
-        "instruction": "🔥 Яндекс Услуги\n\n1. Переходим по ссылке.\n2. Оставляем отзыв.",
-        "warning": WARNING
-    },
-    "яб": {
-        "instruction": (
-            "🔥 Яндекс Браузер\n\n"
-            "1. Переходим по ссылке.\n"
-            "2. Открывается сайт компании — в нижнем или верхнем правом углу жмём 3 точки.\n"
-            "3. Жмём на количество отзывов и оставляем отзыв с текстом."
-        ),
-        "warning": WARNING
-    },
-    "h": {
-        "instruction": (
-            "🔥 HH.RU\n\n"
-            "1. Зайти по ссылке.\n"
-            "2. Просматриваем фото/видео, лайкаем хорошие отзывы.\n"
-            "3. Оставить отзыв."
-        ),
-        "warning": WARNING
-    },
-    "yell": {
-        "instruction": "🔥 Yell\n\n1. Переходим по ссылке.\n2. Переписываем текст.",
-        "warning": WARNING
-    },
+    "яндекс": {"instruction": "🔥 Яндекс Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "яндекс негатив": {"instruction": "🔥 Яндекс Негатив\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "google": {"instruction": "🔥 Google Карты\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "2гис": {"instruction": "🔥 2ГИС\n\n1. Переходим по ссылке, просматриваем всю информацию, лайкаем положительные отзывы и прокладываем маршрут.\n2. Через 15–30 минут оставляем отзыв.", "warning": WARNING},
+    "авито": {"instruction": "🔥 Авито\n\n1. Поиск объявлений.\n2. Диалог с продавцом (5-6 вопросов).\n3. Ожидание 2-3 дня.\n4. Отзыв.", "warning": WARNING},
+    "вк": {"instruction": "🔥 ВКонтакте\n\n1. Переходим по ссылке.\n2. Переписываем текст от руки.\n3. Оставляем 3-4 раза для 90% прохода.", "warning": WARNING},
+    "отзовик": {"instruction": "🔥 Отзовик\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "докдок": {"instruction": "🔥 ДокДок\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "докту": {"instruction": "🔥 ДокТу\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "32топ": {"instruction": "🔥 32ТОП\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
+    "zoon": {"instruction": "🔥 ZOON\n\n1. Переходим по ссылке, прокладываем маршрут.\n2. Через 30 минут оставляем отзыв.", "warning": WARNING},
+    "яу": {"instruction": "🔥 Яндекс Услуги\n\n1. Переходим по ссылке.\n2. Оставляем отзыв.", "warning": WARNING},
+    "яб": {"instruction": "🔥 Яндекс Браузер\n\n1. Переходим по ссылке.\n2. Через 3 точки → отзывы.", "warning": WARNING},
+    "h": {"instruction": "🔥 HH.RU\n\n1. Зайти по ссылке.\n2. Лайкаем хорошие отзывы.\n3. Оставить отзыв.", "warning": WARNING},
+    "yell": {"instruction": "🔥 Yell\n\n1. Переходим по ссылке.\n2. Переписываем текст.", "warning": WARNING},
 }
 
 
@@ -232,24 +155,14 @@ async def delete_session_messages(user_id: int, bot, request: dict, chat_id: int
     if instr_id:
         try:
             await bot.delete_message(chat_id=chat_id, message_id=instr_id)
-            logger.info(f"🗑️ user {user_id}: инструкция удалена (msg {instr_id})")
-        except Exception as e:
-            err = str(e).lower()
-            if "message to delete not found" in err or "message can't be deleted" in err:
-                logger.debug(f"🗑️ user {user_id}: инструкция уже удалена")
-            else:
-                logger.warning(f"⚠️ user {user_id}: не удалось удалить инструкцию: {e}")
+        except Exception:
+            pass
     controls_id = request.get("controls_msg_id")
     if controls_id:
         try:
             await bot.delete_message(chat_id=chat_id, message_id=controls_id)
-            logger.info(f"🗑️ user {user_id}: controls удалено (msg {controls_id})")
-        except Exception as e:
-            err = str(e).lower()
-            if "message to delete not found" in err or "message can't be deleted" in err:
-                logger.debug(f"🗑️ user {user_id}: controls уже удалено")
-            else:
-                logger.warning(f"⚠️ user {user_id}: не удалось удалить controls: {e}")
+        except Exception:
+            pass
     try:
         await bot.unpin_all_chat_messages(chat_id=chat_id)
     except Exception:
@@ -273,6 +186,15 @@ async def cancel_task(message: Message):
     completed = request.get("completed_reviews", [])
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
+
+    # 🔧 ВОЗВРАТ ЛИМИТА за невыполненные отзывы
+    platform_for_return = request.get("platform", "яндекс")
+    if remaining:
+        try:
+            returned = remove_review_takes(user_id, platform_for_return, len(remaining))
+            logger.info(f"🔄 Возврат лимита: {returned} шт для user {user_id} ({platform_for_return})")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось вернуть лимит: {e}")
 
     del slot_requests[user_id]
 
@@ -306,7 +228,7 @@ async def cancel_task(message: Message):
             for i in range(0, len(batch), 20):
                 await retry_api_call(sheet.batch_update, batch[i:i+20])
                 await asyncio.sleep(0.4)
-            logger.info(f"✅ Очищено {len(remaining)} невыполненных (I=0, K='', J='не принят в работу')")
+            logger.info(f"✅ Очищено {len(remaining)} невыполненных")
         except Exception as e:
             logger.error(f"❌ Ошибка отмены: {e}")
 
@@ -316,10 +238,9 @@ async def cancel_task(message: Message):
         message.bot, user_id,
         f"✅ Отказ принят.\n\n"
         f"• Выполненные: {len(completed)} – остались на модерации (полная оплата)\n"
-        f"• Невыполненные: {len(remaining)} – вернулись в свободные"
+        f"• Невыполненные: {len(remaining)} – вернулись в свободные + лимит возвращён"
     )
 
-    # 📌 Логируем отказ в LOG_USER_ID
     try:
         user = get_user(user_id)
         uname = (user.get("tg_username") if user else None) or message.from_user.username or "—"
@@ -328,7 +249,7 @@ async def cancel_task(message: Message):
             f"👤 @{uname} (ID: {user_id})\n"
             f"📋 Платформа: {platform}\n"
             f"✅ Выполнено: {len(completed)} из {len(ordered)}\n"
-            f"❌ Отказался от: {len(remaining)}"
+            f"❌ Отказался от: {len(remaining)} (лимит возвращён)"
         )
     except Exception as e:
         logger.warning(f"⚠️ log cancel: {e}")
@@ -357,9 +278,7 @@ async def cmd_resume(message: Message):
                 await message.answer("✅ Данные записаны в таблицу. Возвращайся в слот.")
                 return
             if req.get("state") in ("write_pending", "screenshot_pending"):
-                await message.answer(
-                    "⏳ Таблица всё ещё перегружена. Подожди 1-2 минуты и попробуй /resume снова."
-                )
+                await message.answer("⏳ Таблица всё ещё перегружена. Подожди 1-2 минуты и попробуй /resume снова.")
                 return
 
         total = len(req.get("ordered_reviews", []))
@@ -425,9 +344,7 @@ async def cmd_resume(message: Message):
         "created_business_day": business_day_key()
     }
     await message.answer(
-        f"✅ Сессия восстановлена!\n\n"
-        f"📋 Платформа: {platform}\n"
-        f"📊 Отзывов: {len(row_ids)}",
+        f"✅ Сессия восстановлена!\n\n📋 Платформа: {platform}\n📊 Отзывов: {len(row_ids)}",
         reply_markup=InlineKeyboardBuilder().button(
             text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
         ).as_markup()
@@ -467,8 +384,7 @@ async def handle_quantity_input(message: Message):
             f"❌ <b>Лимит исчерпан</b>\n\n"
             f"По платформе <b>{platform}</b> установлен лимит <b>{limit} отзывов</b> в день.\n"
             f"Вы уже взяли сегодня: <b>{taken_today} из {limit}</b>.\n\n"
-            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.\n"
-            f"Попробуйте взять слот на другой платформе.",
+            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.",
             parse_mode="HTML"
         )
         del slot_requests[user_id]
@@ -536,20 +452,14 @@ async def handle_quantity_input(message: Message):
             continue
         if executor:
             continue
-
-        # 🛡️ Проверка даты: только сегодняшние строки
         row_date = row[mapping["date_col"]-1].strip().replace("..", ".") if len(row) >= mapping["date_col"] else ""
         if row_date and row_date != today_str:
             skipped_wrong_date.append(f"{row_idx} ({row_date})")
             continue
-
         free_rows.append(row_idx)
 
     if skipped_wrong_date:
-        logger.warning(
-            f"🛡️ handle_quantity_input: пропущено {len(skipped_wrong_date)} строк "
-            f"не на сегодня: {skipped_wrong_date}"
-        )
+        logger.warning(f"🛡️ handle_quantity_input: пропущено {len(skipped_wrong_date)} строк не на сегодня")
 
     if len(free_rows) < quantity:
         await message.answer(f"⚠️ Свободно только {len(free_rows)}. Возьмите меньше или /resume.")
@@ -564,7 +474,6 @@ async def handle_quantity_input(message: Message):
         active_slots[slot_msg_id] = slot_info
 
         if slot_info["count"] == 0:
-            # 🆕 Слот разобран → сразу удаляем сообщение из канала
             try:
                 await message.bot.delete_message(chat_id=CHANNEL_ID, message_id=slot_msg_id)
                 logger.info(f"🗑️ Слот {platform} (msg {slot_msg_id}) разобран и удалён")
@@ -588,9 +497,8 @@ async def handle_quantity_input(message: Message):
                     chat_id=CHANNEL_ID, message_id=slot_msg_id,
                     text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
                 )
-                logger.info(f"🔄 Слот {slot_info.get('platform', platform)} обновлён до {slot_info['count']} шт после взятия")
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось обновить сообщение слота после взятия: {e}")
+                logger.warning(f"⚠️ Не обновить сообщение слота: {e}")
 
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
@@ -638,7 +546,6 @@ async def handle_quantity_input(message: Message):
         request["instruction_msg_id"] = instr_id
         slot_requests[user_id] = request
 
-    # 📌 Логируем взятие слота
     try:
         u = get_user(user_id)
         uname = (u.get("tg_username") if u else None) or message.from_user.username or "—"
@@ -677,7 +584,7 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
         spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
-        logger.error(f"❌ _write_slot_to_sheet: не открыть лист '{sheet_title}': {e}")
+        logger.error(f"❌ _write_slot_to_sheet: {e}")
         return False
 
     batch = []
@@ -711,7 +618,7 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
                 bad.append(row_idx)
 
         if bad:
-            logger.warning(f"🔁 Повторная запись {len(bad)} строк для user {user_id}: {bad}")
+            logger.warning(f"🔁 Повторная запись {len(bad)} строк для user {user_id}")
             retry_batch = []
             for row_idx in bad:
                 col_j = chr(64 + mapping["status_col"])
@@ -726,13 +633,13 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
             try:
                 await retry_api_call(sheet.batch_update, retry_batch)
             except Exception as e:
-                logger.error(f"❌ Повторная запись провалилась: {e}")
+                logger.error(f"❌ Повторная запись: {e}")
                 return False
 
-        logger.info(f"✅ Слот записан в таблицу: user={user_id}, строк={len(assigned_rows)} (I=0)")
+        logger.info(f"✅ Слот записан: user={user_id}, строк={len(assigned_rows)}")
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка записи слота в таблицу: {e}")
+        logger.error(f"❌ Ошибка записи слота: {e}")
         return False
 
 
@@ -762,13 +669,12 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
-        logger.error(f"❌ _write_screenshot: не открыть лист '{sheet_title}': {e}")
+        logger.error(f"❌ _write_screenshot: {e}")
         return False
 
     try:
         check = await retry_api_call(sheet.get_all_values)
         if active_row - 1 >= len(check):
-            logger.error(f"❌ _write_screenshot: строка {active_row} за пределами листа")
             return False
         r = check[active_row - 1]
         k_val = r[mapping["executor_col"]-1].strip().lstrip("@").lower() if len(r) >= mapping["executor_col"] else ""
@@ -778,22 +684,15 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
 
         row_belongs = active_row in assigned_rows
 
-        # 🛡️ Проверка даты: не даём записывать скрин в строку не на сегодня
         today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
         row_date = r[mapping["date_col"]-1].strip().replace("..", ".") if len(r) >= mapping["date_col"] else ""
         if row_date and row_date != today_str:
-            logger.error(
-                f"🚫 _write_screenshot: ОТКАЗ — строка {active_row} дата '{row_date}' ≠ "
-                f"сегодня '{today_str}'. Юзер {user_id}, скрин не принят."
-            )
+            logger.error(f"🚫 _write_screenshot: ОТКАЗ — строка {active_row} дата '{row_date}' ≠ '{today_str}'")
             return False
 
         if not k_val:
             if row_belongs:
-                logger.warning(
-                    f"🔧 _write_screenshot: K пустое, но строка {active_row} в assigned_rows "
-                    f"user {user_id} — восстанавливаю K={write_username}"
-                )
+                logger.warning(f"🔧 K пустое, строка {active_row} в assigned — восстанавливаю")
                 restore_batch = [
                     {"range": f"{chr(64+mapping['status_col'])}{active_row}", "values": [["в работе"]]},
                     {"range": f"{chr(64+mapping['executor_col'])}{active_row}", "values": [[write_username]]},
@@ -801,27 +700,18 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
                 ]
                 try:
                     await retry_api_call(sheet.batch_update, restore_batch)
-                    logger.info(f"✅ Восстановлен K={write_username} для строки {active_row}")
                 except Exception as e:
-                    logger.error(f"❌ Не удалось восстановить K: {e}")
+                    logger.error(f"❌ Не восстановить K: {e}")
                     return False
             else:
-                logger.error(
-                    f"🚫 _write_screenshot: K пустое, строка {active_row} НЕ в assigned_rows "
-                    f"user {user_id} — отказ"
-                )
+                logger.error(f"🚫 K пустое, строка {active_row} НЕ в assigned — отказ")
                 return False
         else:
             if my_user and k_val != my_user:
-                logger.error(
-                    f"🚫 _write_screenshot: ОТКАЗ — K='{k_val}' ≠ @{my_user}. "
-                    f"Юзер {user_id} не владелец строки {active_row}"
-                )
+                logger.error(f"🚫 K='{k_val}' ≠ @{my_user} — отказ")
                 return False
-            if j_val != "в работе":
-                logger.warning(f"⚠️ _write_screenshot: J='{j_val}' ≠ 'в работе' — но пишем всё равно")
     except Exception as e:
-        logger.warning(f"⚠️ _write_screenshot: не удалось проверить K для строки {active_row}: {e}")
+        logger.warning(f"⚠️ _write_screenshot проверка: {e}")
         return False
 
     col_j = chr(64 + mapping["status_col"])
@@ -841,7 +731,7 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
             f"{col_i}{active_row}",
             {"backgroundColor": {"red": 0, "green": 0.8, "blue": 0}}
         )
-        logger.info(f"✅ Скриншот записан: user={user_id}, строка={active_row}, id={review_id}")
+        logger.info(f"✅ Скриншот записан: user={user_id}, строка={active_row}")
         return True
     except Exception as e:
         logger.error(f"❌ Ошибка записи скриншота: {e}")
@@ -862,24 +752,15 @@ async def flush_pending_writes(bot):
     logger.info(f"🔁 FLUSH: отложенных записей: {len(pending)}")
     for uid, req in pending:
         state = req.get("state")
-
         attempts = req.get("_flush_attempts", 0) + 1
         req["_flush_attempts"] = attempts
 
         if attempts > MAX_SCREENSHOT_ATTEMPTS:
-            logger.warning(f"🚨 FLUSH user {uid}: превышено {MAX_SCREENSHOT_ATTEMPTS} попыток — сбрасываю сессию")
+            logger.warning(f"🚨 FLUSH user {uid}: превышено попыток")
             req["state"] = "slot_selection"
             req["_flush_attempts"] = 0
             slot_requests[uid] = req
-            try:
-                await _safe_send(
-                    bot, uid,
-                    "⚠️ Не удалось записать данные в таблицу (технический сбой).\n\n"
-                    "Проверьте таблицу вручную — если ваши строки не отмечены, "
-                    "свяжитесь с /support."
-                )
-            except Exception:
-                pass
+            await _safe_send(bot, uid, "⚠️ Не удалось записать данные. Проверьте таблицу вручную.")
             continue
 
         try:
@@ -889,11 +770,7 @@ async def flush_pending_writes(bot):
                     req["state"] = "slot_selection"
                     req["_flush_attempts"] = 0
                     slot_requests[uid] = req
-                    await _safe_send(
-                        bot, uid,
-                        "✅ Слот успешно записан в таблицу! Можете приступать.\n"
-                        "Нажмите /resume для продолжения."
-                    )
+                    await _safe_send(bot, uid, "✅ Слот записан. Нажмите /resume.")
             elif state == "screenshot_pending":
                 ok = await _write_screenshot_to_sheet(uid, bot)
                 if ok:
@@ -910,11 +787,7 @@ async def flush_pending_writes(bot):
                     req["state"] = "slot_selection"
                     req["_flush_attempts"] = 0
                     slot_requests[uid] = req
-                    await _safe_send(
-                        bot, uid,
-                        "✅ Скриншот записан! Можете продолжить.\n"
-                        "Нажмите /resume для продолжения."
-                    )
+                    await _safe_send(bot, uid, "✅ Скриншот записан. Нажмите /resume.")
         except Exception as e:
             logger.warning(f"⚠️ FLUSH user {uid}: {e}")
 
@@ -965,20 +838,13 @@ async def take_slot_start(callback: CallbackQuery):
 
     from bot.middlewares import is_subscribed
     if not await is_subscribed(user_id, callback.bot):
-        await _safe_send(
-            callback.bot, user_id,
-            f"⚠️ Для использования бота подпишитесь на канал {REQUIRED_CHANNEL_ID}\n"
-            f"После подписки нажмите /start и попробуйте снова."
-        )
+        await _safe_send(callback.bot, user_id, f"⚠️ Подпишитесь на канал {REQUIRED_CHANNEL_ID}")
         return
 
     if user_id in slot_requests:
         state = slot_requests[user_id].get("state")
         if state in ("write_pending", "screenshot_pending"):
-            await _safe_send(
-                callback.bot, user_id,
-                "⏳ Предыдущая запись ещё не завершена. Подожди 1-2 минуты и напиши /resume."
-            )
+            await _safe_send(callback.bot, user_id, "⏳ Предыдущая запись ещё не завершена. Подожди 1-2 минуты и /resume.")
             return
         await _safe_send(callback.bot, user_id, f"❌ У вас уже есть активный слот: {slot_requests[user_id]['platform']}.")
         return
@@ -995,18 +861,13 @@ async def take_slot_start(callback: CallbackQuery):
     time = time_safe.replace('-', ':')
     slot_msg_id = callback.message.message_id
 
-    logger.info(
-        f"🎯 take_slot: user={user_id}, msg_id={slot_msg_id}, "
-        f"platform_cb={platform_from_cb}, count={count}, date={date}, time={time}"
-    )
+    logger.info(f"🎯 take_slot: user={user_id}, msg_id={slot_msg_id}, platform_cb={platform_from_cb}, count={count}")
 
     slot_info = active_slots.get(slot_msg_id)
 
     if not slot_info:
-        platform_slots = [
-            (m, s) for m, s in active_slots.items()
-            if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
-        ]
+        platform_slots = [(m, s) for m, s in active_slots.items()
+                         if s.get("platform") == platform_from_cb and s.get("count", 0) > 0]
         if platform_slots:
             slot_msg_id, slot_info = platform_slots[0]
         else:
@@ -1016,19 +877,13 @@ async def take_slot_start(callback: CallbackQuery):
                 slot_info = db_slots[slot_msg_id]
                 active_slots[slot_msg_id] = slot_info
             else:
-                platform_db = [
-                    (m, s) for m, s in db_slots.items()
-                    if s.get("platform") == platform_from_cb and s.get("count", 0) > 0
-                ]
+                platform_db = [(m, s) for m, s in db_slots.items()
+                              if s.get("platform") == platform_from_cb and s.get("count", 0) > 0]
                 if platform_db:
                     slot_msg_id, slot_info = platform_db[0]
                     active_slots[slot_msg_id] = slot_info
                 else:
-                    await _safe_send(
-                        callback.bot, user_id,
-                        "❌ Слот не найден или уже разобран. Проверьте канал — возможно, слот "
-                        "переопубликован, нажмите «Взять слот» в свежем сообщении, либо /resume."
-                    )
+                    await _safe_send(callback.bot, user_id, "❌ Слот не найден или уже разобран. Проверьте канал.")
                     return
 
     if slot_info.get("count", 0) == 0:
@@ -1041,10 +896,7 @@ async def take_slot_start(callback: CallbackQuery):
     if real_platform is None:
         platform = platform_from_cb
     elif real_platform != platform_from_cb:
-        logger.warning(
-            f"⚠️ take_slot: РАССИНХРОН! callback говорит '{platform_from_cb}', "
-            f"а sheet_title='{sheet_title}' соответствует '{real_platform}'."
-        )
+        logger.warning(f"⚠️ РАССИНХРОН! callback '{platform_from_cb}', sheet '{real_platform}'")
         platform = real_platform
     else:
         platform = real_platform
@@ -1062,7 +914,7 @@ async def take_slot_start(callback: CallbackQuery):
             f"Платформа: <b>{platform}</b>\n"
             f"Установлено: <b>{limit} отзывов в день</b>\n"
             f"Вы уже взяли: <b>{taken_today}</b>\n\n"
-            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.",
+            f"🔄 Сброс: <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.",
             parse_mode="HTML"
         )
         return
@@ -1073,15 +925,13 @@ async def take_slot_start(callback: CallbackQuery):
         "date": date, "time": time, "slot_msg_id": slot_msg_id,
         "state": "waiting_quantity", "assigned_rows": [], "current_index": 0,
         "row_ids": slot_info["row_ids"], "from_menu": False,
-        "mapping": mapping,
-        "sheet_title": sheet_title,
+        "mapping": mapping, "sheet_title": sheet_title,
         "created_business_day": business_day_key()
     }
     await _safe_send(
         callback.bot, user_id,
-        f"📊 Доступно: {slot_info.get('count', count)} шт.\n"
-        f"Сколько выполните?\n\n"
-        f"Если хотите отказаться пропишите команду /cancel."
+        f"📊 Доступно: {slot_info.get('count', count)} шт.\nСколько выполните?\n\n"
+        f"Если хотите отказаться — /cancel."
     )
 
 
@@ -1157,19 +1007,11 @@ async def select_review(callback: CallbackQuery):
     sheet_title = request.get("sheet_title")
 
     if not sheet_title:
-        logger.error(f"❌ select_review: sheet_title пуст у user {user_id} — просим /resume")
-        await callback.answer(
-            "❌ Потеряна сессия. Введите /resume для восстановления.",
-            show_alert=True
-        )
+        await callback.answer("❌ Потеряна сессия. Введите /resume.", show_alert=True)
         return
 
     real_platform = platform_from_sheet_name(sheet_title)
     if real_platform and real_platform != platform:
-        logger.warning(
-            f"⚠️ select_review: рассинхрон! request.platform='{platform}', "
-            f"sheet_title='{sheet_title}' => '{real_platform}'."
-        )
         platform = real_platform
         request["platform"] = platform
         request["mapping"] = get_column_mapping(platform)
@@ -1190,14 +1032,7 @@ async def select_review(callback: CallbackQuery):
         return
 
     if target_row not in request.get("assigned_rows", []):
-        logger.error(
-            f"❌ select_review: row {target_row} НЕ в assigned_rows "
-            f"({request.get('assigned_rows')}) для user {user_id}"
-        )
-        await callback.answer(
-            "❌ Эта строка вам не принадлежит. Введите /resume.",
-            show_alert=True
-        )
+        await callback.answer("❌ Эта строка вам не принадлежит. /resume.", show_alert=True)
         return
 
     request["active_review_row"] = target_row
@@ -1213,11 +1048,8 @@ async def select_review(callback: CallbackQuery):
     try:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
-        logger.error(f"❌ select_review: не открыть лист '{sheet_title}': {e}")
-        await callback.answer(
-            "❌ Ошибка доступа к листу. Введите /resume.",
-            show_alert=True
-        )
+        logger.error(f"❌ select_review: {e}")
+        await callback.answer("❌ Ошибка доступа. /resume.", show_alert=True)
         return
 
     await show_review_info(callback.message, user_id, target_row, sheet, mapping, platform)
@@ -1236,7 +1068,6 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     if len(row) < 30:
         row = row + [""] * (30 - len(row))
 
-    # 🛡️ ЗАЩИТА: проверяем что строка действительно наша и актуальна
     k_val = (row[mapping["executor_col"]-1] if len(row) >= mapping["executor_col"] else "").strip().lstrip("@").lower()
     j_val = (row[mapping["status_col"]-1] if len(row) >= mapping["status_col"] else "").strip().lower()
     row_date = (row[mapping["date_col"]-1] if len(row) >= mapping["date_col"] else "").strip().replace("..", ".")
@@ -1253,22 +1084,20 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         problems.append(f"дата '{row_date}' ≠ '{today_str}'")
 
     if problems:
-        err_msg = "; ".join(problems)
-        logger.error(f"🚫 show_review_info: ОТКАЗ — строка {row_idx}: {err_msg}")
+        logger.error(f"🚫 show_review_info: ОТКАЗ — строка {row_idx}: {'; '.join(problems)}")
         try:
             del slot_requests[user_id]
         except KeyError:
             pass
         await message.edit_text(
             "❌ <b>Строка изменилась.</b>\n\n"
-            "Возможно, в таблице вставили или удалили строку, и номера сдвинулись.\n\n"
-            "Нажми /resume — бот заново найдёт твой слот по нику.",
+            "Возможно, в таблице вставили или удалили строку.\n\n"
+            "Нажми /resume — бот заново найдёт твой слот.",
             parse_mode="HTML"
         )
         return
 
     extra_ids = []
-    logger.info(f"📄 Показ отзыва строка {row_idx}, платформа {platform}, mapping.text_col={mapping.get('text_col')}")
 
     if platform == "про докторов":
         tz_link = row[mapping["tz_col"]-1] if len(row) >= mapping["tz_col"] else ""
@@ -1289,7 +1118,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         if tz_link:
             mid_messages.append(f"📄 <b>ТЗ</b>\n\n{tz_link}")
         if doc_link:
-            mid_messages.append(f"📎 <b>Документ</b> (обязательно прикрепить)\n\n{doc_link}")
+            mid_messages.append(f"📎 <b>Документ</b>\n\n{doc_link}")
         if history:
             mid_messages.append(f"1️⃣ <b>История</b>\n\n{history}")
         if like:
@@ -1299,8 +1128,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
         try:
             await message.edit_text(mid_messages[0], parse_mode="HTML")
-        except Exception as e:
-            logger.warning(f"Не удалось отредактировать: {e}")
+        except Exception:
             sent = await message.answer(mid_messages[0], parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
@@ -1316,10 +1144,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"Пол: {gender_text}\n"
             f"Кол-во звезд: {stars}\n"
             f"Платформа: {platform_name}\n"
-            f"Ссылка на платформу: {link}\n\n"
-            f"<b>❗ Важно!</b>\n"
-            f"Если в документе нет даты рождения, укажите возраст от 20 лет.\n"
-            f"Если нет даты посещения, укажите в течение последних 7 дней.\n\n"
+            f"Ссылка: {link}\n\n"
             f"{PIN_REMINDER}"
         )
         sent = await message.answer(
@@ -1346,17 +1171,16 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         warning = template["warning"]
 
         gender_clean = (gender or "").strip().upper()
-
         gender_text = ""
         gender_kind = None
         if gender_clean in ("М", "M"):
             gender_kind = "м"
-            gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина с мужским именем на картах."
+            gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина."
         elif gender_clean in ("Ж", "J"):
             gender_kind = "ж"
-            gender_text = "👩 Отзыв женский. Её должна выполнить женщина с женским именем на картах."
+            gender_text = "👩 Отзыв женский. Её должна выполнить женщина."
         else:
-            gender_text = "👤 Отзыв без пола. Может выполнить и мужчина, и женщина."
+            gender_text = "👤 Отзыв без пола."
 
         mid_messages = [SNIPPET_REQ]
         if link:
@@ -1367,32 +1191,16 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             mid_messages.append("⚠️ <b>Текст отзыва не найден.</b>")
 
         if gender_kind == "ж":
-            mid_messages.append(
-                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
-                "Этот текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.\n\n"
-                "Если отзыв напишет парень или с мужского имени — "
-                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
-                "Пожалуйста, будьте внимательны!"
-            )
+            mid_messages.append("⚠️ <b>ВАЖНО ПРО ПОЛ!</b> Текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.")
         elif gender_kind == "м":
-            mid_messages.append(
-                "⚠️ <b>ВАЖНО ПРО ПОЛ!</b>\n\n"
-                "Этот текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.\n\n"
-                "Если отзыв напишет девушка или с женского имени — "
-                "отзыв <b>НЕ БУДЕТ ОПЛАЧЕН</b>.\n\n"
-                "Пожалуйста, будьте внимательны!"
-            )
+            mid_messages.append("⚠️ <b>ВАЖНО ПРО ПОЛ!</b> Текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.")
 
         if photo_link:
-            mid_messages.append(
-                f"📸 <b>ФОТО обязательное к прикреплению к отзыву!</b>\n\n{photo_link}\n\n"
-                f"<b>⚠️ ШТРАФ 50% если не прикрепить!</b>"
-            )
+            mid_messages.append(f"📸 <b>ФОТО обязательное к прикреплению!</b>\n\n{photo_link}\n\n<b>⚠️ ШТРАФ 50% если не прикрепить!</b>")
 
         try:
             await message.edit_text(mid_messages[0], parse_mode="HTML")
-        except Exception as e:
-            logger.warning(f"Не удалось отредактировать: {e}")
+        except Exception:
             sent = await message.answer(mid_messages[0], parse_mode="HTML")
             extra_ids.append(sent.message_id)
 
@@ -1407,7 +1215,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
             f"{gender_text}\n\n"
             f"{PIN_REMINDER}\n\n"
             "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
-            "Если хотите отказаться от оставшихся заданий — /cancel.\n\n"
+            "Если хотите отказаться — /cancel.\n\n"
             f"{warning}"
         )
         sent = await message.answer(
@@ -1427,7 +1235,7 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 async def back_to_slot(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена. Введите /resume.", show_alert=True)
+        await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
     if request.get("state") != "working_on_review":
@@ -1436,7 +1244,6 @@ async def back_to_slot(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
 
-    # 1. Удаляем ВСЕ промежуточные сообщения, включая текущее с кнопкой "Вернуться"
     for msg_id in request.get("extra_messages", []):
         try:
             await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
@@ -1447,7 +1254,6 @@ async def back_to_slot(callback: CallbackQuery):
     except Exception:
         pass
 
-    # 2. Сбрасываем состояние
     request["extra_messages"] = []
     request["state"] = "slot_selection"
     request["active_review_row"] = None
@@ -1455,14 +1261,12 @@ async def back_to_slot(callback: CallbackQuery):
 
     await callback.answer()
 
-    # 3. Отправляем НОВОЕ сообщение с кнопками отзывов
     kb = _build_review_buttons(user_id)
     if kb is None:
         sent = await callback.message.answer("✅ Все отзывы из этого слота уже выполнены.")
     else:
         sent = await callback.message.answer("📋 Выберите номер отзыва:", reply_markup=kb)
 
-    # 4. Сохраняем ID нового сообщения
     if user_id in slot_requests:
         req = slot_requests[user_id]
         req["controls_msg_id"] = sent.message_id
@@ -1474,30 +1278,23 @@ async def back_to_slot(callback: CallbackQuery):
 async def handle_screenshot(message: Message):
     user_id = message.from_user.id
 
-    logger.info(
-        f"📸 PHOTO: user={user_id} (@{message.from_user.username}) "
-        f"в slot_requests={user_id in slot_requests}, "
-        f"state={(slot_requests.get(user_id) or {}).get('state')}"
-    )
+    logger.info(f"📸 PHOTO: user={user_id}, state={(slot_requests.get(user_id) or {}).get('state')}")
 
     if user_id not in slot_requests:
         await message.answer(
             "⚠️ Не нашёл вашу активную сессию со слотами.\n\n"
             "Возможные причины:\n"
-            "• Бот перезапускался, и сессия потерялась\n"
+            "• Бот перезапускался\n"
             "• Вы уже сдали все отзывы\n"
             "• Вы отменили задание через /cancel\n\n"
-            "Попробуйте /resume — бот восстановит ваш слот по таблице.\n"
-            "Если не сработает — обратитесь в /support."
+            "Попробуйте /resume."
         )
         return
 
     request = slot_requests[user_id]
 
     if request.get("state") == "screenshot_pending":
-        await message.answer(
-            "⏳ Предыдущий скриншот ещё записывается в таблицу. Подожди 1-2 минуты, потом /resume."
-        )
+        await message.answer("⏳ Предыдущий скриншот ещё записывается. Подожди 1-2 минуты, потом /resume.")
         return
 
     if request.get("state") != "working_on_review":
@@ -1515,21 +1312,12 @@ async def handle_screenshot(message: Message):
         return
 
     if active_row not in request.get("assigned_rows", []):
-        logger.error(
-            f"❌ handle_screenshot: row {active_row} НЕ в assigned_rows "
-            f"({request.get('assigned_rows')}) для user {user_id}"
-        )
-        await message.answer(
-            "❌ Ошибка сессии: строка не принадлежит вам. Введите /resume."
-        )
+        await message.answer("❌ Ошибка сессии: строка не принадлежит вам. /resume.")
         return
 
     sheet_title = request.get("sheet_title")
     if not sheet_title:
-        logger.error(f"❌ handle_screenshot: sheet_title пуст у user {user_id}")
-        await message.answer(
-            "❌ Потеряна сессия. Введите /resume для восстановления."
-        )
+        await message.answer("❌ Потеряна сессия. /resume.")
         return
 
     chat_id = message.chat.id
@@ -1552,8 +1340,8 @@ async def handle_screenshot(message: Message):
     try:
         sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
     except Exception as e:
-        logger.error(f"❌ handle_screenshot: не открыть лист '{sheet_title}': {e}")
-        await message.answer("❌ Лист не найден. Введите /resume.")
+        logger.error(f"❌ handle_screenshot: {e}")
+        await message.answer("❌ Лист не найден. /resume.")
         return
 
     review_id = await retry_api_call(sheet.cell, active_row, mapping["id_col"])
@@ -1570,9 +1358,8 @@ async def handle_screenshot(message: Message):
         request["state"] = "screenshot_pending"
         slot_requests[user_id] = request
         await message.answer(
-            "⏳ <b>Сервер перегружен.</b> Скриншот принят, но ещё не записан в таблицу.\n"
-            "Бот запишет его в фоне и сообщит об этом.\n\n"
-            "Подожди 1-2 минуты, потом напиши /resume.",
+            "⏳ <b>Сервер перегружен.</b> Скриншот принят, но ещё не записан в таблицу.\n\n"
+            "Подожди 1-2 минуты, потом /resume.",
             parse_mode="HTML"
         )
         try:
@@ -1593,7 +1380,6 @@ async def handle_screenshot(message: Message):
         caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
         if SCREENSHOT_CHANNEL_ID:
             await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
-            logger.info(f"📤 Скриншот отправлен в {SCREENSHOT_CHANNEL_ID} от user {user_id}")
     except Exception as e:
         logger.error(f"Ошибка скриншота: {e}")
 
@@ -1627,7 +1413,6 @@ async def handle_screenshot(message: Message):
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
 
-        # 📌 Логируем завершение слота
         try:
             u = get_user(user_id)
             uname = (u.get("tg_username") if u else None) or message.from_user.username or "—"
@@ -1635,8 +1420,7 @@ async def handle_screenshot(message: Message):
                 message.bot, "complete",
                 f"👤 @{uname} (ID: {user_id})\n"
                 f"📋 Платформа: {platform}\n"
-                f"✅ Сдал все: {total} шт\n"
-                f"🔢 Строки: {request.get('assigned_rows', [])}"
+                f"✅ Сдал все: {total} шт"
             )
         except Exception as e:
             logger.warning(f"⚠️ log complete: {e}")
