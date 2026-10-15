@@ -222,7 +222,6 @@ async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
 
 
 async def _delete_slot_message(bot, msg_id: int):
-    """Удаляет сообщение-слот из канала (тихо, если уже удалено)."""
     if not msg_id:
         return
     try:
@@ -288,9 +287,10 @@ async def monitor_schedule(bot):
                     _empty_sheets_cache.pop(sheet_name, None)
 
                 to_publish = []
+                orphan_reset_q = []
                 stats = {"total": 0, "no_date_time": 0, "already_flagged": 0,
                          "blocked_status": 0, "has_executor": 0, "future_time": 0,
-                         "bad_date_format": 0, "too_short": 0}
+                         "bad_date_format": 0, "too_short": 0, "orphans_fixed": 0}
 
                 if not after_close:
                     for row_idx, row in enumerate(records[1:], start=2):
@@ -309,6 +309,19 @@ async def monitor_schedule(bot):
                         flag_second = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
                         flag_third = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
                         flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
+
+                        # 🔧 АВТО-ФИКС СИРОТ: Q/P/O=1, I пусто, K пусто, J пусто/не принят
+                        has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
+                        if (has_qpo_flag
+                                and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
+                            _status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
+                            _executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
+                            if not _executor and _status in ("", "не принят в работу"):
+                                orphan_reset_q.append(row_idx)
+                                flag_first = "0"
+                                flag_second = "0"
+                                flag_third = "0"
+
                         if (flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                                 or flag_final in ("1", "999", "333", "666", "888", "222", "7")):
                             stats["already_flagged"] += 1
@@ -328,31 +341,51 @@ async def monitor_schedule(bot):
                             slot_time = moscow_tz.localize(slot_time)
                         except Exception:
                             stats["bad_date_format"] += 1
-                            _dl = _d.lower()
-                            _tl = _t.lower()
-                            if "дата" in _dl or "впл" in _dl or "время" in _tl or "пбл" in _tl:
-                                continue
-                            if _d in ("", "0") or _t in ("", "0"):
-                                continue
-                            if _d == _t:
-                                continue
                             continue
                         if now >= slot_time:
                             to_publish.append((row_idx, row))
                         else:
                             stats["future_time"] += 1
 
-                    if not to_publish:
-                        logger.info(
-                            f"ℹ️ '{sheet_name}' (platform={platform}): строк {stats['total']}, "
-                            f"время ещё не пришло {stats['future_time']}, "
-                            f"уже с флагом {stats['already_flagged']}, "
-                            f"статус-блок {stats['blocked_status']}, "
-                            f"есть исполнитель {stats['has_executor']}, "
-                            f"нет даты/времени {stats['no_date_time']}, "
-                            f"битый формат {stats['bad_date_format']}, "
-                            f"коротких {stats['too_short']}"
+                # 🔧 Сброс Q/P/O и S у строк-сирот
+                if orphan_reset_q:
+                    try:
+                        batch_orphan = []
+                        col_q = chr(64 + mapping["flag_first_col"])
+                        col_p = chr(64 + mapping["flag_second_col"])
+                        col_o = chr(64 + mapping["flag_third_col"])
+                        col_s = chr(64 + mapping["id_col"])
+                        for r in orphan_reset_q:
+                            batch_orphan.append({"range": f"{col_q}{r}", "values": [[0]]})
+                            batch_orphan.append({"range": f"{col_p}{r}", "values": [[0]]})
+                            batch_orphan.append({"range": f"{col_o}{r}", "values": [[0]]})
+                            batch_orphan.append({"range": f"{col_s}{r}", "values": [[""]]})
+                        for i in range(0, len(batch_orphan), 50):
+                            await retry_api_call(sheet.batch_update, batch_orphan[i:i+50])
+                            await asyncio.sleep(0.6)
+                        stats["orphans_fixed"] = len(orphan_reset_q)
+                        logger.warning(
+                            f"🔧 '{sheet_name}': сбросил Q/P/O=0 и S='' у {len(orphan_reset_q)} строк-сирот"
                         )
+                        # добавляем их в to_publish
+                        for r_idx in orphan_reset_q:
+                            if r_idx - 1 < len(records):
+                                to_publish.append((r_idx, records[r_idx - 1]))
+                    except Exception as e:
+                        logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
+
+                if not to_publish:
+                    logger.info(
+                        f"ℹ️ '{sheet_name}' (platform={platform}): строк {stats['total']}, "
+                        f"время ещё не пришло {stats['future_time']}, "
+                        f"уже с флагом {stats['already_flagged']}, "
+                        f"статус-блок {stats['blocked_status']}, "
+                        f"есть исполнитель {stats['has_executor']}, "
+                        f"нет даты/времени {stats['no_date_time']}, "
+                        f"битый формат {stats['bad_date_format']}, "
+                        f"коротких {stats['too_short']}, "
+                        f"🔧 сирот-починено {stats.get('orphans_fixed', 0)}"
+                    )
 
                 existing_msg_id = None
                 slot = None
@@ -651,6 +684,7 @@ async def monitor_schedule(bot):
 
 
 async def _check_republish(bot, client, now):
+    """Переопубликация слотов через 2 часа. Сначала публикуем, потом флаги."""
     spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
     expired_slots = []
 
@@ -734,11 +768,34 @@ async def _check_republish(bot, client, now):
     for msg_id, slot, available_rows, slot_mapping in expired_slots:
         new_attempt = slot["attempt"] + 1
         logger.info(f"🔄 Переопубликация {slot['platform']} (попытка {new_attempt}, строк {len(available_rows)})")
+
+        # 1. СНАЧАЛА публикуем — если упадёт, флаг НЕ ставим
+        new_text, kb = build_slot_message(slot["platform"], len(available_rows), slot["date"], slot["time"])
+        sent_msg = None
+        try:
+            sent_msg = await bot.send_message(
+                chat_id=CHANNEL_ID, text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"❌ Переопубликация {slot['platform']}: не удалось отправить: {e} — флаги НЕ ставлю")
+            continue
+
+        # 2. После успешной публикации — удаляем старый слот и ставим флаг
         await _delete_slot_message(bot, msg_id)
         try:
             del active_slots[msg_id]
         except KeyError:
             pass
+
+        save_channel_message(sent_msg.message_id, CHANNEL_ID)
+        active_slots[sent_msg.message_id] = {
+            "platform": slot["platform"], "count": len(available_rows),
+            "initial_count": len(available_rows), "row_ids": available_rows,
+            "date": slot["date"], "time": slot["time"],
+            "publish_time": datetime.now(moscow_tz),
+            "attempt": new_attempt, "mapping": slot_mapping,
+            "sheet_title": slot.get("sheet_title")
+        }
 
         col = None
         if new_attempt == 2:
@@ -758,23 +815,9 @@ async def _check_republish(bot, client, now):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
                     await asyncio.sleep(0.6)
             except Exception as e:
-                logger.error(f"❌ Флаги: {e}")
+                logger.error(f"❌ Флаги (слот уже опубликован): {e}")
 
-        new_text, kb = build_slot_message(slot["platform"], len(available_rows), slot["date"], slot["time"])
-        try:
-            sent_msg = await bot.send_message(chat_id=CHANNEL_ID, text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-            save_channel_message(sent_msg.message_id, CHANNEL_ID)
-            active_slots[sent_msg.message_id] = {
-                "platform": slot["platform"], "count": len(available_rows),
-                "initial_count": len(available_rows), "row_ids": available_rows,
-                "date": slot["date"], "time": slot["time"],
-                "publish_time": datetime.now(moscow_tz),
-                "attempt": new_attempt, "mapping": slot_mapping,
-                "sheet_title": slot.get("sheet_title")
-            }
-            logger.info(f"✅ Переопубликован {slot['platform']} ({len(available_rows)} шт)")
-        except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+        logger.info(f"✅ Переопубликован {slot['platform']} ({len(available_rows)} шт, msg {sent_msg.message_id}, attempt={new_attempt})")
 
 
 async def _close_day(bot, client, now, current_business_day: str) -> bool:
@@ -816,8 +859,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         headers_row = records[0] if records else None
         mapping = get_column_mapping(platform_key, headers_row)
 
-        # 🛡️ ВАЖНО: если в таблице есть «на модерации»/«опубликован»/«удален» —
-        # значит юзер что-то сдал, no_show=False, чтобы не слать «не выполнили».
+        # Проверка таблицы перед "не выполнили"
         if no_show:
             for row_idx in assigned_rows:
                 if row_idx - 1 >= len(records):
@@ -830,7 +872,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                         or j_val.startswith("опубликован")
                         or j_val == "удален"):
                     no_show = False
-                    logger.info(f"🔧 user {user_id}: обнаружено '{j_val}' в строке {row_idx} — отменяю no_show")
+                    logger.info(f"🔧 user {user_id}: '{j_val}' в строке {row_idx} — отменяю no_show")
                     break
 
         batch = []
@@ -859,7 +901,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             if _is_status(j_val, "на модерации") and not _is_status(j_val, "на модерации с опз"):
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["на модерации с ОПЗ"]]})
             elif _is_status(j_val, "в работе"):
-                # J → "не принят в работу", I → 222
                 batch.append({"range": f"{col_j}{row_idx}", "values": [["не принят в работу"]]})
                 if no_show:
                     cells_to_red.append((row_idx, mapping["executor_col"]))
@@ -879,7 +920,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
                     await asyncio.sleep(0.6)
             except Exception as e:
-                logger.error(f"❌ user {user_id}: batch_update: {e} — оставляю для повтора")
+                logger.error(f"❌ user {user_id}: batch_update: {e}")
                 any_critical_error = True
                 continue
 
@@ -895,7 +936,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             except Exception as e:
                 logger.warning(f"⚠️ user {user_id}: не закрасить K: {e}")
 
-        # Уведомление — только если реальный no_show
         if no_show:
             try:
                 await bot.send_message(user_id, "⚠️ Не выполнили задачи до 23:59. Оплата на 30% ниже.")
@@ -906,7 +946,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         to_remove.append(user_id)
 
-    # Обработка слотов — неразобранные строки → 888 + удаление сообщения
+    # Обработка слотов — неразобранные строки → 888 + сброс Q/P/O + удаление сообщения
     taken_rows_by_sheet = {}
     for _uid, _req in all_requests:
         _st = _req.get("sheet_title")
@@ -951,10 +991,26 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 continue
             i_val = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
             q_val = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
+            p_val = row[mapping["flag_second_col"]-1].strip() if len(row) >= mapping["flag_second_col"] else ""
+            o_val = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
+            s_val = row[mapping["id_col"]-1].strip() if len(row) >= mapping["id_col"] else ""
+
             col_i_letter = chr(64 + mapping["flag_final_col"])
             col_q = chr(64 + mapping["flag_first_col"])
-            if q_val != "1":
-                batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
+            col_p = chr(64 + mapping["flag_second_col"])
+            col_o = chr(64 + mapping["flag_third_col"])
+            col_s = chr(64 + mapping["id_col"])
+
+            # 🔧 Сбрасываем Q/P/O/S чтобы строка вернулась в пул на след. день
+            if q_val in ("1", "999"):
+                batch.append({"range": f"{col_q}{row_idx}", "values": [[0]]})
+            if p_val == "1":
+                batch.append({"range": f"{col_p}{row_idx}", "values": [[0]]})
+            if o_val == "1":
+                batch.append({"range": f"{col_o}{row_idx}", "values": [[0]]})
+            if s_val:
+                batch.append({"range": f"{col_s}{row_idx}", "values": [[""]]})
+
             if i_val == "888":
                 cells_to_blue.append((row_idx, mapping["flag_final_col"]))
                 continue
@@ -1059,7 +1115,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         except KeyError:
             pass
 
-    # Удаляем сообщения слотов
     for msg_id in ok_slots_to_delete:
         try:
             del active_slots[msg_id]
@@ -1336,13 +1391,13 @@ async def cleanup_channel(bot):
         except Exception:
             last_cleanup_date = None
 
-    # Fallback: при старте, если сегодняшняя очистка ещё не проходила
+    # Fallback: при старте
     try:
         now_boot = datetime.now(moscow_tz)
         today_boot = now_boot.date()
         target_boot = now_boot.replace(hour=4, minute=30, second=0, microsecond=0)
         if now_boot >= target_boot and last_cleanup_date != today_boot:
-            logger.info("🧹 Стартовая очистка: последняя очистка раньше сегодняшних 4:30")
+            logger.info("🧹 Стартовая очистка")
             cutoff_msk = target_boot
             cutoff_utc = cutoff_msk.astimezone(pytz.utc).replace(tzinfo=None)
             cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
@@ -1386,7 +1441,6 @@ async def cleanup_channel(bot):
                 cutoff_msk = today_target
                 cutoff_utc = cutoff_msk.astimezone(pytz.utc).replace(tzinfo=None)
                 cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(f"🧹 Отсечка: до {cutoff_msk.strftime('%d.%m.%Y %H:%M')} МСК")
 
                 with sqlite3.connect(DB_PATH) as conn:
                     conn.row_factory = sqlite3.Row
@@ -1394,7 +1448,6 @@ async def cleanup_channel(bot):
                     cur.execute("SELECT id, message_id, chat_id FROM channel_messages WHERE created_at < ?", (cutoff_str,))
                     old = [dict(r) for r in cur.fetchall()]
 
-                logger.info(f"🧹 Найдено сообщений: {len(old)}")
                 deleted = 0
                 failed = 0
                 for msg in old:
@@ -1402,7 +1455,7 @@ async def cleanup_channel(bot):
                         await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
                         deleted += 1
                         await asyncio.sleep(0.3)
-                    except Exception as e:
+                    except Exception:
                         failed += 1
                     finally:
                         try:
@@ -1426,7 +1479,6 @@ async def cleanup_channel(bot):
             else:
                 next_target = today_target + timedelta(days=1)
             wait = (next_target - now).total_seconds()
-            logger.info(f"⏳ Следующая очистка: {next_target.strftime('%d.%m.%Y %H:%M')}")
             await asyncio.sleep(min(wait, 3600) if wait > 3600 else max(wait, 60))
         except Exception as e:
             logger.error(f"❌ Очистка: {e}", exc_info=True)
