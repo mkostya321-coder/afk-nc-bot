@@ -258,6 +258,14 @@ async def monitor_schedule(bot):
 
             after_close = (now.hour == 23 and now.minute >= 30) or (now.hour < 4) or (now.hour == 4 and now.minute < 30)
 
+            # Текущий бизнес-день — "16.10.2026"
+            current_bd_iso = business_day_key(now)
+            try:
+                bd_dt = datetime.strptime(current_bd_iso, "%Y-%m-%d")
+                current_bd_str = bd_dt.strftime("%d.%m.%Y")
+            except Exception:
+                current_bd_str = now.strftime("%d.%m.%Y")
+
             for sheet in worksheets:
                 sheet_name = sheet.title
                 platform = platform_from_sheet_name(sheet_name)
@@ -288,9 +296,11 @@ async def monitor_schedule(bot):
 
                 to_publish = []
                 orphan_reset_q = []
+                expired_rows = []   # строки с датой в прошлом → I=888
                 stats = {"total": 0, "no_date_time": 0, "already_flagged": 0,
                          "blocked_status": 0, "has_executor": 0, "future_time": 0,
-                         "bad_date_format": 0, "too_short": 0, "orphans_fixed": 0}
+                         "bad_date_format": 0, "too_short": 0, "orphans_fixed": 0,
+                         "expired_date": 0}
 
                 if not after_close:
                     for row_idx, row in enumerate(records[1:], start=2):
@@ -334,8 +344,21 @@ async def monitor_schedule(bot):
                         if executor:
                             stats["has_executor"] += 1
                             continue
+
                         _d = (date_str or "").strip().replace("..", ".")
                         _t = (time_str or "").strip().replace("..", ":")
+
+                        # 🛡️ ФИЛЬТР ПО ДАТЕ: только текущий бизнес-день
+                        if _d and _d != current_bd_str:
+                            if _d < current_bd_str:
+                                # Дата в прошлом → ставим I=888, больше не публикуем
+                                stats["expired_date"] += 1
+                                expired_rows.append(row_idx)
+                            else:
+                                # Дата в будущем → ждём
+                                stats["future_time"] += 1
+                            continue
+
                         try:
                             slot_time = datetime.strptime(f"{_d} {_t}", "%d.%m.%Y %H:%M")
                             slot_time = moscow_tz.localize(slot_time)
@@ -367,17 +390,33 @@ async def monitor_schedule(bot):
                         logger.warning(
                             f"🔧 '{sheet_name}': сбросил Q/P/O=0 и S='' у {len(orphan_reset_q)} строк-сирот"
                         )
-                        # добавляем их в to_publish
                         for r_idx in orphan_reset_q:
                             if r_idx - 1 < len(records):
                                 to_publish.append((r_idx, records[r_idx - 1]))
                     except Exception as e:
                         logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
 
+                # 🔧 Строки с просроченной датой → I=888 (не публикуем больше)
+                if expired_rows:
+                    try:
+                        col_i = chr(64 + mapping["flag_final_col"])
+                        batch_exp = []
+                        for r in expired_rows:
+                            batch_exp.append({"range": f"{col_i}{r}", "values": [[888]]})
+                        for i in range(0, len(batch_exp), 50):
+                            await retry_api_call(sheet.batch_update, batch_exp[i:i+50])
+                            await asyncio.sleep(0.6)
+                        logger.warning(
+                            f"🔧 '{sheet_name}': проставил I=888 у {len(expired_rows)} строк с просроченной датой"
+                        )
+                    except Exception as e:
+                        logger.error(f"❌ Просроченные даты '{sheet_name}': {e}")
+
                 if not to_publish:
                     logger.info(
                         f"ℹ️ '{sheet_name}' (platform={platform}): строк {stats['total']}, "
                         f"время ещё не пришло {stats['future_time']}, "
+                        f"просроченная дата {stats.get('expired_date', 0)}, "
                         f"уже с флагом {stats['already_flagged']}, "
                         f"статус-блок {stats['blocked_status']}, "
                         f"есть исполнитель {stats['has_executor']}, "
@@ -859,7 +898,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
         headers_row = records[0] if records else None
         mapping = get_column_mapping(platform_key, headers_row)
 
-        # Проверка таблицы перед "не выполнили"
         if no_show:
             for row_idx in assigned_rows:
                 if row_idx - 1 >= len(records):
@@ -946,7 +984,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
 
         to_remove.append(user_id)
 
-    # Обработка слотов — неразобранные строки → 888 + сброс Q/P/O + удаление сообщения
+    # Обработка слотов — неразобранные строки → 888 + сброс Q/P/O/S + удаление сообщения
     taken_rows_by_sheet = {}
     for _uid, _req in all_requests:
         _st = _req.get("sheet_title")
@@ -1001,7 +1039,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             col_o = chr(64 + mapping["flag_third_col"])
             col_s = chr(64 + mapping["id_col"])
 
-            # 🔧 Сбрасываем Q/P/O/S чтобы строка вернулась в пул на след. день
             if q_val in ("1", "999"):
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[0]]})
             if p_val == "1":
@@ -1097,7 +1134,6 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 logger.error(f"❌ '{sheet_name_s}': сироты: {e}")
                 any_critical_error = True
 
-    # Удаляем сессии и их сообщения
     for user_id in to_remove:
         request = slot_requests.get(user_id) or {}
         instr_id = request.get("instruction_msg_id")
@@ -1391,7 +1427,6 @@ async def cleanup_channel(bot):
         except Exception:
             last_cleanup_date = None
 
-    # Fallback: при старте
     try:
         now_boot = datetime.now(moscow_tz)
         today_boot = now_boot.date()
