@@ -16,6 +16,7 @@ from bot.database import (
 )
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
+from bot.logging_helpers import log_user_event
 from bot.state import active_slots, slot_requests
 import pytz
 
@@ -318,6 +319,20 @@ async def cancel_task(message: Message):
         f"• Невыполненные: {len(remaining)} – вернулись в свободные"
     )
 
+    # 📌 Логируем отказ в LOG_USER_ID
+    try:
+        user = get_user(user_id)
+        uname = (user.get("tg_username") if user else None) or message.from_user.username or "—"
+        await log_user_event(
+            message.bot, "cancel",
+            f"👤 @{uname} (ID: {user_id})\n"
+            f"📋 Платформа: {platform}\n"
+            f"✅ Выполнено: {len(completed)} из {len(ordered)}\n"
+            f"❌ Отказался от: {len(remaining)}"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ log cancel: {e}")
+
 
 # ============ RESUME ============
 @router.message(Command("resume"))
@@ -548,34 +563,34 @@ async def handle_quantity_input(message: Message):
         slot_info["count"] = len(slot_info["row_ids"])
         active_slots[slot_msg_id] = slot_info
 
-        try:
-            new_text, kb = build_slot_message(
-                slot_info.get("platform", platform),
-                slot_info["count"],
-                slot_info.get("date") or "",
-                slot_info.get("time") or ""
-            )
-            await message.bot.edit_message_text(
-                chat_id=CHANNEL_ID, message_id=slot_msg_id,
-                text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
-            )
-            logger.info(f"🔄 Слот {slot_info.get('platform', platform)} обновлён до {slot_info['count']} шт после взятия")
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось обновить сообщение слота после взятия: {e}")
-
         if slot_info["count"] == 0:
+            # 🆕 Слот разобран → сразу удаляем сообщение из канала
             try:
-                await message.bot.edit_message_text(
-                    chat_id=CHANNEL_ID,
-                    message_id=slot_msg_id,
-                    text="🔥 Слот полностью разобран. Ожидайте следующий."
-                )
+                await message.bot.delete_message(chat_id=CHANNEL_ID, message_id=slot_msg_id)
+                logger.info(f"🗑️ Слот {platform} (msg {slot_msg_id}) разобран и удалён")
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось отредактировать: {e}")
+                err = str(e).lower()
+                if "message to delete not found" not in err:
+                    logger.warning(f"⚠️ Не удалить сообщение слота: {e}")
             try:
                 del active_slots[slot_msg_id]
             except KeyError:
                 pass
+        else:
+            try:
+                new_text, kb = build_slot_message(
+                    slot_info.get("platform", platform),
+                    slot_info["count"],
+                    slot_info.get("date") or "",
+                    slot_info.get("time") or ""
+                )
+                await message.bot.edit_message_text(
+                    chat_id=CHANNEL_ID, message_id=slot_msg_id,
+                    text=new_text, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+                logger.info(f"🔄 Слот {slot_info.get('platform', platform)} обновлён до {slot_info['count']} шт после взятия")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось обновить сообщение слота после взятия: {e}")
 
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     logger.info(f"📝 Записываем {username} в K (столбец {mapping['executor_col']}), строки: {assigned_rows}")
@@ -622,6 +637,20 @@ async def handle_quantity_input(message: Message):
     if instr_id:
         request["instruction_msg_id"] = instr_id
         slot_requests[user_id] = request
+
+    # 📌 Логируем взятие слота
+    try:
+        u = get_user(user_id)
+        uname = (u.get("tg_username") if u else None) or message.from_user.username or "—"
+        await log_user_event(
+            message.bot, "take_slot",
+            f"👤 @{uname} (ID: {user_id})\n"
+            f"📋 Платформа: {platform}\n"
+            f"📊 Взял: {quantity} шт\n"
+            f"🔢 Строки: {assigned_rows}"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ log take_slot: {e}")
 
 
 # ============ ЗАПИСЬ СЛОТА ============
@@ -1597,6 +1626,21 @@ async def handle_screenshot(message: Message):
                 pass
         await unpin_instruction(user_id, message.bot)
         await message.answer("✅ Все отзывы отправлены на модерацию!")
+
+        # 📌 Логируем завершение слота
+        try:
+            u = get_user(user_id)
+            uname = (u.get("tg_username") if u else None) or message.from_user.username or "—"
+            await log_user_event(
+                message.bot, "complete",
+                f"👤 @{uname} (ID: {user_id})\n"
+                f"📋 Платформа: {platform}\n"
+                f"✅ Сдал все: {total} шт\n"
+                f"🔢 Строки: {request.get('assigned_rows', [])}"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ log complete: {e}")
+
         del slot_requests[user_id]
         return
     await message.answer(
