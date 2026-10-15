@@ -20,10 +20,13 @@ from bot.handlers import user, admin, slots, promo
 from bot.handlers.admin_advanced import router as admin_advanced_router
 from bot.middlewares import AutoMenuMiddleware
 from bot.username_checker import username_checker
+from bot.state import active_slots
 import sqlite3
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+moscow_tz = pytz.timezone("Europe/Moscow")
 
 app = Flask(__name__)
 
@@ -74,7 +77,7 @@ async def validate_chat_ids(bot):
 
 
 async def scheduler(bot):
-    moscow_tz = pytz.timezone("Europe/Moscow")
+    """Утреннее приветствие (8:00) и вечернее прощание (22:30) в канал."""
     while True:
         now = datetime.now(moscow_tz)
         morning_target = now.replace(hour=8, minute=0, second=0, microsecond=0)
@@ -109,7 +112,7 @@ async def scheduler(bot):
 
 
 async def weekly_payout_report(bot):
-    moscow_tz = pytz.timezone("Europe/Moscow")
+    """Отчёт по выплатам каждый четверг в 8:00 МСК."""
     while True:
         now = datetime.now(moscow_tz)
         days_ahead = (3 - now.weekday() + 7) % 7
@@ -211,6 +214,76 @@ async def weekly_payout_report(bot):
             logging.error(f"Ошибка еженедельного отчета: {e}")
 
 
+async def auto_close_slots_2330(bot):
+    """
+    🆕 В 23:30 МСК — принудительно закрываем все активные слоты:
+    • Удаляем сообщения слотов из канала
+    • Очищаем active_slots
+    • Больше не публикуем новые слоты (monitor_schedule проверяет after_close)
+    Сессии юзеров (slot_requests) НЕ трогаем — они уже взяли строки, у них до 23:59 на сдачу.
+    """
+    while True:
+        try:
+            now = datetime.now(moscow_tz)
+            target = now.replace(hour=23, minute=30, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait = (target - now).total_seconds()
+            logger.info(f"⏳ auto_close_slots_2330: следующее закрытие в {target.strftime('%d.%m.%Y %H:%M')} МСК (через {wait/60:.1f} мин)")
+            await asyncio.sleep(wait)
+        except Exception as e:
+            logger.error(f"❌ auto_close_slots_2330 sleep: {e}")
+            await asyncio.sleep(60)
+            continue
+
+        # Сработало — закрываем слоты
+        try:
+            now = datetime.now(moscow_tz)
+            logger.info(f"🌙 auto_close_slots_2330: закрываю все слоты ({now.strftime('%H:%M')} МСК)")
+
+            slots_snapshot = list(active_slots.items())
+            logger.info(f"🌙 Слотов к закрытию: {len(slots_snapshot)}")
+
+            deleted = 0
+            failed = 0
+            for msg_id, slot in slots_snapshot:
+                try:
+                    await bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
+                    deleted += 1
+                    logger.info(f"🗑️ Удалён слот {slot.get('platform')} (msg {msg_id}, {len(slot.get('row_ids', []))} строк)")
+                except Exception as e:
+                    err = str(e).lower()
+                    if "message to delete not found" in err or "message can't be deleted" in err:
+                        pass
+                    else:
+                        failed += 1
+                        logger.warning(f"⚠️ Не удалить слот {msg_id}: {e}")
+                try:
+                    del active_slots[msg_id]
+                except KeyError:
+                    pass
+                await asyncio.sleep(0.3)
+
+            logger.info(f"✅ auto_close_slots_2330: удалено {deleted}, ошибок {failed}, active_slots теперь {len(active_slots)}")
+
+            # Уведомляем админов через лог-канал
+            if LOG_CHANNEL_ID:
+                try:
+                    await bot.send_message(
+                        LOG_CHANNEL_ID,
+                        f"🌙 <b>23:30 — слоты закрыты</b>\n\n"
+                        f"🗑️ Удалено сообщений: {deleted}\n"
+                        f"⚠️ Ошибок удаления: {failed}\n"
+                        f"📊 Активных слотов: {len(active_slots)}",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ не отправить лог в LOG_CHANNEL_ID: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ auto_close_slots_2330 закрытие: {e}", exc_info=True)
+
+
 async def main():
     init_db()
     bot = Bot(token=BOT_TOKEN)
@@ -236,6 +309,7 @@ async def main():
     asyncio.create_task(weekly_payout_report(bot))
     asyncio.create_task(username_checker(bot))
     asyncio.create_task(cleanup_channel(bot))
+    asyncio.create_task(auto_close_slots_2330(bot))  # 🆕
 
     await dp.start_polling(bot)
 
