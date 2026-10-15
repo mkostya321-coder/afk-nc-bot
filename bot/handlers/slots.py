@@ -28,6 +28,12 @@ moscow_tz = pytz.timezone("Europe/Moscow")
 MAX_SCREENSHOT_ATTEMPTS = 3
 
 
+def _norm_slots(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lower().replace("\xa0", " ").replace("\u200b", "")
+
+
 async def _safe_send(bot, chat_id: int, text: str, **kwargs):
     try:
         return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
@@ -426,6 +432,19 @@ async def handle_quantity_input(message: Message):
             return
 
     row_ids = slot_info["row_ids"]
+
+    # 🛡️ Если строк нет — слот мёртв
+    if not row_ids:
+        await message.answer(
+            "⚠️ Этот слот уже разобран или содержит только неактуальные строки."
+        )
+        try:
+            del active_slots[slot_msg_id]
+        except KeyError:
+            pass
+        del slot_requests[user_id]
+        return
+
     if len(row_ids) < quantity:
         await message.answer("❌ Свободных меньше. Попробуйте заново.")
         del slot_requests[user_id]
@@ -920,6 +939,49 @@ async def take_slot_start(callback: CallbackQuery):
         return
 
     mapping = slot_info.get("mapping") or get_column_mapping(platform)
+
+    # 🛡️ Проверяем, есть ли реально свободные строки на сегодня
+    free_count = 0
+    try:
+        client_check = get_client()
+        if client_check:
+            spreadsheet_check = await asyncio.to_thread(client_check.open_by_key, SHEET_ID)
+            sheet_check = await asyncio.to_thread(spreadsheet_check.worksheet, sheet_title)
+            records_check = await retry_api_call(sheet_check.get_all_values)
+
+            today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+            for ridx in slot_info["row_ids"]:
+                if ridx - 1 >= len(records_check):
+                    continue
+                rrow = records_check[ridx - 1]
+                rstatus = _norm_slots(rrow[mapping["status_col"]-1]) if len(rrow) >= mapping["status_col"] else ""
+                rexec = rrow[mapping["executor_col"]-1].strip() if len(rrow) >= mapping["executor_col"] else ""
+                rdate = rrow[mapping["date_col"]-1].strip().replace("..", ".") if len(rrow) >= mapping["date_col"] else ""
+                if rexec or rstatus in ("в работе", "на модерации", "на модерации с опз"):
+                    continue
+                if rdate and rdate != today_str:
+                    continue
+                free_count += 1
+
+            if free_count == 0:
+                await _safe_send(
+                    callback.bot, user_id,
+                    "⚠️ В этом слоте больше нет актуальных строк на сегодня.\n"
+                    "Ожидайте следующий слот."
+                )
+                try:
+                    await callback.bot.delete_message(chat_id=CHANNEL_ID, message_id=slot_msg_id)
+                except Exception:
+                    pass
+                try:
+                    del active_slots[slot_msg_id]
+                except KeyError:
+                    pass
+                return
+    except Exception as e:
+        logger.warning(f"⚠️ take_slot проверка дат: {e}")
+        free_count = slot_info.get("count", count)
+
     slot_requests[user_id] = {
         "platform": platform, "count": slot_info.get("count", count),
         "date": date, "time": time, "slot_msg_id": slot_msg_id,
@@ -930,7 +992,7 @@ async def take_slot_start(callback: CallbackQuery):
     }
     await _safe_send(
         callback.bot, user_id,
-        f"📊 Доступно: {slot_info.get('count', count)} шт.\nСколько выполните?\n\n"
+        f"📊 Доступно: {free_count} шт.\nСколько выполните?\n\n"
         f"Если хотите отказаться — /cancel."
     )
 
