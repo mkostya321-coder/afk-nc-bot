@@ -387,10 +387,6 @@ def get_promo_schedule(user_id: int) -> dict:
 
 # ============ WARNINGS ============
 def add_warning(user_id: int, reason: str, warned_by: int, days: int = 30):
-    """
-    Выдаёт предупреждение на N дней (7..30).
-    Активные предупреждения НЕ продлеваются — каждый варн живёт свои дни.
-    """
     if days < 7:
         days = 7
     if days > 30:
@@ -425,7 +421,6 @@ def get_active_warnings(user_id: int) -> list:
 
 
 def extend_warnings_expiry(user_id: int, days: int = 45):
-    """Оставлено для совместимости. Не вызывается при add_warning."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -437,7 +432,6 @@ def extend_warnings_expiry(user_id: int, days: int = 45):
 
 
 def remove_last_warning(user_id: int) -> bool:
-    """Удаляет последнее активное предупреждение. True если удалилось."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -455,7 +449,6 @@ def remove_last_warning(user_id: int) -> bool:
 
 
 def remove_all_warnings(user_id: int) -> int:
-    """Удаляет все активные предупреждения. Возвращает количество удалённых."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -468,10 +461,6 @@ def remove_all_warnings(user_id: int) -> int:
 
 
 def get_all_users_with_active_warnings() -> list:
-    """
-    Все юзеры, у кого есть активные варны.
-    Возвращает: [{user_id, tg_username, name, warnings: [{reason, created_at, expires_at, warned_by}]}]
-    """
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -538,25 +527,61 @@ def get_all_registered_users():
         return [dict(row) for row in cur.fetchall()]
 
 
+# ============ ЛИМИТЫ (ИСПРАВЛЕНО: TZ + возврат) ============
 def add_review_take(user_id: int, platform: str):
+    """Записывает взятие отзыва. Время — МСК без TZ (для корректного сравнения)."""
+    moscow_tz = pytz.timezone("Europe/Moscow")
+    now_msk = datetime.now(moscow_tz).replace(tzinfo=None)
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO review_takes (user_id, platform) VALUES (?, ?)", (user_id, platform))
+        cur.execute(
+            "INSERT INTO review_takes (user_id, platform, taken_at) VALUES (?, ?, ?)",
+            (user_id, platform, now_msk.strftime("%Y-%m-%d %H:%M:%S"))
+        )
         conn.commit()
 
 
+def remove_review_takes(user_id: int, platform: str, count: int) -> int:
+    """
+    Удаляет COUNT последних записей из review_takes.
+    Возвращает количество удалённых. Используется при /cancel.
+    """
+    if count <= 0:
+        return 0
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id FROM review_takes
+            WHERE user_id = ? AND platform = ?
+            ORDER BY taken_at DESC, id DESC
+            LIMIT ?
+        """, (user_id, platform, count))
+        ids = [row[0] for row in cur.fetchall()]
+        if not ids:
+            return 0
+        placeholders = ','.join(['?'] * len(ids))
+        cur.execute(f"DELETE FROM review_takes WHERE id IN ({placeholders})", ids)
+        conn.commit()
+        return len(ids)
+
+
 def count_review_takes_last_24h(user_id: int, platform: str) -> int:
+    """
+    Считает взятия с последнего сброса (10:00 МСК).
+    Оба времени — МСК без TZ.
+    """
     moscow_tz = pytz.timezone("Europe/Moscow")
     now = datetime.now(moscow_tz)
     today_10am = now.replace(hour=10, minute=0, second=0, microsecond=0)
     if now < today_10am:
         today_10am -= timedelta(days=1)
+    cutoff_str = today_10am.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT COUNT(*) FROM review_takes
             WHERE user_id = ? AND platform = ? AND taken_at > ?
-        """, (user_id, platform, today_10am.isoformat()))
+        """, (user_id, platform, cutoff_str))
         return cur.fetchone()[0]
 
 
@@ -608,6 +633,20 @@ def get_effective_limit(user_id: int, platform: str) -> int:
     return get_limit(platform)
 
 
+def cleanup_old_review_takes(days: int = 7) -> int:
+    """Удаляет старые записи из review_takes (старше N дней)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM review_takes WHERE taken_at < datetime('now', '-' || ? || ' days')",
+            (days,)
+        )
+        count = cur.rowcount
+        conn.commit()
+        return count
+
+
+# ============ CHANNEL ============
 def save_channel_message(message_id: int, chat_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -633,6 +672,7 @@ def delete_channel_message(record_id: int):
         conn.commit()
 
 
+# ============ ACTIVE SLOTS ============
 def save_active_slot(msg_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -683,6 +723,7 @@ def get_all_active_slots() -> dict:
         return result
 
 
+# ============ SLOT REQUESTS ============
 def save_slot_request(user_id: int, data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
