@@ -22,6 +22,7 @@ from bot.database import (
 )
 from bot.keyboards.reply import main_menu_keyboard
 from bot.middlewares import is_subscribed
+from bot.logging_helpers import log_user_event
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -481,7 +482,6 @@ async def menu_help(message: Message):
         "/money – Полная информация по системе выплат\n"
         "/tiktok – Справка по Tik Tok\n"
         "/support – Заявка в поддержку\n\n"
-        f"По всем вопросам: @{MANAGER_USERNAME}"
     )
     user = get_user(message.from_user.id)
     is_reg = user and user.get("name") is not None
@@ -604,6 +604,7 @@ async def process_support(message: Message, state: FSMContext):
     await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
 
+# ---------- Реферальная система (кнопка главного меню) ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
     logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id}")
@@ -670,6 +671,7 @@ async def referral_invite(callback: CallbackQuery):
         await callback.answer("Ошибка", show_alert=True)
 
 
+# ---------- Регистрация ----------
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
@@ -762,6 +764,22 @@ async def process_bank(message: Message, state: FSMContext):
     update_user_field(user_id, "bank", message.text.strip())
     update_user_field(user_id, "registered_at", datetime.now().isoformat())
     await state.clear()
+
+    # 📌 Логируем регистрацию в LOG_USER_ID
+    try:
+        referrer = data.get("referrer", "0")
+        referrer_text = "❌ не указал" if referrer == "0" else f"✅ @{referrer}"
+        await log_user_event(
+            message.bot, "register",
+            f"👤 @{data['tg_username']} (ID: {user_id})\n"
+            f"📛 Имя: {data['name']}\n"
+            f"🏙 Город: {data['city']}\n"
+            f"🕒 Время от МСК: {data['timezone']}\n"
+            f"👥 Реферал: {referrer_text}"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ log register: {e}")
+
     await message.answer(
         "✅ Отлично, регистрация успешно пройдена!\n\n"
         "⚠️ Напоминаем: один человек = один аккаунт. "
@@ -772,6 +790,7 @@ async def process_bank(message: Message, state: FSMContext):
     )
 
 
+# ---------- Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
