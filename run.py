@@ -11,7 +11,10 @@ from bot.config import (
     TIKTOK_REPORT_CHAT_ID, COLLABORATION_CHAT_ID, SUPPORT_CHAT_ID,
     REQUIRED_CHANNEL_ID,
 )
-from bot.database import init_db, get_all_users_with_payout, save_channel_message
+from bot.database import (
+    init_db, get_all_users_with_payout, save_channel_message,
+    cleanup_old_review_takes,
+)
 from bot.google_sheets import (
     monitor_schedule, update_stats_from_sheet,
     mark_as_paid_in_table, cleanup_channel
@@ -58,7 +61,7 @@ async def validate_chat_ids(bot):
     }
     for name, cid in checks.items():
         if not cid:
-            logger.warning(f"⚠️ {name} не задан — связанные функции работать не будут.")
+            logger.warning(f"⚠️ {name} не задан.")
             continue
         try:
             chat = await bot.get_chat(cid)
@@ -66,18 +69,14 @@ async def validate_chat_ids(bot):
         except TelegramBadRequest as e:
             err = str(e).lower()
             if "chat not found" in err:
-                logger.error(f"❌ {name} = {cid} — CHAT NOT FOUND. Проверь переменную окружения!")
+                logger.error(f"❌ {name} = {cid} — CHAT NOT FOUND")
             else:
                 logger.error(f"❌ {name} = {cid} — {e}")
         except Exception as e:
-            logger.warning(
-                f"⚠️ {name} = {cid} — chat существует, но aiogram не смог распарсить ответ "
-                f"({type(e).__name__}: {e}). Проверь версию aiogram."
-            )
+            logger.warning(f"⚠️ {name} = {cid} — {e}")
 
 
 async def scheduler(bot):
-    """Утреннее приветствие (8:00) и вечернее прощание (22:30) в канал."""
     while True:
         now = datetime.now(moscow_tz)
         morning_target = now.replace(hour=8, minute=0, second=0, microsecond=0)
@@ -112,7 +111,6 @@ async def scheduler(bot):
 
 
 async def weekly_payout_report(bot):
-    """Отчёт по выплатам каждый четверг в 8:00 МСК."""
     while True:
         now = datetime.now(moscow_tz)
         days_ahead = (3 - now.weekday() + 7) % 7
@@ -142,7 +140,7 @@ async def weekly_payout_report(bot):
                 full_text = "\n".join(text_lines)
                 max_len = 4000
                 if not REPORT_CHAT_ID:
-                    logger.warning("⚠️ REPORT_CHAT_ID не задан — пропускаю отправку отчёта.")
+                    logger.warning("⚠️ REPORT_CHAT_ID не задан.")
                 else:
                     for i in range(0, len(full_text), max_len):
                         chunk = full_text[i:i+max_len]
@@ -156,7 +154,7 @@ async def weekly_payout_report(bot):
                     try:
                         await mark_as_paid_in_table(user_ids)
                     except Exception as e:
-                        logging.error(f"Ошибка обновления статуса в таблице: {e}")
+                        logging.error(f"mark_as_paid: {e}")
 
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.cursor()
@@ -165,44 +163,20 @@ async def weekly_payout_report(bot):
                             UPDATE users SET
                                 payout = 0,
                                 admin_topup = 0,
-                                yandex_passed = 0,
-                                yandex_neg_passed = 0,
-                                yandex_neg_opz_passed = 0,
-                                google_passed = 0,
-                                gis_passed = 0,
-                                avito_passed = 0,
-                                vk_passed = 0,
-                                otzovik_passed = 0,
-                                doctoru_passed = 0,
-                                dokdok_passed = 0,
-                                prodoctors_passed = 0,
-                                doctu_passed = 0,
-                                top32_passed = 0,
-                                zoon_passed = 0,
-                                yell_passed = 0,
-                                yau_passed = 0,
-                                yab_passed = 0,
-                                hh_passed = 0,
-                                yandex_opz_passed = 0,
-                                google_opz_passed = 0,
-                                gis_opz_passed = 0,
-                                avito_opz_passed = 0,
-                                vk_opz_passed = 0,
-                                otzovik_opz_passed = 0,
-                                doctoru_opz_passed = 0,
-                                dokdok_opz_passed = 0,
-                                prodoctors_opz_passed = 0,
-                                doctu_opz_passed = 0,
-                                top32_opz_passed = 0,
-                                zoon_opz_passed = 0,
-                                yell_opz_passed = 0,
-                                yau_opz_passed = 0,
-                                yab_opz_passed = 0,
-                                hh_opz_passed = 0
+                                yandex_passed = 0, yandex_neg_passed = 0, yandex_neg_opz_passed = 0,
+                                google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0,
+                                otzovik_passed = 0, doctoru_passed = 0, dokdok_passed = 0,
+                                prodoctors_passed = 0, doctu_passed = 0, top32_passed = 0,
+                                zoon_passed = 0, yell_passed = 0, yau_passed = 0, yab_passed = 0, hh_passed = 0,
+                                yandex_opz_passed = 0, google_opz_passed = 0, gis_opz_passed = 0,
+                                avito_opz_passed = 0, vk_opz_passed = 0, otzovik_opz_passed = 0,
+                                doctoru_opz_passed = 0, dokdok_opz_passed = 0, prodoctors_opz_passed = 0,
+                                doctu_opz_passed = 0, top32_opz_passed = 0, zoon_opz_passed = 0,
+                                yell_opz_passed = 0, yau_opz_passed = 0, yab_opz_passed = 0, hh_opz_passed = 0
                             WHERE user_id IN ({placeholders})
                         """, user_ids)
                         conn.commit()
-                    logging.info(f"✅ Обнулены балансы и passed-поля у {len(user_ids)} пользователей")
+                    logging.info(f"✅ Обнулены у {len(user_ids)} юзеров")
             else:
                 if REPORT_CHAT_ID:
                     await bot.send_message(
@@ -211,17 +185,11 @@ async def weekly_payout_report(bot):
                         message_thread_id=REPORT_THREAD_ID or None
                     )
         except Exception as e:
-            logging.error(f"Ошибка еженедельного отчета: {e}")
+            logging.error(f"weekly_payout: {e}")
 
 
 async def auto_close_slots_2330(bot):
-    """
-    🆕 В 23:30 МСК — принудительно закрываем все активные слоты:
-    • Удаляем сообщения слотов из канала
-    • Очищаем active_slots
-    • Больше не публикуем новые слоты (monitor_schedule проверяет after_close)
-    Сессии юзеров (slot_requests) НЕ трогаем — они уже взяли строки, у них до 23:59 на сдачу.
-    """
+    """В 23:30 МСК — принудительно закрываем все активные слоты."""
     while True:
         try:
             now = datetime.now(moscow_tz)
@@ -229,17 +197,16 @@ async def auto_close_slots_2330(bot):
             if now >= target:
                 target += timedelta(days=1)
             wait = (target - now).total_seconds()
-            logger.info(f"⏳ auto_close_slots_2330: следующее закрытие в {target.strftime('%d.%m.%Y %H:%M')} МСК (через {wait/60:.1f} мин)")
+            logger.info(f"⏳ auto_close_slots_2330: следующее закрытие в {target.strftime('%d.%m.%Y %H:%M')} МСК")
             await asyncio.sleep(wait)
         except Exception as e:
-            logger.error(f"❌ auto_close_slots_2330 sleep: {e}")
+            logger.error(f"❌ auto_close sleep: {e}")
             await asyncio.sleep(60)
             continue
 
-        # Сработало — закрываем слоты
         try:
             now = datetime.now(moscow_tz)
-            logger.info(f"🌙 auto_close_slots_2330: закрываю все слоты ({now.strftime('%H:%M')} МСК)")
+            logger.info(f"🌙 auto_close_slots_2330: закрываю слоты ({now.strftime('%H:%M')} МСК)")
 
             slots_snapshot = list(active_slots.items())
             logger.info(f"🌙 Слотов к закрытию: {len(slots_snapshot)}")
@@ -250,7 +217,6 @@ async def auto_close_slots_2330(bot):
                 try:
                     await bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
                     deleted += 1
-                    logger.info(f"🗑️ Удалён слот {slot.get('platform')} (msg {msg_id}, {len(slot.get('row_ids', []))} строк)")
                 except Exception as e:
                     err = str(e).lower()
                     if "message to delete not found" in err or "message can't be deleted" in err:
@@ -264,24 +230,40 @@ async def auto_close_slots_2330(bot):
                     pass
                 await asyncio.sleep(0.3)
 
-            logger.info(f"✅ auto_close_slots_2330: удалено {deleted}, ошибок {failed}, active_slots теперь {len(active_slots)}")
+            logger.info(f"✅ auto_close: удалено {deleted}, ошибок {failed}, active_slots={len(active_slots)}")
 
-            # Уведомляем админов через лог-канал
             if LOG_CHANNEL_ID:
                 try:
                     await bot.send_message(
                         LOG_CHANNEL_ID,
                         f"🌙 <b>23:30 — слоты закрыты</b>\n\n"
-                        f"🗑️ Удалено сообщений: {deleted}\n"
-                        f"⚠️ Ошибок удаления: {failed}\n"
+                        f"🗑️ Удалено: {deleted}\n"
+                        f"⚠️ Ошибок: {failed}\n"
                         f"📊 Активных слотов: {len(active_slots)}",
                         parse_mode="HTML"
                     )
                 except Exception as e:
-                    logger.warning(f"⚠️ не отправить лог в LOG_CHANNEL_ID: {e}")
-
+                    logger.warning(f"⚠️ Лог в LOG_CHANNEL_ID: {e}")
         except Exception as e:
-            logger.error(f"❌ auto_close_slots_2330 закрытие: {e}", exc_info=True)
+            logger.error(f"❌ auto_close закрытие: {e}", exc_info=True)
+
+
+async def review_takes_cleanup():
+    """Раз в сутки в 05:00 МСК чистит старые записи review_takes (старше 7 дней)."""
+    while True:
+        try:
+            now = datetime.now(moscow_tz)
+            target = now.replace(hour=5, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+
+            cnt = cleanup_old_review_takes(days=7)
+            if cnt:
+                logger.info(f"🧹 review_takes: удалено {cnt} старых записей")
+        except Exception as e:
+            logger.error(f"❌ review_takes_cleanup: {e}")
+            await asyncio.sleep(3600)
 
 
 async def main():
@@ -309,7 +291,8 @@ async def main():
     asyncio.create_task(weekly_payout_report(bot))
     asyncio.create_task(username_checker(bot))
     asyncio.create_task(cleanup_channel(bot))
-    asyncio.create_task(auto_close_slots_2330(bot))  # 🆕
+    asyncio.create_task(auto_close_slots_2330(bot))
+    asyncio.create_task(review_takes_cleanup())
 
     await dp.start_polling(bot)
 
