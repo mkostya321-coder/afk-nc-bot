@@ -1,33 +1,50 @@
-import asyncio, logging, os, threading
+import asyncio, logging, os, threading, sys, traceback
 from datetime import datetime, timedelta
-from flask import Flask, Response
-from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramBadRequest
-import pytz
-from bot.config import (
-    BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH,
-    LOG_CHANNEL_ID, SCREENSHOT_CHANNEL_ID,
-    TIKTOK_REPORT_CHAT_ID, COLLABORATION_CHAT_ID, SUPPORT_CHAT_ID,
-    REQUIRED_CHANNEL_ID,
-)
-from bot.database import (
-    init_db, get_all_users_with_payout, save_channel_message,
-    cleanup_old_review_takes,
-)
-from bot.google_sheets import (
-    monitor_schedule, update_stats_from_sheet,
-    mark_as_paid_in_table, cleanup_channel
-)
-from bot.handlers import user, admin, slots, promo
-from bot.handlers.admin_advanced import router as admin_advanced_router
-from bot.middlewares import AutoMenuMiddleware, cleanup_subscription_cache
-from bot.username_checker import username_checker
-from bot.state import active_slots
-import sqlite3
 
-logging.basicConfig(level=logging.INFO)
+# 🔧 Логи в stdout + сразу видим ошибки импорта
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stdout,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    force=True
+)
 logger = logging.getLogger(__name__)
+
+# 🔧 ОБЁРТКА ВСЕХ ИМПОРТОВ БОТА — если что-то не так, увидим в stdout
+try:
+    from flask import Flask, Response
+    from aiogram import Bot, Dispatcher
+    from aiogram.fsm.storage.memory import MemoryStorage
+    from aiogram.exceptions import TelegramBadRequest
+    import pytz
+
+    from bot.config import (
+        BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH,
+        LOG_CHANNEL_ID, SCREENSHOT_CHANNEL_ID,
+        TIKTOK_REPORT_CHAT_ID, COLLABORATION_CHAT_ID, SUPPORT_CHAT_ID,
+        REQUIRED_CHANNEL_ID,
+    )
+    from bot.database import (
+        init_db, get_all_users_with_payout, save_channel_message,
+        cleanup_old_review_takes,
+    )
+    from bot.google_sheets import (
+        monitor_schedule, update_stats_from_sheet,
+        mark_as_paid_in_table, cleanup_channel
+    )
+    from bot.handlers import user, admin, slots, promo
+    from bot.handlers.admin_advanced import router as admin_advanced_router
+    from bot.middlewares import AutoMenuMiddleware, cleanup_subscription_cache
+    from bot.username_checker import username_checker
+    from bot.state import active_slots
+    import sqlite3
+except Exception as e:
+    print("=" * 60, flush=True)
+    print(f"❌ IMPORT ERROR: {type(e).__name__}: {e}", flush=True)
+    traceback.print_exc(file=sys.stdout)
+    print("=" * 60, flush=True)
+    sys.exit(1)
+
 
 moscow_tz = pytz.timezone("Europe/Moscow")
 
@@ -50,10 +67,7 @@ def run_flask():
 
 
 async def validate_chat_ids(bot):
-    """
-    Проверяет chat_id в фоне. С таймаутом 10 сек на каждый вызов,
-    чтобы не блокировать polling даже при тормозах Telegram API.
-    """
+    """Проверяет chat_id в фоне с таймаутом 10 сек, чтобы не блокировать polling."""
     checks = {
         "CHANNEL_ID": CHANNEL_ID,
         "LOG_CHANNEL_ID": LOG_CHANNEL_ID,
@@ -302,7 +316,7 @@ async def main():
     dp.include_router(promo.router)
     dp.include_router(slots.router)
 
-    # 🔧 validate_chat_ids теперь в фоне — не блокирует polling
+    # 🔧 validate_chat_ids в фоне — не блокирует polling
     asyncio.create_task(validate_chat_ids(bot))
 
     asyncio.create_task(scheduler(bot))
