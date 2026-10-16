@@ -258,7 +258,6 @@ async def monitor_schedule(bot):
 
             after_close = (now.hour == 23 and now.minute >= 30) or (now.hour < 4) or (now.hour == 4 and now.minute < 30)
 
-            # Текущий бизнес-день — "16.10.2026"
             current_bd_iso = business_day_key(now)
             try:
                 bd_dt = datetime.strptime(current_bd_iso, "%Y-%m-%d")
@@ -322,7 +321,6 @@ async def monitor_schedule(bot):
 
                         _d_norm = (date_str or "").strip().replace("..", ".")
 
-                        # 🔧 АВТО-ФИКС СИРОТ: только если дата = СЕГОДНЯ
                         has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                         if (has_qpo_flag
                                 and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
@@ -355,7 +353,6 @@ async def monitor_schedule(bot):
                         _d = (date_str or "").strip().replace("..", ".")
                         _t = (time_str or "").strip().replace("..", ":")
 
-                        # 🛡️ ФИЛЬТР ПО ДАТЕ: только текущий бизнес-день
                         if _d and _d != current_bd_str:
                             if _d < current_bd_str:
                                 stats["expired_date"] += 1
@@ -375,7 +372,6 @@ async def monitor_schedule(bot):
                         else:
                             stats["future_time"] += 1
 
-                # 🔧 Сброс Q/P/O и S у строк-сирот (только сегодняшние)
                 if orphan_reset_q:
                     try:
                         batch_orphan = []
@@ -401,7 +397,6 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
 
-                # 🔧 Строки с просроченной датой → I=888
                 if expired_rows:
                     try:
                         col_i = chr(64 + mapping["flag_final_col"])
@@ -417,7 +412,6 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Просроченные даты '{sheet_name}': {e}")
 
-                # 🛡️ Финальная защита: убираем из to_publish строки не на сегодня
                 clean_to_publish = []
                 for r_idx, r_row in to_publish:
                     r_date = r_row[mapping["date_col"]-1].strip().replace("..", ".") if len(r_row) >= mapping["date_col"] else ""
@@ -441,10 +435,17 @@ async def monitor_schedule(bot):
                         f"🔧 сирот-починено {stats.get('orphans_fixed', 0)}"
                     )
 
+                # 🛡️ ФИКС: ищем слот ТОЛЬКО для этого же листа
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
-                    if s.get("platform") == platform and s.get("count", 0) > 0:
+                    if s.get("platform") != platform or s.get("count", 0) <= 0:
+                        continue
+                    if s.get("sheet_title") == sheet_name:
+                        existing_msg_id = mid
+                        slot = s
+                        break
+                    if not s.get("sheet_title"):
                         existing_msg_id = mid
                         slot = s
                         break
@@ -462,7 +463,7 @@ async def monitor_schedule(bot):
                     real_count = len(slot.get("row_ids", []))
                     stored_count = slot.get("count", 0)
                     if real_count != stored_count:
-                        logger.warning(f"⚠️ РАССИНХРОН count у {platform}: {stored_count} → {real_count}")
+                        logger.warning(f"⚠️ РАССИНХРОН count у {platform}/{sheet_name}: {stored_count} → {real_count}")
                         slot["count"] = real_count
                         active_slots[existing_msg_id] = slot
 
@@ -513,13 +514,13 @@ async def monitor_schedule(bot):
                             pruned.append(r)
 
                     if pruned:
-                        logger.info(f"✂️ {platform} (msg {existing_msg_id}): прунинг {len(pruned)} строк")
+                        logger.info(f"✂️ {platform}/{sheet_name} (msg {existing_msg_id}): прунинг {len(pruned)} строк")
                         slot["row_ids"] = [r for r in slot["row_ids"] if r not in pruned]
                         slot["count"] = len(slot["row_ids"])
                         active_slots[existing_msg_id] = slot
 
                     if not slot["row_ids"]:
-                        logger.info(f"🗑️ {platform} (msg {existing_msg_id}): слот пуст → удаляю сообщение")
+                        logger.info(f"🗑️ {platform}/{sheet_name} (msg {existing_msg_id}): слот пуст → удаляю сообщение")
                         await _delete_slot_message(bot, existing_msg_id)
                         try:
                             del active_slots[existing_msg_id]
@@ -553,7 +554,7 @@ async def monitor_schedule(bot):
                                   or "message_id_invalid" in err
                                   or "message can't be edited" in err):
                                 dead = True
-                                logger.warning(f"🗑️ Слот {platform} (msg {existing_msg_id}) мёртв. Пересоздаю.")
+                                logger.warning(f"🗑️ Слот {platform}/{sheet_name} (msg {existing_msg_id}) мёртв. Пересоздаю.")
 
                         if slot_alive:
                             await asyncio.sleep(0.3)
@@ -584,7 +585,7 @@ async def monitor_schedule(bot):
                                     "publish_time": datetime.now(moscow_tz),
                                     "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
                                 }
-                                logger.info(f"✅ Переопубликован {platform} ({current_count} шт, msg {sent_msg.message_id})")
+                                logger.info(f"✅ Переопубликован {platform}/{sheet_name} ({current_count} шт, msg {sent_msg.message_id})")
                             except Exception as e:
                                 logger.error(f"❌ Переопубликовать: {e}")
                             await asyncio.sleep(0.5)
@@ -614,7 +615,7 @@ async def monitor_schedule(bot):
                               or "message can't be edited" in err):
                             edit_failed_dead = True
                         else:
-                            logger.warning(f"⚠️ edit слот {platform}: {e}")
+                            logger.warning(f"⚠️ edit слот {platform}/{sheet_name}: {e}")
 
                     if edit_failed_dead:
                         try:
@@ -634,7 +635,7 @@ async def monitor_schedule(bot):
                                 "publish_time": datetime.now(moscow_tz),
                                 "attempt": 1, "mapping": mapping, "sheet_title": sheet_name
                             }
-                            logger.info(f"✅ Переопубликован {platform} ({candidate_count} шт)")
+                            logger.info(f"✅ Переопубликован {platform}/{sheet_name} ({candidate_count} шт)")
                             batch = []
                             for row_idx in new_rows:
                                 review_id = secrets.token_hex(4)
@@ -689,7 +690,7 @@ async def monitor_schedule(bot):
                             reply_markup=kb, parse_mode=ParseMode.HTML
                         )
                         save_channel_message(sent_msg.message_id, CHANNEL_ID)
-                        logger.info(f"✅ Новый слот {platform} ({len(row_ids)} шт, msg {sent_msg.message_id})")
+                        logger.info(f"✅ Новый слот {platform}/{sheet_name} ({len(row_ids)} шт, msg {sent_msg.message_id})")
                         active_slots[sent_msg.message_id] = {
                             "platform": platform, "count": len(row_ids),
                             "initial_count": len(row_ids), "row_ids": row_ids,
@@ -738,7 +739,6 @@ async def monitor_schedule(bot):
 
 
 async def _check_republish(bot, client, now):
-    """Переопубликация слотов через 2 часа. Сначала публикуем, потом флаги."""
     spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
     expired_slots = []
 
