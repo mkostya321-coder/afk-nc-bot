@@ -18,6 +18,7 @@ from bot.database import (
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
 from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
 from bot.logging_helpers import log_user_event
+from bot.middlewares import is_subscribed_cached
 from bot.state import active_slots, slot_requests
 import pytz
 
@@ -193,7 +194,6 @@ async def cancel_task(message: Message):
     ordered = request.get("ordered_reviews", [])
     remaining = [r for r, n in ordered if n not in completed]
 
-    # 🔧 ВОЗВРАТ ЛИМИТА за невыполненные отзывы
     platform_for_return = request.get("platform", "яндекс")
     if remaining:
         try:
@@ -433,11 +433,8 @@ async def handle_quantity_input(message: Message):
 
     row_ids = slot_info["row_ids"]
 
-    # 🛡️ Если строк нет — слот мёртв
     if not row_ids:
-        await message.answer(
-            "⚠️ Этот слот уже разобран или содержит только неактуальные строки."
-        )
+        await message.answer("⚠️ Этот слот уже разобран или содержит только неактуальные строки.")
         try:
             del active_slots[slot_msg_id]
         except KeyError:
@@ -855,8 +852,8 @@ async def take_slot_start(callback: CallbackQuery):
         await _safe_send(callback.bot, user_id, "⛔ Вы заблокированы.")
         return
 
-    from bot.middlewares import is_subscribed
-    if not await is_subscribed(user_id, callback.bot):
+    # 🚀 Используем кэшированную проверку — снижает нагрузку на API
+    if not await is_subscribed_cached(user_id, callback.bot):
         await _safe_send(callback.bot, user_id, f"⚠️ Подпишитесь на канал {REQUIRED_CHANNEL_ID}")
         return
 
@@ -940,7 +937,7 @@ async def take_slot_start(callback: CallbackQuery):
 
     mapping = slot_info.get("mapping") or get_column_mapping(platform)
 
-    # 🛡️ Проверяем, есть ли реально свободные строки на сегодня
+    # 🛡️ Проверяем реальные свободные строки на сегодня
     free_count = 0
     try:
         client_check = get_client()
