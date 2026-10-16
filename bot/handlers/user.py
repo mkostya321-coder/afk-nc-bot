@@ -30,7 +30,6 @@ router = Router()
 REFERRAL_DEADLINE_DAYS = 28
 
 
-# ============ ОТОБРАЖЕНИЕ РОЛЕЙ И ДОЛЖНОСТЕЙ ============
 ROLE_DISPLAY = {
     "owner": "👑 Владелец",
     "ga": "🛡️ ГА (Главный администратор)",
@@ -219,7 +218,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
     role = get_admin_role(user_id)
     if not role:
-        # 🔄 Сбрасываем кэш при /start — свежая проверка подписки
         invalidate_subscription_cache(user_id)
         if not await is_subscribed_cached(user_id, message.bot):
             await show_subscribe_prompt(message, not_subscribed=False)
@@ -243,7 +241,6 @@ async def cmd_start(message: Message, state: FSMContext):
 async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
-    # 🔄 Свежая проверка по кнопке
     invalidate_subscription_cache(user_id)
     if not await is_subscribed_cached(user_id, callback.bot):
         try:
