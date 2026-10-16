@@ -21,7 +21,7 @@ from bot.google_sheets import (
 )
 from bot.handlers import user, admin, slots, promo
 from bot.handlers.admin_advanced import router as admin_advanced_router
-from bot.middlewares import AutoMenuMiddleware
+from bot.middlewares import AutoMenuMiddleware, cleanup_subscription_cache
 from bot.username_checker import username_checker
 from bot.state import active_slots
 import sqlite3
@@ -266,6 +266,19 @@ async def review_takes_cleanup():
             await asyncio.sleep(3600)
 
 
+async def subscription_cache_cleanup():
+    """Раз в 10 минут удаляет устаревшие записи из кэша подписок."""
+    while True:
+        try:
+            await asyncio.sleep(600)  # 10 минут
+            cnt = cleanup_subscription_cache()
+            if cnt:
+                logger.info(f"🧹 Кэш подписок: удалено {cnt} устаревших записей")
+        except Exception as e:
+            logger.error(f"❌ subscription_cache_cleanup: {e}")
+            await asyncio.sleep(60)
+
+
 async def main():
     init_db()
     bot = Bot(token=BOT_TOKEN)
@@ -293,6 +306,7 @@ async def main():
     asyncio.create_task(cleanup_channel(bot))
     asyncio.create_task(auto_close_slots_2330(bot))
     asyncio.create_task(review_takes_cleanup())
+    asyncio.create_task(subscription_cache_cleanup())
 
     await dp.start_polling(bot)
 
