@@ -87,7 +87,6 @@ class AutoMenuMiddleware(BaseMiddleware):
             if role:
                 return await handler(event, data)
 
-            # 🚀 Используем кэш — снижает нагрузку на API
             if not await is_subscribed_cached(user_id, event.bot):
                 try:
                     await event.answer(
@@ -104,7 +103,6 @@ class AutoMenuMiddleware(BaseMiddleware):
             chat_id = event.chat.id
             thread_id = event.message_thread_id or 0
 
-            # Бот работает ТОЛЬКО в личке
             if event.chat.type != "private":
                 return
 
@@ -122,19 +120,15 @@ class AutoMenuMiddleware(BaseMiddleware):
             user_id = event.from_user.id
             role = get_admin_role(user_id)
 
-            # /start пропускаем всегда — там сам обрабатываем подписку
             if event.text and event.text.startswith('/start'):
                 add_user(event.from_user.id, event.from_user.username, event.from_user.full_name)
-                # 🔄 Сбрасываем кэш при /start — чтобы свежая проверка
                 invalidate_subscription_cache(user_id)
                 return await handler(event, data)
 
-            # Админы — свободный доступ
             if role:
                 add_user(event.from_user.id, event.from_user.username, event.from_user.full_name)
                 return await handler(event, data)
 
-            # 🚀 Используем кэш — снижает нагрузку на API
             if not await is_subscribed_cached(user_id, event.bot):
                 await event.answer(
                     "⚠️ Для использования бота необходимо подписаться на наш канал:\n"
