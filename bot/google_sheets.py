@@ -321,6 +321,7 @@ async def monitor_schedule(bot):
 
                         _d_norm = (date_str or "").strip().replace("..", ".")
 
+                        # 🔧 АВТО-ФИКС СИРОТ: только если дата = СЕГОДНЯ
                         has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                         if (has_qpo_flag
                                 and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
@@ -332,6 +333,7 @@ async def monitor_schedule(bot):
                                     flag_first = "0"
                                     flag_second = "0"
                                     flag_third = "0"
+                                    # 🔧 продолжаем обработку строки дальше в этом же проходе
                                 elif _d_norm and _d_norm < current_bd_str:
                                     stats["expired_date"] += 1
                                     expired_rows.append(row_idx)
@@ -372,6 +374,7 @@ async def monitor_schedule(bot):
                         else:
                             stats["future_time"] += 1
 
+                # 🔧 Сброс Q/P/O и S у строк-сирот (только сброс в таблице, без повторного добавления)
                 if orphan_reset_q:
                     try:
                         batch_orphan = []
@@ -391,9 +394,7 @@ async def monitor_schedule(bot):
                         logger.warning(
                             f"🔧 '{sheet_name}': сбросил Q/P/O=0 и S='' у {len(orphan_reset_q)} строк-сирот"
                         )
-                        for r_idx in orphan_reset_q:
-                            if r_idx - 1 < len(records):
-                                to_publish.append((r_idx, records[r_idx - 1]))
+                        # 🛡️ НЕ добавляем повторно в to_publish — они уже там
                     except Exception as e:
                         logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
 
@@ -412,10 +413,15 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Просроченные даты '{sheet_name}': {e}")
 
+                # 🛡️ Финальная защита: убираем дубли и строки не на сегодня
+                seen = set()
                 clean_to_publish = []
                 for r_idx, r_row in to_publish:
+                    if r_idx in seen:
+                        continue
                     r_date = r_row[mapping["date_col"]-1].strip().replace("..", ".") if len(r_row) >= mapping["date_col"] else ""
                     if r_date == current_bd_str:
+                        seen.add(r_idx)
                         clean_to_publish.append((r_idx, r_row))
                     elif r_date and r_date < current_bd_str:
                         expired_rows.append(r_idx)
@@ -435,7 +441,7 @@ async def monitor_schedule(bot):
                         f"🔧 сирот-починено {stats.get('orphans_fixed', 0)}"
                     )
 
-                # 🛡️ ФИКС: ищем слот ТОЛЬКО для этого же листа
+                # 🛡️ Ищем слот ТОЛЬКО для этого же листа
                 existing_msg_id = None
                 slot = None
                 for mid, s in active_slots.items():
