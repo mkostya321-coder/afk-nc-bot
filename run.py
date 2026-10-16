@@ -1,7 +1,18 @@
-import asyncio, logging, os, threading, sys, traceback
+import sys
+import os
+
+# 🔧 ВАЖНО: перенаправляем stderr → stdout, чтобы Amvera показала трейсбек
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr = sys.stdout
+except Exception:
+    pass
+os.environ['PYTHONUNBUFFERED'] = '1'
+
+import asyncio, logging, threading, traceback
 from datetime import datetime, timedelta
 
-# 🔧 Логи в stdout + сразу видим ошибки импорта
+# Логи идут в stdout сразу
 logging.basicConfig(
     level=logging.INFO,
     stream=sys.stdout,
@@ -10,7 +21,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 🔧 ОБЁРТКА ВСЕХ ИМПОРТОВ БОТА — если что-то не так, увидим в stdout
+# Маркер запуска — если его нет в логе, значит краш ещё раньше
+print("=" * 60, flush=True)
+print("🚀 STARTING BOT...", flush=True)
+print(f"🐍 Python: {sys.version}", flush=True)
+print(f"📂 CWD: {os.getcwd()}", flush=True)
+print("=" * 60, flush=True)
+
+
+# 🔧 ОБЁРТКА ВСЕХ ИМПОРТОВ — если что-то не так, увидим в stdout
 try:
     from flask import Flask, Response
     from aiogram import Bot, Dispatcher
@@ -38,6 +57,9 @@ try:
     from bot.username_checker import username_checker
     from bot.state import active_slots
     import sqlite3
+
+    print("✅ Все импорты OK", flush=True)
+
 except Exception as e:
     print("=" * 60, flush=True)
     print(f"❌ IMPORT ERROR: {type(e).__name__}: {e}", flush=True)
@@ -290,7 +312,7 @@ async def subscription_cache_cleanup():
     """Раз в 10 минут удаляет устаревшие записи из кэша подписок."""
     while True:
         try:
-            await asyncio.sleep(600)  # 10 минут
+            await asyncio.sleep(600)
             cnt = cleanup_subscription_cache()
             if cnt:
                 logger.info(f"🧹 Кэш подписок: удалено {cnt} устаревших записей")
@@ -300,7 +322,10 @@ async def subscription_cache_cleanup():
 
 
 async def main():
+    print("🔧 main() запущена", flush=True)
     init_db()
+    print("✅ init_db() OK", flush=True)
+
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -316,7 +341,9 @@ async def main():
     dp.include_router(promo.router)
     dp.include_router(slots.router)
 
-    # 🔧 validate_chat_ids в фоне — не блокирует polling
+    print("✅ Все роутеры подключены", flush=True)
+
+    # validate_chat_ids в фоне — не блокирует polling
     asyncio.create_task(validate_chat_ids(bot))
 
     asyncio.create_task(scheduler(bot))
@@ -329,9 +356,18 @@ async def main():
     asyncio.create_task(review_takes_cleanup())
     asyncio.create_task(subscription_cache_cleanup())
 
+    print("🚀 Все таски запущены, начинаю polling...", flush=True)
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
+    print("🎬 __main__ запущен", flush=True)
     threading.Thread(target=run_flask, daemon=True).start()
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print("=" * 60, flush=True)
+        print(f"❌ FATAL ERROR в main(): {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc(file=sys.stdout)
+        print("=" * 60, flush=True)
+        sys.exit(1)
