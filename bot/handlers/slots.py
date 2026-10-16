@@ -852,7 +852,6 @@ async def take_slot_start(callback: CallbackQuery):
         await _safe_send(callback.bot, user_id, "⛔ Вы заблокированы.")
         return
 
-    # 🚀 Используем кэшированную проверку — снижает нагрузку на API
     if not await is_subscribed_cached(user_id, callback.bot):
         await _safe_send(callback.bot, user_id, f"⚠️ Подпишитесь на канал {REQUIRED_CHANNEL_ID}")
         return
@@ -937,7 +936,6 @@ async def take_slot_start(callback: CallbackQuery):
 
     mapping = slot_info.get("mapping") or get_column_mapping(platform)
 
-    # 🛡️ Проверяем реальные свободные строки на сегодня
     free_count = 0
     try:
         client_check = get_client()
