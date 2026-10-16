@@ -21,7 +21,7 @@ from bot.database import (
     get_admin_role, has_post, get_post,
 )
 from bot.keyboards.reply import main_menu_keyboard
-from bot.middlewares import is_subscribed
+from bot.middlewares import is_subscribed, is_subscribed_cached, invalidate_subscription_cache
 from bot.logging_helpers import log_user_event
 
 logger = logging.getLogger(__name__)
@@ -219,7 +219,9 @@ async def cmd_start(message: Message, state: FSMContext):
 
     role = get_admin_role(user_id)
     if not role:
-        if not await is_subscribed(user_id, message.bot):
+        # 🔄 Сбрасываем кэш при /start — свежая проверка подписки
+        invalidate_subscription_cache(user_id)
+        if not await is_subscribed_cached(user_id, message.bot):
             await show_subscribe_prompt(message, not_subscribed=False)
             return
 
@@ -241,7 +243,9 @@ async def cmd_start(message: Message, state: FSMContext):
 async def check_sub_callback(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
-    if not await is_subscribed(user_id, callback.bot):
+    # 🔄 Свежая проверка по кнопке
+    invalidate_subscription_cache(user_id)
+    if not await is_subscribed_cached(user_id, callback.bot):
         try:
             await callback.answer("❌ Подписка не найдена", show_alert=True)
         except Exception:
@@ -384,7 +388,6 @@ async def menu_profile(message: Message):
             "━━━━━━━━━━━━━━━━━━\n\n"
         )
 
-    # === РОЛЬ И ДОЛЖНОСТЬ ===
     role_code = get_admin_role(user_id)
     post_code = get_post(user_id)
     status_lines = ""
@@ -482,6 +485,7 @@ async def menu_help(message: Message):
         "/money – Полная информация по системе выплат\n"
         "/tiktok – Справка по Tik Tok\n"
         "/support – Заявка в поддержку\n\n"
+        f"По всем вопросам: @{MANAGER_USERNAME}"
     )
     user = get_user(message.from_user.id)
     is_reg = user and user.get("name") is not None
@@ -514,9 +518,9 @@ async def cmd_money(message: Message):
         "• Отзовик — 100₽\n"
         "• Doctoru — 100₽\n"
         "• ДокДок — 100₽\n"
-        "• Про Докторов — 250₽\n"
+        "• Про Докторов — 200₽\n"
         "• ДокТу — 100₽\n"
-        "• 32ТОП — 125₽\n"
+        "• 32ТОП — 100₽\n"
         "• ZOON — 85₽\n"
         "• Yell — 50₽\n"
         "• Яндекс Услуги — 100₽\n"
@@ -604,7 +608,6 @@ async def process_support(message: Message, state: FSMContext):
     await message.answer("✅ Ваша заявка принята! Мы свяжемся с вами в ближайшее время.")
 
 
-# ---------- Реферальная система (кнопка главного меню) ----------
 @router.message(F.text == "👥 Реферальная система")
 async def referral_info(message: Message):
     logger.info(f"🔔 РЕФЕРАЛКА: пользователь {message.from_user.id}")
@@ -671,7 +674,6 @@ async def referral_invite(callback: CallbackQuery):
         await callback.answer("Ошибка", show_alert=True)
 
 
-# ---------- Регистрация ----------
 @router.message(Command("reg"))
 @router.message(F.text == "📝 Регистрация")
 async def start_registration(message: Message, state: FSMContext):
@@ -765,7 +767,6 @@ async def process_bank(message: Message, state: FSMContext):
     update_user_field(user_id, "registered_at", datetime.now().isoformat())
     await state.clear()
 
-    # 📌 Логируем регистрацию в LOG_USER_ID
     try:
         referrer = data.get("referrer", "0")
         referrer_text = "❌ не указал" if referrer == "0" else f"✅ @{referrer}"
@@ -790,7 +791,6 @@ async def process_bank(message: Message, state: FSMContext):
     )
 
 
-# ---------- Мои рефералы ----------
 @router.message(F.text == "👥 Мои рефералы")
 async def show_my_referrals(message: Message, state: FSMContext):
     if is_blocked(message.from_user.id):
