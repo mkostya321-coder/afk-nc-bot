@@ -50,6 +50,10 @@ def run_flask():
 
 
 async def validate_chat_ids(bot):
+    """
+    Проверяет chat_id в фоне. С таймаутом 10 сек на каждый вызов,
+    чтобы не блокировать polling даже при тормозах Telegram API.
+    """
     checks = {
         "CHANNEL_ID": CHANNEL_ID,
         "LOG_CHANNEL_ID": LOG_CHANNEL_ID,
@@ -64,8 +68,10 @@ async def validate_chat_ids(bot):
             logger.warning(f"⚠️ {name} не задан.")
             continue
         try:
-            chat = await bot.get_chat(cid)
+            chat = await asyncio.wait_for(bot.get_chat(cid), timeout=10.0)
             logger.info(f"✅ {name} = {cid} ({chat.title or chat.username or chat.type})")
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ {name} = {cid} — TIMEOUT 10 сек, пропускаю")
         except TelegramBadRequest as e:
             err = str(e).lower()
             if "chat not found" in err:
@@ -296,7 +302,8 @@ async def main():
     dp.include_router(promo.router)
     dp.include_router(slots.router)
 
-    await validate_chat_ids(bot)
+    # 🔧 validate_chat_ids теперь в фоне — не блокирует polling
+    asyncio.create_task(validate_chat_ids(bot))
 
     asyncio.create_task(scheduler(bot))
     asyncio.create_task(monitor_schedule(bot))
