@@ -29,6 +29,7 @@ HIDDEN_USERNAMES = {
     "new_chapterr24",
     "new_chapterr97",
     "molostovk",
+    "nikita_sportik1",
 }
 
 
