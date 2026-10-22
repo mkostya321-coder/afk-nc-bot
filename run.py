@@ -27,10 +27,6 @@ _log_to_file("=" * 60)
 _log_to_file("🚀 STARTING BOT...")
 _log_to_file(f"🐍 Python: {sys.version}")
 _log_to_file(f"📂 CWD: {os.getcwd()}")
-try:
-    _log_to_file(f"📂 Файлы: {os.listdir('.')}")
-except Exception as e:
-    _log_to_file(f"❌ os.listdir: {e}")
 _log_to_file("=" * 60)
 
 
@@ -52,86 +48,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-print("🚀 STARTING BOT...", flush=True)
-print(f"🐍 Python: {sys.version}", flush=True)
-
 
 # ============================================================
-# 🔧 ПОШАГОВЫЙ ИМПОРТ — увидим на каком шаге падает
+# ИМПОРТ
 # ============================================================
 try:
-    _log_to_file("Шаг 1: flask, aiogram, pytz")
     from flask import Flask, Response
     from aiogram import Bot, Dispatcher
     from aiogram.fsm.storage.memory import MemoryStorage
     from aiogram.exceptions import TelegramBadRequest
     import pytz
-    _log_to_file("✅ Шаг 1 OK")
 
-    _log_to_file("Шаг 2: bot.config")
     from bot.config import (
         BOT_TOKEN, CHANNEL_ID, REPORT_CHAT_ID, REPORT_THREAD_ID, DB_PATH,
         LOG_CHANNEL_ID, SCREENSHOT_CHANNEL_ID,
         TIKTOK_REPORT_CHAT_ID, COLLABORATION_CHAT_ID, SUPPORT_CHAT_ID,
         REQUIRED_CHANNEL_ID,
     )
-    _log_to_file("✅ Шаг 2 OK")
-
-    _log_to_file("Шаг 3: bot.database")
     from bot.database import (
         init_db, get_all_users_with_payout, save_channel_message,
         cleanup_old_review_takes,
     )
-    _log_to_file("✅ Шаг 3 OK")
-
-    _log_to_file("Шаг 4: bot.google_sheets")
     from bot.google_sheets import (
         monitor_schedule, update_stats_from_sheet,
         mark_as_paid_in_table, cleanup_channel
     )
-    _log_to_file("✅ Шаг 4 OK")
-
-    _log_to_file("Шаг 5: bot.handlers (user, admin, slots, promo)")
     from bot.handlers import user, admin, slots, promo
-    _log_to_file("✅ Шаг 5 OK")
-
-    _log_to_file("Шаг 6: admin_advanced")
     from bot.handlers.admin_advanced import router as admin_advanced_router
-    _log_to_file("✅ Шаг 6 OK")
-
-    _log_to_file("Шаг 7: bot.middlewares")
     from bot.middlewares import AutoMenuMiddleware, cleanup_subscription_cache
-    _log_to_file("✅ Шаг 7 OK")
-
-    _log_to_file("Шаг 8: bot.username_checker")
     from bot.username_checker import username_checker
-    _log_to_file("✅ Шаг 8 OK")
-
-    _log_to_file("Шаг 9: bot.state")
     from bot.state import active_slots
-    _log_to_file("✅ Шаг 9 OK")
-
-    _log_to_file("Шаг 10: sqlite3")
     import sqlite3
-    _log_to_file("✅ Шаг 10 OK")
 
-    _log_to_file("=" * 60)
-    _log_to_file("✅✅✅ ВСЕ ИМПОРТЫ OK ✅✅✅")
-    _log_to_file("=" * 60)
+    _log_to_file("✅ Все импорты OK")
     print("✅ Все импорты OK", flush=True)
 
 except Exception as e:
     err_text = f"❌ IMPORT ERROR: {type(e).__name__}: {e}\n" + traceback.format_exc()
-    _log_to_file("=" * 60)
     _log_to_file(err_text)
-    _log_to_file("=" * 60)
     print(err_text, flush=True)
     sys.exit(1)
 
 
-# ============================================================
-# Основной код
-# ============================================================
 moscow_tz = pytz.timezone("Europe/Moscow")
 
 app = Flask(__name__)
@@ -164,15 +122,21 @@ async def validate_chat_ids(bot):
     }
     for name, cid in checks.items():
         if not cid:
+            logger.warning(f"⚠️ {name} не задан.")
             continue
         try:
             chat = await asyncio.wait_for(bot.get_chat(cid), timeout=10.0)
-            logger.info(f"✅ {name} = {cid}")
+            logger.info(f"✅ {name} = {cid} ({chat.title or chat.username or chat.type})")
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ {name} = {cid} — TIMEOUT 10 сек")
+        except TelegramBadRequest as e:
+            logger.error(f"❌ {name} = {cid} — {e}")
         except Exception as e:
             logger.warning(f"⚠️ {name} = {cid} — {e}")
 
 
 async def scheduler(bot):
+    """Утреннее приветствие (8:00) и вечернее прощание (22:30) в канал."""
     while True:
         now = datetime.now(moscow_tz)
         morning_target = now.replace(hour=8, minute=0, second=0, microsecond=0)
@@ -186,10 +150,21 @@ async def scheduler(bot):
         now_after = datetime.now(moscow_tz)
         try:
             if now_after.hour == 8:
-                msg = await bot.send_message(CHANNEL_ID, "☀️ Доброе утро! Хорошего дня!")
+                msg = await bot.send_message(
+                    CHANNEL_ID,
+                    "☀️ Доброе утро! Вот и ещё один прекрасный рабочий день. "
+                    "Всем хорошего дня! Ожидайте сегодняшние слоты. "
+                    "С уважением, команда NC 🤝"
+                )
                 save_channel_message(msg.message_id, CHANNEL_ID)
             elif now_after.hour == 22 and now_after.minute >= 30:
-                msg = await bot.send_message(CHANNEL_ID, "🌙 День закончен. Всем спасибо!")
+                msg = await bot.send_message(
+                    CHANNEL_ID,
+                    "🌙 Сегодняшний рабочий день подошёл к концу. "
+                    "Всем спасибо за работу! Кто ещё не отправил скриншоты — "
+                    "успевайте до 23:59 МСК. Всем доброй ночи! "
+                    "С уважением, команда NC 😴🌟"
+                )
                 save_channel_message(msg.message_id, CHANNEL_ID)
         except Exception as e:
             logger.error(f"❌ scheduler: {e}")
@@ -203,23 +178,35 @@ async def weekly_payout_report(bot):
             days_ahead = 7
         next_thursday = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
         await asyncio.sleep((next_thursday - now).total_seconds())
+
         try:
             users = get_all_users_with_payout()
             if users:
-                text_lines = ["<b>📋 Список на выплату</b>\n"]
+                text_lines = ["<b>📋 Список на выплату (четверг)</b>\n"]
                 user_ids = []
                 for u in users:
                     username = u.get('tg_username') or u.get('username') or str(u['user_id'])
                     phone = u.get('phone_card') or '—'
                     bank = u.get('bank') or '—'
-                    line = f"👤 @{username} (ID: {u['user_id']})\n💰 {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n────────"
+                    line = (
+                        f"👤 @{username} (ID: {u['user_id']})\n"
+                        f"💰 Сумма: {u['payout']}₽\n"
+                        f"📞 {phone}\n"
+                        f"🏦 {bank}\n"
+                        f"──────────────"
+                    )
                     text_lines.append(line)
                     user_ids.append(u['user_id'])
                 full_text = "\n".join(text_lines)
-                if REPORT_CHAT_ID:
-                    for i in range(0, len(full_text), 4000):
+                max_len = 4000
+                if not REPORT_CHAT_ID:
+                    logger.warning("⚠️ REPORT_CHAT_ID не задан.")
+                else:
+                    for i in range(0, len(full_text), max_len):
+                        chunk = full_text[i:i+max_len]
                         await bot.send_message(
-                            chat_id=REPORT_CHAT_ID, text=full_text[i:i+4000],
+                            chat_id=REPORT_CHAT_ID,
+                            text=chunk,
                             message_thread_id=REPORT_THREAD_ID or None,
                             parse_mode="HTML"
                         )
@@ -228,23 +215,50 @@ async def weekly_payout_report(bot):
                         await mark_as_paid_in_table(user_ids)
                     except Exception as e:
                         logging.error(f"mark_as_paid: {e}")
+
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.cursor()
-                        ph = ','.join(['?'] * len(user_ids))
-                        cur.execute(f"UPDATE users SET payout = 0, admin_topup = 0 WHERE user_id IN ({ph})", user_ids)
+                        placeholders = ','.join(['?'] * len(user_ids))
+                        cur.execute(f"""
+                            UPDATE users SET
+                                payout = 0,
+                                admin_topup = 0,
+                                yandex_passed = 0, yandex_neg_passed = 0, yandex_neg_opz_passed = 0,
+                                google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0,
+                                otzovik_passed = 0, doctoru_passed = 0, dokdok_passed = 0,
+                                prodoctors_passed = 0, doctu_passed = 0, top32_passed = 0,
+                                zoon_passed = 0, yell_passed = 0, yau_passed = 0, yab_passed = 0, hh_passed = 0,
+                                yandex_opz_passed = 0, google_opz_passed = 0, gis_opz_passed = 0,
+                                avito_opz_passed = 0, vk_opz_passed = 0, otzovik_opz_passed = 0,
+                                doctoru_opz_passed = 0, dokdok_opz_passed = 0, prodoctors_opz_passed = 0,
+                                doctu_opz_passed = 0, top32_opz_passed = 0, zoon_opz_passed = 0,
+                                yell_opz_passed = 0, yau_opz_passed = 0, yab_opz_passed = 0, hh_opz_passed = 0
+                            WHERE user_id IN ({placeholders})
+                        """, user_ids)
                         conn.commit()
+                    logging.info(f"✅ Обнулены у {len(user_ids)} юзеров")
+            else:
+                if REPORT_CHAT_ID:
+                    await bot.send_message(
+                        chat_id=REPORT_CHAT_ID,
+                        text="Сегодня нет пользователей, которым нужно выплатить вознаграждение.",
+                        message_thread_id=REPORT_THREAD_ID or None
+                    )
         except Exception as e:
             logging.error(f"weekly_payout: {e}")
 
 
 async def auto_close_slots_2330(bot):
+    """В 23:30 МСК — принудительно закрываем все активные слоты."""
     while True:
         try:
             now = datetime.now(moscow_tz)
             target = now.replace(hour=23, minute=30, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
-            await asyncio.sleep((target - now).total_seconds())
+            wait = (target - now).total_seconds()
+            logger.info(f"⏳ auto_close_slots_2330: следующее закрытие в {target.strftime('%d.%m.%Y %H:%M')} МСК")
+            await asyncio.sleep(wait)
         except Exception as e:
             logger.error(f"❌ auto_close sleep: {e}")
             await asyncio.sleep(60)
@@ -252,25 +266,50 @@ async def auto_close_slots_2330(bot):
 
         try:
             now = datetime.now(moscow_tz)
+            logger.info(f"🌙 auto_close_slots_2330: закрываю слоты ({now.strftime('%H:%M')} МСК)")
+
             slots_snapshot = list(active_slots.items())
+            logger.info(f"🌙 Слотов к закрытию: {len(slots_snapshot)}")
+
             deleted = 0
+            failed = 0
             for msg_id, slot in slots_snapshot:
                 try:
                     await bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
                     deleted += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    err = str(e).lower()
+                    if "message to delete not found" in err or "message can't be deleted" in err:
+                        pass
+                    else:
+                        failed += 1
+                        logger.warning(f"⚠️ Не удалить слот {msg_id}: {e}")
                 try:
                     del active_slots[msg_id]
                 except KeyError:
                     pass
                 await asyncio.sleep(0.3)
-            logger.info(f"🌙 auto_close: удалено {deleted}")
+
+            logger.info(f"✅ auto_close: удалено {deleted}, ошибок {failed}, active_slots={len(active_slots)}")
+
+            if LOG_CHANNEL_ID:
+                try:
+                    await bot.send_message(
+                        LOG_CHANNEL_ID,
+                        f"🌙 <b>23:30 — слоты закрыты</b>\n\n"
+                        f"🗑️ Удалено: {deleted}\n"
+                        f"⚠️ Ошибок: {failed}\n"
+                        f"📊 Активных слотов: {len(active_slots)}",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Лог в LOG_CHANNEL_ID: {e}")
         except Exception as e:
-            logger.error(f"❌ auto_close: {e}")
+            logger.error(f"❌ auto_close закрытие: {e}", exc_info=True)
 
 
 async def review_takes_cleanup():
+    """Раз в сутки в 05:00 МСК чистит старые записи review_takes (старше 7 дней)."""
     while True:
         try:
             now = datetime.now(moscow_tz)
@@ -278,35 +317,32 @@ async def review_takes_cleanup():
             if now >= target:
                 target += timedelta(days=1)
             await asyncio.sleep((target - now).total_seconds())
+
             cnt = cleanup_old_review_takes(days=7)
             if cnt:
-                logger.info(f"🧹 review_takes: {cnt}")
+                logger.info(f"🧹 review_takes: удалено {cnt} старых записей")
         except Exception as e:
             logger.error(f"❌ review_takes_cleanup: {e}")
             await asyncio.sleep(3600)
 
 
 async def subscription_cache_cleanup():
+    """Раз в 10 минут удаляет устаревшие записи из кэша подписок."""
     while True:
         try:
             await asyncio.sleep(600)
             cnt = cleanup_subscription_cache()
             if cnt:
-                logger.info(f"🧹 Кэш подписок: {cnt}")
+                logger.info(f"🧹 Кэш подписок: удалено {cnt} устаревших записей")
         except Exception as e:
             logger.error(f"❌ subscription_cache_cleanup: {e}")
             await asyncio.sleep(60)
 
 
 async def main():
-    _log_to_file("🔧 main() запущена")
-
-    try:
-        init_db()
-        _log_to_file("✅ init_db() OK")
-    except Exception as e:
-        _log_to_file(f"❌ init_db() ERROR: {e}\n{traceback.format_exc()}")
-        raise
+    print("🔧 main() запущена", flush=True)
+    init_db()
+    print("✅ init_db() OK", flush=True)
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
@@ -323,7 +359,7 @@ async def main():
     dp.include_router(promo.router)
     dp.include_router(slots.router)
 
-    _log_to_file("✅ Все роутеры подключены")
+    print("✅ Все роутеры подключены", flush=True)
 
     asyncio.create_task(validate_chat_ids(bot))
     asyncio.create_task(scheduler(bot))
@@ -336,21 +372,17 @@ async def main():
     asyncio.create_task(review_takes_cleanup())
     asyncio.create_task(subscription_cache_cleanup())
 
-    _log_to_file("🚀 Начинаю polling...")
-
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        _log_to_file(f"❌ POLLING ERROR: {e}\n{traceback.format_exc()}")
-        raise
+    print("🚀 Все таски запущены, начинаю polling...", flush=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    _log_to_file("🎬 __main__ запущен")
+    print("🎬 __main__ запущен", flush=True)
     threading.Thread(target=run_flask, daemon=True).start()
-
     try:
         asyncio.run(main())
     except Exception as e:
-        _log_to_file(f"❌ FATAL: {e}\n{traceback.format_exc()}")
-        raise
+        err = f"❌ FATAL ERROR в main(): {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        _log_to_file(err)
+        print(err, flush=True)
+        sys.exit(1)
