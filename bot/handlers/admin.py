@@ -29,7 +29,6 @@ HIDDEN_USERNAMES = {
     "new_chapterr24",
     "new_chapterr97",
     "molostovk",
-    "nikita_sportik1",
 }
 
 
@@ -125,6 +124,7 @@ async def cmd_helpadm(message: Message):
             "   доступно: ga, admin, stmoderator, moderator, comoderator, stpromonc, none\n"
             "📊 /payout_report — отчёт по выплатам (≥150₽) + обнуление\n"
             "🔍 /infoga <@username или user_id> — полная информация + редактирование\n"
+            "📋 /admlist — список всех ролей (без owner)\n"
             "👤 /userblock <user> — блок/разблок\n"
             "ℹ️ /info <user> — профиль\n"
             "⚠️ /warn <user> <7-30 дней> <причина> — предупреждение на N дней\n"
@@ -143,6 +143,7 @@ async def cmd_helpadm(message: Message):
         text += (
             "👑 /setrole <user> <role>\n"
             "   доступно: admin, stmoderator, moderator, comoderator, stpromonc, none\n"
+            "📋 /admlist — список всех ролей (без owner)\n"
             "👤 /userblock <user> — блок/разблок\n"
             "💰 /useredit <user> <поле> <знач> — правка данных\n"
             "💸 /pay <user> <сумма> — пополнить баланс\n"
@@ -1528,7 +1529,88 @@ async def cmd_resetflags(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 
-# ============ /smsall ============
+# ============ /admlist — список всех ролей кроме owner ============
+@router.message(Command("admlist"))
+async def cmd_admlist(message: Message):
+    caller_id = message.from_user.id
+    if not (is_owner(caller_id) or is_ga(caller_id)):
+        await message.answer("⛔ Команда доступна только владельцу и ГА.")
+        return
+
+    ROLE_ORDER = {
+        "ga": 1,
+        "admin": 2,
+        "stmoderator": 3,
+        "moderator": 4,
+        "comoderator": 5,
+        "stpromonc": 6,
+    }
+
+    ROLE_DISPLAY = {
+        "ga": "🛡️ ГА (Главный администратор)",
+        "admin": "🎩 Администратор NC",
+        "stmoderator": "⭐ Старший модератор",
+        "moderator": "🔨 Модератор",
+        "comoderator": "🧰 Комодер",
+        "stpromonc": "🏆 Старший промоутер",
+    }
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT a.user_id, a.role, u.tg_username, u.name, u.blocked
+                FROM admins a
+                LEFT JOIN users u ON u.user_id = a.user_id
+                WHERE a.role != 'owner'
+            """)
+            rows = [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        await message.answer(f"❌ Ошибка БД: {e}")
+        return
+
+    if not rows:
+        await message.answer("📭 Список пуст — нет ни одного сотрудника с ролью.")
+        return
+
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r["role"], []).append(r)
+
+    lines = [
+        f"👥 <b>Список сотрудников с ролями</b>",
+        f"<i>Без владельца · Всего: {len(rows)}</i>\n",
+    ]
+
+    for role in sorted(grouped.keys(), key=lambda x: ROLE_ORDER.get(x, 99)):
+        items = grouped[role]
+        lines.append(f"\n<b>{ROLE_DISPLAY.get(role, role)}</b> ({len(items)}):")
+        for u in sorted(items, key=lambda x: (x.get("name") or "").lower()):
+            name = u.get("name") or "—"
+            uname = u.get("tg_username") or "—"
+            uid = u["user_id"]
+            blocked_mark = " ⛔" if u.get("blocked") else ""
+            lines.append(f"• {name} (@{uname}, ID: {uid}){blocked_mark}")
+
+    text = "\n".join(lines)
+    max_len = 4000
+
+    if len(text) <= max_len:
+        await message.answer(text, parse_mode="HTML")
+    else:
+        total_parts = (len(text) + max_len - 1) // max_len
+        for i in range(0, len(text), max_len):
+            part_num = i // max_len + 1
+            chunk = text[i:i+max_len]
+            if part_num > 1:
+                chunk = f"<i>(часть {part_num}/{total_parts})</i>\n\n" + chunk
+            await message.answer(chunk, parse_mode="HTML")
+
+    log_action(message, f"/admlist: показано {len(rows)} сотрудников")
+
+
+# ============ /smsall — рассылка всем зарегистрированным ============
 @router.message(Command("smsall"))
 async def cmd_smsall(message: Message):
     caller_id = message.from_user.id
@@ -1587,7 +1669,7 @@ async def cmd_smsall(message: Message):
     log_action(message, f"/smsall: sent={sent}, blocked={blocked}, failed={failed}")
 
 
-# ============ /users ============
+# ============ /users — список зарегистрированных ============
 @router.message(Command("users"))
 async def cmd_users(message: Message):
     caller_id = message.from_user.id
