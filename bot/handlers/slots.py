@@ -287,6 +287,14 @@ async def cmd_resume(message: Message):
                 await message.answer("⏳ Таблица всё ещё перегружена. Подожди 1-2 минуты и попробуй /resume снова.")
                 return
 
+        # 🔧 Сбрасываем зависшие state
+        if state in ("working_on_review", "waiting_quantity"):
+            logger.info(f"🔧 /resume: сброс state '{state}' → slot_selection у {user_id}")
+            req["state"] = "slot_selection"
+            req["active_review_row"] = None
+            req["extra_messages"] = []
+            slot_requests[user_id] = req
+
         total = len(req.get("ordered_reviews", []))
         done = len(req.get("completed_reviews", []))
         await message.answer(
@@ -1001,15 +1009,40 @@ async def active_slot(callback: CallbackQuery):
     if user_id not in slot_requests:
         await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
         return
-    state = slot_requests[user_id].get("state")
+
+    request = slot_requests[user_id]
+    state = request.get("state")
+    logger.info(f"🔍 active_slot: user={user_id}, state={state}")
+
     if state in ("write_pending", "screenshot_pending"):
         await callback.answer("⏳ Идёт запись в таблицу. Подожди 1-2 мин, потом /resume.", show_alert=True)
         return
-    if state != "slot_selection":
-        await callback.answer("❌ Уже в процессе.", show_alert=True)
+
+    if state == "waiting_quantity":
+        await callback.answer(
+            f"⏳ Сначала введите количество отзывов (от 1 до {request.get('count', 0)}).\n"
+            f"Просто напишите число в чат.",
+            show_alert=True
+        )
         return
 
-    request = slot_requests[user_id]
+    if state == "working_on_review":
+        logger.info(f"🔧 active_slot: сброс state working_on_review у {user_id}")
+        chat_id = callback.message.chat.id
+        for msg_id in request.get("extra_messages", []):
+            try:
+                await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+        request["extra_messages"] = []
+        request["active_review_row"] = None
+        request["state"] = "slot_selection"
+        slot_requests[user_id] = request
+    elif state != "slot_selection":
+        logger.info(f"🔧 active_slot: сброс state '{state}' → slot_selection у {user_id}")
+        request["state"] = "slot_selection"
+        slot_requests[user_id] = request
+
     request["controls_msg_id"] = callback.message.message_id
     slot_requests[user_id] = request
 
@@ -1053,9 +1086,40 @@ async def select_review(callback: CallbackQuery):
         await callback.answer("❌ /resume.", show_alert=True)
         return
     request = slot_requests[user_id]
-    if request.get("state") != "slot_selection":
-        await callback.answer("❌ Уже работаете.", show_alert=True)
+    state = request.get("state")
+    logger.info(f"🔍 select_review: user={user_id}, state={state}")
+
+    if state in ("write_pending", "screenshot_pending"):
+        await callback.answer(
+            "⏳ Идёт запись в таблицу. Подожди 1-2 минуты, потом /resume.",
+            show_alert=True
+        )
         return
+
+    if state == "waiting_quantity":
+        await callback.answer(
+            f"⏳ Сначала введите количество отзывов (от 1 до {request.get('count', 0)}).\n"
+            f"Просто напишите число в чат.",
+            show_alert=True
+        )
+        return
+
+    if state == "working_on_review":
+        logger.info(f"🔧 select_review: сброс state working_on_review у {user_id}")
+        chat_id = callback.message.chat.id
+        for msg_id in request.get("extra_messages", []):
+            try:
+                await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+        request["extra_messages"] = []
+        request["active_review_row"] = None
+        request["state"] = "slot_selection"
+        slot_requests[user_id] = request
+    elif state != "slot_selection":
+        logger.info(f"🔧 select_review: сброс state '{state}' → slot_selection у {user_id}")
+        request["state"] = "slot_selection"
+        slot_requests[user_id] = request
 
     request["controls_msg_id"] = callback.message.message_id
     slot_requests[user_id] = request
