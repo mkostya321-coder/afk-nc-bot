@@ -58,6 +58,26 @@ def _is_status(j_val: str, *targets: str) -> bool:
     return False
 
 
+def _parse_date_safe(date_str: str):
+    """Возвращает datetime.date или None если не парсится."""
+    if not date_str:
+        return None
+    try:
+        clean = str(date_str).strip().replace("..", ".")
+        return datetime.strptime(clean, "%d.%m.%Y").date()
+    except Exception:
+        return None
+
+
+def _make_review_id(seed_val=None) -> str:
+    """Возвращает валидный review_id. seed_val — существующее значение (можно None/«None»)."""
+    if seed_val:
+        s = str(seed_val).strip()
+        if s and s != "None" and s.lower() != "none":
+            return s
+    return secrets.token_hex(4)
+
+
 def get_credentials():
     path = get_credentials_path()
     if not os.path.exists(path):
@@ -262,8 +282,10 @@ async def monitor_schedule(bot):
             try:
                 bd_dt = datetime.strptime(current_bd_iso, "%Y-%m-%d")
                 current_bd_str = bd_dt.strftime("%d.%m.%Y")
+                current_bd_date = bd_dt.date()
             except Exception:
                 current_bd_str = now.strftime("%d.%m.%Y")
+                current_bd_date = now.date()
 
             for sheet in worksheets:
                 sheet_name = sheet.title
@@ -320,21 +342,21 @@ async def monitor_schedule(bot):
                         flag_final = row[mapping["flag_final_col"]-1].strip() if len(row) >= mapping["flag_final_col"] else ""
 
                         _d_norm = (date_str or "").strip().replace("..", ".")
+                        _row_date = _parse_date_safe(_d_norm)
 
-                        # 🔧 АВТО-ФИКС СИРОТ: только если дата = СЕГОДНЯ
+                        # 🔧 АВТО-ФИКС СИРОТ (сравнение дат как дат!)
                         has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                         if (has_qpo_flag
                                 and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
                             _status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
                             _executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
                             if not _executor and _status in ("", "не принят в работу"):
-                                if _d_norm == current_bd_str:
+                                if _row_date and _row_date == current_bd_date:
                                     orphan_reset_q.append(row_idx)
                                     flag_first = "0"
                                     flag_second = "0"
                                     flag_third = "0"
-                                    # 🔧 продолжаем обработку строки дальше в этом же проходе
-                                elif _d_norm and _d_norm < current_bd_str:
+                                elif _row_date and _row_date < current_bd_date:
                                     stats["expired_date"] += 1
                                     expired_rows.append(row_idx)
                                     continue
@@ -355,8 +377,13 @@ async def monitor_schedule(bot):
                         _d = (date_str or "").strip().replace("..", ".")
                         _t = (time_str or "").strip().replace("..", ":")
 
-                        if _d and _d != current_bd_str:
-                            if _d < current_bd_str:
+                        # 🛡️ ФИЛЬТР ПО ДАТЕ: сравнение как ДАТЫ
+                        if _row_date is None:
+                            stats["bad_date_format"] += 1
+                            continue
+
+                        if _row_date != current_bd_date:
+                            if _row_date < current_bd_date:
                                 stats["expired_date"] += 1
                                 expired_rows.append(row_idx)
                             else:
@@ -374,7 +401,6 @@ async def monitor_schedule(bot):
                         else:
                             stats["future_time"] += 1
 
-                # 🔧 Сброс Q/P/O и S у строк-сирот (только сброс в таблице, без повторного добавления)
                 if orphan_reset_q:
                     try:
                         batch_orphan = []
@@ -394,7 +420,6 @@ async def monitor_schedule(bot):
                         logger.warning(
                             f"🔧 '{sheet_name}': сбросил Q/P/O=0 и S='' у {len(orphan_reset_q)} строк-сирот"
                         )
-                        # 🛡️ НЕ добавляем повторно в to_publish — они уже там
                     except Exception as e:
                         logger.error(f"❌ Сброс сирот '{sheet_name}': {e}")
 
@@ -413,17 +438,18 @@ async def monitor_schedule(bot):
                     except Exception as e:
                         logger.error(f"❌ Просроченные даты '{sheet_name}': {e}")
 
-                # 🛡️ Финальная защита: убираем дубли и строки не на сегодня
+                # 🛡️ Финальная защита: убираем дубли + только сегодня
                 seen = set()
                 clean_to_publish = []
                 for r_idx, r_row in to_publish:
                     if r_idx in seen:
                         continue
-                    r_date = r_row[mapping["date_col"]-1].strip().replace("..", ".") if len(r_row) >= mapping["date_col"] else ""
-                    if r_date == current_bd_str:
+                    r_date_str = r_row[mapping["date_col"]-1].strip().replace("..", ".") if len(r_row) >= mapping["date_col"] else ""
+                    r_date = _parse_date_safe(r_date_str)
+                    if r_date == current_bd_date:
                         seen.add(r_idx)
                         clean_to_publish.append((r_idx, r_row))
-                    elif r_date and r_date < current_bd_str:
+                    elif r_date and r_date < current_bd_date:
                         expired_rows.append(r_idx)
                 to_publish = clean_to_publish
 
@@ -486,8 +512,10 @@ async def monitor_schedule(bot):
                                 continue
                             q_val = rrow[mapping["flag_first_col"]-1].strip() if len(rrow) >= mapping["flag_first_col"] else ""
                             s_val = rrow[mapping["id_col"]-1].strip() if len(rrow) >= mapping["id_col"] else ""
+                            if not s_val or s_val == "None" or s_val.lower() == "none":
+                                s_val = ""
                             if q_val != "1" or not s_val:
-                                review_id = s_val or secrets.token_hex(4)
+                                review_id = _make_review_id(s_val)
                                 col_q = chr(64 + mapping["flag_first_col"])
                                 col_s = chr(64 + mapping["id_col"])
                                 sync_batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
@@ -644,7 +672,7 @@ async def monitor_schedule(bot):
                             logger.info(f"✅ Переопубликован {platform}/{sheet_name} ({candidate_count} шт)")
                             batch = []
                             for row_idx in new_rows:
-                                review_id = secrets.token_hex(4)
+                                review_id = _make_review_id()
                                 col_q = chr(64 + mapping["flag_first_col"])
                                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                                 col_s = chr(64 + mapping["id_col"])
@@ -674,7 +702,7 @@ async def monitor_schedule(bot):
 
                     batch = []
                     for row_idx in new_rows:
-                        review_id = secrets.token_hex(4)
+                        review_id = _make_review_id()
                         col_q = chr(64 + mapping["flag_first_col"])
                         batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                         col_s = chr(64 + mapping["id_col"])
@@ -710,7 +738,7 @@ async def monitor_schedule(bot):
                         continue
                     batch = []
                     for row_idx in row_ids:
-                        review_id = secrets.token_hex(4)
+                        review_id = _make_review_id()
                         col_q = chr(64 + mapping["flag_first_col"])
                         batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                         col_s = chr(64 + mapping["id_col"])
@@ -1063,7 +1091,7 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
                 batch.append({"range": f"{col_p}{row_idx}", "values": [[0]]})
             if o_val == "1":
                 batch.append({"range": f"{col_o}{row_idx}", "values": [[0]]})
-            if s_val:
+            if s_val or s_val == "None":
                 batch.append({"range": f"{col_s}{row_idx}", "values": [[""]]})
 
             if i_val == "888":
