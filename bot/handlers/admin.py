@@ -133,7 +133,7 @@ async def cmd_helpadm(message: Message):
             "📋 /warnlist — список юзеров с активными W\n"
             "📨 /smsuser <user> <текст> — сообщение\n"
             "🎯 /unslot <user> — снять активный слот\n"
-            "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I и S=None\n"
             "🔧 /resetflags <платформа> — сбросить Q/P/O/I/S у висящих строк\n"
             "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
             "👥 /users — список всех зарегистрированных\n"
@@ -167,7 +167,7 @@ async def cmd_helpadm(message: Message):
             "📋 /list_posts [post] — список сотрудников\n"
             "🏆 /infopromo <user> — карточка промоутера\n"
             "🎯 /unslot <user> — снять активный слот\n"
-            "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I и S=None\n"
             "🔧 /resetflags <платформа> — сбросить Q/P/O/I/S у висящих строк\n"
             "📢 /smsall <текст> — рассылка всем зарегистрированным\n"
             "👥 /users — список всех зарегистрированных\n"
@@ -190,7 +190,7 @@ async def cmd_helpadm(message: Message):
             "👤 /user_limit <user> <platform> <N|reset> — персональный лимит\n"
             "📋 /list_posts [post] — список сотрудников\n"
             "🎯 /unslot <user> — снять активный слот\n"
-            "🧹 /cleanflags — сбросить неправильные флаги I\n"
+            "🧹 /cleanflags — сбросить неправильные флаги I и S=None\n"
             "🔧 /resetflags <платформа> — сбросить Q/P/O/I/S у висящих строк\n"
         )
 
@@ -974,7 +974,15 @@ async def cmd_payout_report(message: Message):
             username = u.get('tg_username') or u.get('username') or str(u['user_id'])
             phone = u.get('phone_card') or '—'
             bank = u.get('bank') or '—'
-            line = f"👤 @{username} (ID: {u['user_id']})\n💰 {u['payout']}₽\n📞 {phone}\n🏦 {bank}\n──────────────"
+            admin_topup = u.get('admin_topup', 0)
+            extra = f"\n   (в т.ч. ручное: {admin_topup}₽)" if admin_topup > 0 else ""
+            line = (
+                f"👤 @{username} (ID: {u['user_id']})\n"
+                f"💰 Сумма: {u['payout']}₽{extra}\n"
+                f"📞 {phone}\n"
+                f"🏦 {bank}\n"
+                f"──────────────"
+            )
             text_lines.append(line)
             user_ids.append(u['user_id'])
         full_text = "\n".join(text_lines)
@@ -1314,14 +1322,14 @@ async def cmd_unslot(message: Message):
     log_action(message, f"/unslot {uid} ({platform})")
 
 
-# ============ /cleanflags ============
+# ============ /cleanflags — сброс неправильных флагов I + S=None ============
 @router.message(Command("cleanflags"))
 async def cmd_cleanflags(message: Message):
     if not is_admin_nc(message.from_user.id):
         await message.answer("⛔ Только для владельца, ГА и Админа NC.")
         return
 
-    await message.answer("⏳ Прохожу по всем листам...")
+    await message.answer("⏳ Прохожу по всем листам (I=333 + S=None)...")
 
     try:
         from bot.google_sheets import get_client, retry_api_call
@@ -1341,7 +1349,8 @@ async def cmd_cleanflags(message: Message):
             "удален", "в отчете испол",
         )
 
-        total_cleaned = 0
+        total_i_cleaned = 0
+        total_s_cleaned = 0
         details = []
 
         for sheet in worksheets:
@@ -1361,39 +1370,54 @@ async def cmd_cleanflags(message: Message):
             headers_row = records[0] if records else None
             mapping = get_column_mapping(platform, headers_row)
             col_i = chr(64 + mapping["flag_final_col"])
+            col_s = chr(64 + mapping["id_col"])
 
             batch = []
+            i_count = 0
+            s_count = 0
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < max(mapping["status_col"], mapping["flag_final_col"]):
                     continue
                 i_val = (row[mapping["flag_final_col"]-1] or "").strip()
                 j_val = (row[mapping["status_col"]-1] or "").strip().lower() if len(row) >= mapping["status_col"] else ""
 
-                if i_val in ("", "0"):
-                    continue
-
                 if i_val == "333":
                     if not any(j_val.startswith(s) for s in VALID_FOR_333):
                         batch.append({"range": f"{col_i}{row_idx}", "values": [[0]]})
+                        i_count += 1
+                        logger.info(f"🧹 cleanflags '{sheet_name}' row {row_idx}: I=333 → 0 (J='{j_val}')")
+
+                # 🔧 Чистим S="None"
+                s_val = (row[mapping["id_col"]-1] or "").strip() if len(row) >= mapping["id_col"] else ""
+                if s_val == "None" or s_val.lower() == "none":
+                    batch.append({"range": f"{col_s}{row_idx}", "values": [[""]]})
+                    s_count += 1
+                    logger.info(f"🧹 cleanflags '{sheet_name}' row {row_idx}: S='None' → ''")
 
             if batch:
                 try:
                     for i in range(0, len(batch), 50):
                         await retry_api_call(sheet.batch_update, batch[i:i+50])
                         await asyncio.sleep(0.6)
-                    total_cleaned += len(batch)
-                    details.append(f"• {sheet_name}: {len(batch)}")
+                    total_i_cleaned += i_count
+                    total_s_cleaned += s_count
+                    details.append(f"• {sheet_name}: I={i_count}, S={s_count}")
                 except Exception as e:
                     logger.error(f"cleanflags '{sheet_name}': {e}")
                     details.append(f"• {sheet_name}: ⚠️ {e}")
 
-        if total_cleaned == 0:
-            await message.answer("✅ Всё чисто.")
+        if total_i_cleaned == 0 and total_s_cleaned == 0:
+            await message.answer("✅ Всё чисто — неправильных флагов I и S=None не найдено.")
         else:
-            text = f"✅ <b>Готово</b>\n\nСброшено: <b>{total_cleaned}</b>\n\n" + "\n".join(details)
+            text = (
+                f"✅ <b>Готово</b>\n\n"
+                f"Сброшено I=333→0: <b>{total_i_cleaned}</b>\n"
+                f"Сброшено S=None→'': <b>{total_s_cleaned}</b>\n\n" +
+                "\n".join(details)
+            )
             await message.answer(text, parse_mode="HTML")
 
-        log_action(message, f"/cleanflags: {total_cleaned}")
+        log_action(message, f"/cleanflags: I={total_i_cleaned}, S={total_s_cleaned}")
     except Exception as e:
         logger.error(f"cleanflags: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
@@ -1488,11 +1512,11 @@ async def cmd_resetflags(message: Message):
                 p = row[mapping["flag_second_col"]-1].strip()
                 o = row[mapping["flag_third_col"]-1].strip()
                 i = row[mapping["flag_final_col"]-1].strip()
+                s = row[mapping["id_col"]-1].strip() if len(row) >= mapping["id_col"] else ""
 
                 if q in ("1", "999"):
                     batch.append({"range": f"{chr(64+mapping['flag_first_col'])}{row_idx}", "values": [[0]]})
-                    s_val = row[mapping["id_col"]-1].strip() if len(row) >= mapping["id_col"] else ""
-                    if s_val:
+                    if s:
                         batch.append({"range": f"{chr(64+mapping['id_col'])}{row_idx}", "values": [[""]]})
                 if p == "1":
                     batch.append({"range": f"{chr(64+mapping['flag_second_col'])}{row_idx}", "values": [[0]]})
@@ -1500,6 +1524,9 @@ async def cmd_resetflags(message: Message):
                     batch.append({"range": f"{chr(64+mapping['flag_third_col'])}{row_idx}", "values": [[0]]})
                 if i in ("1", "888", "222"):
                     batch.append({"range": f"{chr(64+mapping['flag_final_col'])}{row_idx}", "values": [[0]]})
+                # 🔧 Чистим S="None"
+                if s == "None" or s.lower() == "none":
+                    batch.append({"range": f"{chr(64+mapping['id_col'])}{row_idx}", "values": [[""]]})
 
             if batch:
                 try:
