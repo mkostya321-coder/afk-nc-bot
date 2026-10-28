@@ -287,7 +287,6 @@ async def cmd_resume(message: Message):
                 await message.answer("⏳ Таблица всё ещё перегружена. Подожди 1-2 минуты и попробуй /resume снова.")
                 return
 
-        # 🔧 Сбрасываем зависшие state
         if state in ("working_on_review", "waiting_quantity"):
             logger.info(f"🔧 /resume: сброс state '{state}' → slot_selection у {user_id}")
             req["state"] = "slot_selection"
@@ -683,6 +682,10 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         u = get_user(user_id)
         write_username = f"@{u['tg_username']}" if u and u.get("tg_username") else ""
 
+    # 🔧 Защита: если review_id пустой или "None" — не пишем мусор
+    if not review_id or str(review_id).strip().lower() == "none" or not str(review_id).strip():
+        review_id = None
+
     if not active_row or not sheet_title:
         return False
 
@@ -755,7 +758,7 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
             f"{col_i}{active_row}",
             {"backgroundColor": {"red": 0, "green": 0.8, "blue": 0}}
         )
-        logger.info(f"✅ Скриншот записан: user={user_id}, строка={active_row}")
+        logger.info(f"✅ Скриншот записан: user={user_id}, строка={active_row}, id={review_id or 'не записан'}")
         return True
     except Exception as e:
         logger.error(f"❌ Ошибка записи скриншота: {e}")
@@ -1467,7 +1470,7 @@ async def handle_screenshot(message: Message):
 
     review_id = await retry_api_call(sheet.cell, active_row, mapping["id_col"])
     review_id = review_id.value if review_id else None
-    if not review_id:
+    if not review_id or str(review_id).strip().lower() == "none":
         review_id = secrets.token_hex(4)
 
     request["screenshot_review_id"] = review_id
