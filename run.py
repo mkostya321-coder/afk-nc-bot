@@ -351,7 +351,9 @@ async def main():
         await bot.session.close()
     dp.shutdown.register(close_session)
 
+    # ⚠️ Middleware подключаем ДЛЯ ОБОИХ типов событий
     dp.message.middleware(AutoMenuMiddleware())
+    dp.callback_query.middleware(AutoMenuMiddleware())
 
     dp.include_router(user.router)
     dp.include_router(admin.router)
