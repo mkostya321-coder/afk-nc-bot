@@ -15,7 +15,7 @@ from bot.database import (
     get_user_limit, set_user_limit, reset_user_limit, get_effective_limit,
     remove_last_warning, remove_all_warnings, get_all_users_with_active_warnings,
 )
-from bot.helpers import match_platform, PRICES, platform_from_sheet_name
+from bot.helpers import match_platform, PRICES, platform_from_sheet_name, col_letter
 from bot.logging_helpers import log_user_event
 import sqlite3
 import asyncio
@@ -1281,7 +1281,7 @@ async def cmd_unslot(message: Message):
                     ]:
                         if key not in mapping:
                             continue
-                        col = chr(64 + mapping[key])
+                        col = col_letter(mapping[key])
                         batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
 
                 for i in range(0, len(batch), 20):
@@ -1369,8 +1369,8 @@ async def cmd_cleanflags(message: Message):
 
             headers_row = records[0] if records else None
             mapping = get_column_mapping(platform, headers_row)
-            col_i = chr(64 + mapping["flag_final_col"])
-            col_s = chr(64 + mapping["id_col"])
+            col_i = col_letter(mapping["flag_final_col"])
+            col_s = col_letter(mapping["id_col"])
 
             batch = []
             i_count = 0
@@ -1488,6 +1488,13 @@ async def cmd_resetflags(message: Message):
             headers_row = records[0] if records else None
             mapping = get_column_mapping(platform, headers_row)
 
+            # Предвычисляем буквы один раз
+            cl_first = col_letter(mapping["flag_first_col"])
+            cl_second = col_letter(mapping["flag_second_col"])
+            cl_third = col_letter(mapping["flag_third_col"])
+            cl_final = col_letter(mapping["flag_final_col"])
+            cl_id = col_letter(mapping["id_col"])
+
             batch = []
             for row_idx, row in enumerate(records[1:], start=2):
                 if len(row) < max(
@@ -1515,18 +1522,18 @@ async def cmd_resetflags(message: Message):
                 s = row[mapping["id_col"]-1].strip() if len(row) >= mapping["id_col"] else ""
 
                 if q in ("1", "999"):
-                    batch.append({"range": f"{chr(64+mapping['flag_first_col'])}{row_idx}", "values": [[0]]})
+                    batch.append({"range": f"{cl_first}{row_idx}", "values": [[0]]})
                     if s:
-                        batch.append({"range": f"{chr(64+mapping['id_col'])}{row_idx}", "values": [[""]]})
+                        batch.append({"range": f"{cl_id}{row_idx}", "values": [[""]]})
                 if p == "1":
-                    batch.append({"range": f"{chr(64+mapping['flag_second_col'])}{row_idx}", "values": [[0]]})
+                    batch.append({"range": f"{cl_second}{row_idx}", "values": [[0]]})
                 if o == "1":
-                    batch.append({"range": f"{chr(64+mapping['flag_third_col'])}{row_idx}", "values": [[0]]})
+                    batch.append({"range": f"{cl_third}{row_idx}", "values": [[0]]})
                 if i in ("1", "888", "222"):
-                    batch.append({"range": f"{chr(64+mapping['flag_final_col'])}{row_idx}", "values": [[0]]})
+                    batch.append({"range": f"{cl_final}{row_idx}", "values": [[0]]})
                 # 🔧 Чистим S="None"
                 if s == "None" or s.lower() == "none":
-                    batch.append({"range": f"{chr(64+mapping['id_col'])}{row_idx}", "values": [[""]]})
+                    batch.append({"range": f"{cl_id}{row_idx}", "values": [[""]]})
 
             if batch:
                 try:
