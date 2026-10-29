@@ -16,7 +16,7 @@ from bot.database import (
     remove_review_takes,
 )
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
-from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key
+from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key, col_letter
 from bot.logging_helpers import log_user_event
 from bot.middlewares import is_subscribed_cached
 from bot.state import active_slots, slot_requests
@@ -228,7 +228,7 @@ async def cancel_task(message: Message):
                                  ("id_col", ""), ("order_col", "")]:
                     if key not in mapping:
                         continue
-                    col = chr(64 + mapping[key])
+                    col = col_letter(mapping[key])
                     batch.append({"range": f"{col}{row_idx}", "values": [[val]]})
 
             for i in range(0, len(batch), 20):
@@ -610,12 +610,13 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
         logger.error(f"❌ _write_slot_to_sheet: {e}")
         return False
 
+    col_j = col_letter(mapping["status_col"])
+    col_k = col_letter(mapping["executor_col"])
+    col_t = col_letter(mapping["order_col"])
+    col_i = col_letter(mapping["flag_final_col"])
+
     batch = []
     for row_idx in assigned_rows:
-        col_j = chr(64 + mapping["status_col"])
-        col_k = chr(64 + mapping["executor_col"])
-        col_t = chr(64 + mapping["order_col"])
-        col_i = chr(64 + mapping["flag_final_col"])
         idx = assigned_rows.index(row_idx) + 1
         batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
         batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
@@ -644,10 +645,6 @@ async def _write_slot_to_sheet(user_id: int, bot) -> bool:
             logger.warning(f"🔁 Повторная запись {len(bad)} строк для user {user_id}")
             retry_batch = []
             for row_idx in bad:
-                col_j = chr(64 + mapping["status_col"])
-                col_k = chr(64 + mapping["executor_col"])
-                col_t = chr(64 + mapping["order_col"])
-                col_i = chr(64 + mapping["flag_final_col"])
                 idx = assigned_rows.index(row_idx) + 1
                 retry_batch.append({"range": f"{col_j}{row_idx}", "values": [["в работе"]]})
                 retry_batch.append({"range": f"{col_k}{row_idx}", "values": [[username]]})
@@ -720,10 +717,13 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         if not k_val:
             if row_belongs:
                 logger.warning(f"🔧 K пустое, строка {active_row} в assigned — восстанавливаю")
+                col_j = col_letter(mapping["status_col"])
+                col_k = col_letter(mapping["executor_col"])
+                col_i = col_letter(mapping["flag_final_col"])
                 restore_batch = [
-                    {"range": f"{chr(64+mapping['status_col'])}{active_row}", "values": [["в работе"]]},
-                    {"range": f"{chr(64+mapping['executor_col'])}{active_row}", "values": [[write_username]]},
-                    {"range": f"{chr(64+mapping['flag_final_col'])}{active_row}", "values": [[0]]},
+                    {"range": f"{col_j}{active_row}", "values": [["в работе"]]},
+                    {"range": f"{col_k}{active_row}", "values": [[write_username]]},
+                    {"range": f"{col_i}{active_row}", "values": [[0]]},
                 ]
                 try:
                     await retry_api_call(sheet.batch_update, restore_batch)
@@ -741,14 +741,14 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
         logger.warning(f"⚠️ _write_screenshot проверка: {e}")
         return False
 
-    col_j = chr(64 + mapping["status_col"])
-    col_i = chr(64 + mapping["flag_final_col"])
+    col_j = col_letter(mapping["status_col"])
+    col_i = col_letter(mapping["flag_final_col"])
     batch = [
         {"range": f"{col_j}{active_row}", "values": [["на модерации"]]},
         {"range": f"{col_i}{active_row}", "values": [[333]]},
     ]
     if review_id:
-        col_id = chr(64 + mapping["id_col"])
+        col_id = col_letter(mapping["id_col"])
         batch.append({"range": f"{col_id}{active_row}", "values": [[review_id]]})
 
     try:
