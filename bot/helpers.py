@@ -49,6 +49,42 @@ PLATFORM_ALIASES = {
     "yell": ["yell", "йелл", "йэлл"],
 }
 
+# ============================================================
+# Короткие коды для callback_data (лимит Telegram — 64 байта)
+# ============================================================
+PLATFORM_CALLBACK_CODES = {
+    "яндекс": "yandex",
+    "яндекс негатив": "yandex_neg",
+    "google": "google",
+    "2гис": "gis",
+    "авито": "avito",
+    "вк": "vk",
+    "отзовик": "otzovik",
+    "доктору": "doctoru",
+    "докдок": "dokdok",
+    "про докторов": "prodoct",
+    "докту": "doctu",
+    "32топ": "top32",
+    "zoon": "zoon",
+    "яу": "yau",
+    "яб": "yab",
+    "h": "hh",
+    "yell": "yell",
+}
+
+CALLBACK_CODE_TO_PLATFORM = {v: k for k, v in PLATFORM_CALLBACK_CODES.items()}
+
+
+def platform_to_callback_code(platform: str) -> str:
+    """Возвращает короткий код платформы для callback_data (≤16 байт)."""
+    return PLATFORM_CALLBACK_CODES.get(platform, platform[:16])
+
+
+def callback_code_to_platform(code: str):
+    """Обратное преобразование короткого кода в название платформы. None если не найдено."""
+    return CALLBACK_CODE_TO_PLATFORM.get(code)
+
+
 SHEET_NAME_TO_PLATFORM = {
     # Яндекс
     "ЯНДЕКС (К)": "яндекс", "Яндекс (К)": "яндекс", "ЯНДЕКС": "яндекс", "Яндекс": "яндекс",
