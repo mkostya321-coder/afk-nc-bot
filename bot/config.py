@@ -11,6 +11,11 @@ ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(",") if x.strip()]
 
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+if not OWNER_ID:
+    logger.warning(
+        "⚠️ OWNER_ID не задан в env — owner-команды (/payout_report, /setrole ga ...) "
+        "будут недоступны! Задайте OWNER_ID=<telegram_user_id> и перезапустите."
+    )
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@newChapterJob")
 MANAGER_USERNAME = "New_Chapterr24"
 OTHER_JOBS_CHANNEL = "https://t.me/jobNchapter"
