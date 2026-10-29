@@ -15,7 +15,7 @@ from bot.state import active_slots, slot_requests
 from bot.helpers import (
     platform_from_sheet_name, get_column_mapping, match_platform,
     PRICES, PLATFORM_ALIASES, SHEET_NAME_TO_PLATFORM,
-    business_day_key,
+    business_day_key, col_letter,
 )
 
 logger = logging.getLogger(__name__)
@@ -224,7 +224,7 @@ async def sync_username_in_sheets(old_username: str, new_username: str) -> int:
                 e_val = (row[mapping["update_col"]-1] or "").strip()
                 if e_val not in ("", "0"):
                     continue
-                col_k = chr(64 + mapping["executor_col"])
+                col_k = col_letter(mapping["executor_col"])
                 batch.append({"range": f"{col_k}{row_idx}", "values": [[new_with_at]]})
             if batch:
                 try:
@@ -404,10 +404,10 @@ async def monitor_schedule(bot):
                 if orphan_reset_q:
                     try:
                         batch_orphan = []
-                        col_q = chr(64 + mapping["flag_first_col"])
-                        col_p = chr(64 + mapping["flag_second_col"])
-                        col_o = chr(64 + mapping["flag_third_col"])
-                        col_s = chr(64 + mapping["id_col"])
+                        col_q = col_letter(mapping["flag_first_col"])
+                        col_p = col_letter(mapping["flag_second_col"])
+                        col_o = col_letter(mapping["flag_third_col"])
+                        col_s = col_letter(mapping["id_col"])
                         for r in orphan_reset_q:
                             batch_orphan.append({"range": f"{col_q}{r}", "values": [[0]]})
                             batch_orphan.append({"range": f"{col_p}{r}", "values": [[0]]})
@@ -425,7 +425,7 @@ async def monitor_schedule(bot):
 
                 if expired_rows:
                     try:
-                        col_i = chr(64 + mapping["flag_final_col"])
+                        col_i = col_letter(mapping["flag_final_col"])
                         batch_exp = []
                         for r in expired_rows:
                             batch_exp.append({"range": f"{col_i}{r}", "values": [[888]]})
@@ -516,8 +516,8 @@ async def monitor_schedule(bot):
                                 s_val = ""
                             if q_val != "1" or not s_val:
                                 review_id = _make_review_id(s_val)
-                                col_q = chr(64 + mapping["flag_first_col"])
-                                col_s = chr(64 + mapping["id_col"])
+                                col_q = col_letter(mapping["flag_first_col"])
+                                col_s = col_letter(mapping["id_col"])
                                 sync_batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                                 sync_batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                     except Exception as e:
@@ -673,9 +673,9 @@ async def monitor_schedule(bot):
                             batch = []
                             for row_idx in new_rows:
                                 review_id = _make_review_id()
-                                col_q = chr(64 + mapping["flag_first_col"])
+                                col_q = col_letter(mapping["flag_first_col"])
                                 batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
-                                col_s = chr(64 + mapping["id_col"])
+                                col_s = col_letter(mapping["id_col"])
                                 batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                             try:
                                 for i in range(0, len(batch), 50):
@@ -703,9 +703,9 @@ async def monitor_schedule(bot):
                     batch = []
                     for row_idx in new_rows:
                         review_id = _make_review_id()
-                        col_q = chr(64 + mapping["flag_first_col"])
+                        col_q = col_letter(mapping["flag_first_col"])
                         batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
-                        col_s = chr(64 + mapping["id_col"])
+                        col_s = col_letter(mapping["id_col"])
                         batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                     try:
                         for i in range(0, len(batch), 50):
@@ -739,9 +739,9 @@ async def monitor_schedule(bot):
                     batch = []
                     for row_idx in row_ids:
                         review_id = _make_review_id()
-                        col_q = chr(64 + mapping["flag_first_col"])
+                        col_q = col_letter(mapping["flag_first_col"])
                         batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
-                        col_s = chr(64 + mapping["id_col"])
+                        col_s = col_letter(mapping["id_col"])
                         batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
                     try:
                         for i in range(0, len(batch), 50):
@@ -895,8 +895,9 @@ async def _check_republish(bot, client, now):
             try:
                 sheet = await asyncio.to_thread(spreadsheet.worksheet, slot.get("sheet_title"))
                 batch = []
+                col_letter_str = col_letter(col)
                 for row_idx in available_rows:
-                    batch.append({"range": f"{chr(64+col)}{row_idx}", "values": [[1]]})
+                    batch.append({"range": f"{col_letter_str}{row_idx}", "values": [[1]]})
                 for i in range(0, len(batch), 50):
                     await retry_api_call(sheet.batch_update, batch[i:i+50])
                     await asyncio.sleep(0.6)
@@ -974,10 +975,10 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             j_val = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
             statuses_seen[j_val] = statuses_seen.get(j_val, 0) + 1
 
-            col_j = chr(64 + mapping["status_col"])
-            col_k = chr(64 + mapping["executor_col"])
-            col_i_letter = chr(64 + mapping["flag_final_col"])
-            col_q = chr(64 + mapping["flag_first_col"])
+            col_j = col_letter(mapping["status_col"])
+            col_k = col_letter(mapping["executor_col"])
+            col_i_letter = col_letter(mapping["flag_final_col"])
+            col_q = col_letter(mapping["flag_first_col"])
 
             q_val = row[mapping["flag_first_col"]-1].strip() if len(row) >= mapping["flag_first_col"] else ""
             if q_val != "1":
@@ -1079,11 +1080,11 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             o_val = row[mapping["flag_third_col"]-1].strip() if len(row) >= mapping["flag_third_col"] else ""
             s_val = row[mapping["id_col"]-1].strip() if len(row) >= mapping["id_col"] else ""
 
-            col_i_letter = chr(64 + mapping["flag_final_col"])
-            col_q = chr(64 + mapping["flag_first_col"])
-            col_p = chr(64 + mapping["flag_second_col"])
-            col_o = chr(64 + mapping["flag_third_col"])
-            col_s = chr(64 + mapping["id_col"])
+            col_i_letter = col_letter(mapping["flag_final_col"])
+            col_q = col_letter(mapping["flag_first_col"])
+            col_p = col_letter(mapping["flag_second_col"])
+            col_o = col_letter(mapping["flag_third_col"])
+            col_s = col_letter(mapping["id_col"])
 
             if q_val in ("1", "999"):
                 batch.append({"range": f"{col_q}{row_idx}", "values": [[0]]})
@@ -1156,9 +1157,9 @@ async def _close_day(bot, client, now, current_business_day: str) -> bool:
             executor = row[mapping_s["executor_col"]-1].strip() if len(row) >= mapping_s["executor_col"] else ""
             if not executor:
                 continue
-            col_j = chr(64 + mapping_s["status_col"])
-            col_i = chr(64 + mapping_s["flag_final_col"])
-            col_q = chr(64 + mapping_s["flag_first_col"])
+            col_j = col_letter(mapping_s["status_col"])
+            col_i = col_letter(mapping_s["flag_final_col"])
+            col_q = col_letter(mapping_s["flag_first_col"])
             q_val = row[mapping_s["flag_first_col"]-1].strip() if len(row) >= mapping_s["flag_first_col"] else ""
             if q_val != "1":
                 batch_s.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
@@ -1448,7 +1449,7 @@ async def mark_as_paid_in_table(user_ids: list):
                         matched = uid
                         break
                 if matched:
-                    col = chr(64 + mapping["status_col"])
+                    col = col_letter(mapping["status_col"])
                     batch.append({"range": f"{col}{row_idx}", "values": [["В отчете ИСПЛ"]]})
             if batch:
                 try:
