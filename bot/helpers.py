@@ -6,6 +6,22 @@ import pytz
 logger = logging.getLogger(__name__)
 moscow_tz = pytz.timezone("Europe/Moscow")
 
+
+def col_letter(idx: int) -> str:
+    """
+    Преобразует номер колонки (1-based) в буквенное имя Google Sheets.
+    1 -> A, 26 -> Z, 27 -> AA, 52 -> AZ, 53 -> BA, ...
+    Работает для любого положительного idx.
+    """
+    if idx <= 0:
+        raise ValueError(f"col_letter: idx должен быть >= 1, получено {idx}")
+    result = ""
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
 PRICES = {
     "яндекс": 150, "яндекс негатив": 200, "google": 50, "2гис": 50, "авито": 700, "вк": 50,
     "отзовик": 100, "доктору": 100, "докдок": 100, "про докторов": 200,
