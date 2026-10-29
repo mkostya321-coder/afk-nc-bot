@@ -291,8 +291,7 @@ async def infoga_ban(callback: CallbackQuery):
 @router.callback_query(F.data == "infoga:exit")
 async def infoga_exit(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-    if user_id in selected_user:
-        del selected_user[user_id]
+    selected_user.pop(user_id, None)
     await state.clear()
     await delete_message_safe(callback.message)
     await callback.message.answer("✅ Просмотр завершён.")
@@ -306,7 +305,7 @@ async def infoga_edit(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка", show_alert=True)
         return
 
-    await state.set_state(EditUserStates.edit_name)
+    await state.set_state(EditUserStates.menu)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="edit:name"),
          InlineKeyboardButton(text="✏️ Изменить город", callback_data="edit:city")],
@@ -328,6 +327,7 @@ async def edit_menu(callback: CallbackQuery, state: FSMContext):
     action = callback.data.split(":")[1]
 
     if action == "exit":
+        selected_user.pop(user_id, None)
         await state.clear()
         await delete_message_safe(callback.message)
         await callback.message.answer("✅ Редактирование завершено.")
@@ -335,10 +335,12 @@ async def edit_menu(callback: CallbackQuery, state: FSMContext):
         return
 
     if action == "next":
-        await state.set_state(EditUserStates.edit_payout)
+        await state.set_state(EditUserStates.menu)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Изменить 'К выплате'", callback_data="edit:payout")],
             [InlineKeyboardButton(text="✏️ Изменить 'Заработано ЗВВ'", callback_data="edit:earned")],
+            [InlineKeyboardButton(text="📞 Изменить телефон/карту", callback_data="edit:phone"),
+             InlineKeyboardButton(text="🏦 Изменить банк", callback_data="edit:bank")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="edit:back")],
             [InlineKeyboardButton(text="👤 Вернуться к просмотру", callback_data="edit:view")]
         ])
@@ -351,7 +353,7 @@ async def edit_menu(callback: CallbackQuery, state: FSMContext):
         return
 
     if action == "back":
-        await state.set_state(EditUserStates.edit_name)
+        await state.set_state(EditUserStates.menu)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="edit:name"),
              InlineKeyboardButton(text="✏️ Изменить город", callback_data="edit:city")],
@@ -426,6 +428,57 @@ async def edit_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
+    if action == "phone":
+        await state.set_state(EditUserStates.edit_phone)
+        try:
+            await callback.message.edit_text(
+                "Введите новый телефон/карту:\n"
+                "<i>(например: +79001234567 или 2200 1234 5678 9012)</i>",
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await callback.message.answer(
+                "Введите новый телефон/карту:\n"
+                "<i>(например: +79001234567 или 2200 1234 5678 9012)</i>",
+                parse_mode="HTML"
+            )
+        await callback.answer()
+        return
+
+    if action == "bank":
+        await state.set_state(EditUserStates.edit_bank)
+        try:
+            await callback.message.edit_text(
+                "Введите новый банк:\n"
+                "<i>(например: Сбербанк, Тинькофф, ВТБ)</i>",
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await callback.message.answer(
+                "Введите новый банк:\n"
+                "<i>(например: Сбербанк, Тинькофф, ВТБ)</i>",
+                parse_mode="HTML"
+            )
+        await callback.answer()
+        return
+
+
+@router.message(EditUserStates.menu)
+async def edit_menu_stub(message: Message):
+    """
+    Заглушка: если юзер вместо нажатия кнопки написал текст, пока находится
+    в меню редактирования — не записываем этот текст ни в какое поле.
+    """
+    await message.answer(
+        "⚠️ Пожалуйста, выберите действие кнопками ниже.\n"
+        "Если хотите выйти — нажмите «❌ Выйти».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Выйти", callback_data="edit:exit")]
+        ])
+    )
+
 
 @router.message(EditUserStates.edit_name)
 async def edit_name(message: Message, state: FSMContext):
@@ -437,7 +490,7 @@ async def edit_name(message: Message, state: FSMContext):
     target_user_id = selected_user[user_id]
     update_user_field(target_user_id, "name", message.text.strip())
     await message.answer(f"✅ Имя изменено на '{message.text.strip()}'")
-    await state.set_state(EditUserStates.edit_name)
+    await state.set_state(EditUserStates.menu)
     user = get_user(target_user_id)
     await show_user_info(message, user, is_new_message=True)
 
@@ -452,7 +505,7 @@ async def edit_timezone(message: Message, state: FSMContext):
     target_user_id = selected_user[user_id]
     update_user_field(target_user_id, "timezone", message.text.strip())
     await message.answer(f"✅ Время от МСК изменено на '{message.text.strip()}'")
-    await state.set_state(EditUserStates.edit_name)
+    await state.set_state(EditUserStates.menu)
     user = get_user(target_user_id)
     await show_user_info(message, user, is_new_message=True)
 
@@ -467,7 +520,7 @@ async def edit_city(message: Message, state: FSMContext):
     target_user_id = selected_user[user_id]
     update_user_field(target_user_id, "city", message.text.strip())
     await message.answer(f"✅ Город изменён на '{message.text.strip()}'")
-    await state.set_state(EditUserStates.edit_name)
+    await state.set_state(EditUserStates.menu)
     user = get_user(target_user_id)
     await show_user_info(message, user, is_new_message=True)
 
@@ -484,7 +537,7 @@ async def edit_payout(message: Message, state: FSMContext):
         target_user_id = selected_user[user_id]
         update_user_field(target_user_id, "payout", value)
         await message.answer(f"✅ 'К выплате' изменено на {value}₽")
-        await state.set_state(EditUserStates.edit_name)
+        await state.set_state(EditUserStates.menu)
         user = get_user(target_user_id)
         await show_user_info(message, user, is_new_message=True)
     except ValueError:
@@ -503,8 +556,46 @@ async def edit_earned(message: Message, state: FSMContext):
         target_user_id = selected_user[user_id]
         update_user_field(target_user_id, "total_earned", value)
         await message.answer(f"✅ 'Заработано ЗВВ' изменено на {value}₽")
-        await state.set_state(EditUserStates.edit_name)
+        await state.set_state(EditUserStates.menu)
         user = get_user(target_user_id)
         await show_user_info(message, user, is_new_message=True)
     except ValueError:
         await message.answer("❌ Введите число.")
+
+
+@router.message(EditUserStates.edit_phone)
+async def edit_phone(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id not in selected_user:
+        await message.answer("❌ Ошибка сессии.")
+        await state.clear()
+        return
+    new_phone = message.text.strip()
+    if len(new_phone) < 3:
+        await message.answer("❌ Слишком короткое значение. Введите телефон/карту заново.")
+        return
+    target_user_id = selected_user[user_id]
+    update_user_field(target_user_id, "phone_card", new_phone)
+    await message.answer(f"✅ Телефон/карта изменён на '{new_phone}'")
+    await state.set_state(EditUserStates.menu)
+    user = get_user(target_user_id)
+    await show_user_info(message, user, is_new_message=True)
+
+
+@router.message(EditUserStates.edit_bank)
+async def edit_bank(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id not in selected_user:
+        await message.answer("❌ Ошибка сессии.")
+        await state.clear()
+        return
+    new_bank = message.text.strip()
+    if len(new_bank) < 2:
+        await message.answer("❌ Слишком короткое значение. Введите банк заново.")
+        return
+    target_user_id = selected_user[user_id]
+    update_user_field(target_user_id, "bank", new_bank)
+    await message.answer(f"✅ Банк изменён на '{new_bank}'")
+    await state.set_state(EditUserStates.menu)
+    user = get_user(target_user_id)
+    await show_user_info(message, user, is_new_message=True)
