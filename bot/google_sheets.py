@@ -15,7 +15,7 @@ from bot.state import active_slots, slot_requests
 from bot.helpers import (
     platform_from_sheet_name, get_column_mapping, match_platform,
     PRICES, PLATFORM_ALIASES, SHEET_NAME_TO_PLATFORM,
-    business_day_key, col_letter,
+    business_day_key, col_letter, platform_to_callback_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,9 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
         f"Чтобы забрать слот, нажмите кнопку «Взять слот», затем перейдите в бота по кнопке «Перейти к задаче»."
     )
     time_safe = time.replace(':', '-')
-    callback_data = f"take_slot|{platform}|{count}|{date}|{time_safe}"
+    # 🔧 Короткий код платформы — чтобы не упереться в лимит 64 байта callback_data
+    platform_code = platform_to_callback_code(platform)
+    callback_data = f"take_slot|{platform_code}|{count}|{date}|{time_safe}"
     builder = InlineKeyboardBuilder()
     builder.button(text="✋ Взять слот", callback_data=callback_data)
     builder.button(text="🚀 Перейти к задаче", url="https://t.me/ncjobbot?start")
