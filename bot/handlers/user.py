@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config import (
     MANAGER_USERNAME, DB_PATH, LOG_CHANNEL_ID,
     TIKTOK_VIDEO_ID, TIKTOK_VIDEO_PATH,
+    TIKTOK_VIDEO_DOCUMENT_ID, TIKTOK_VIDEO_DOCUMENT_PATH,
     TIKTOK_REPORT_CHAT_ID, TIKTOK_REPORT_THREAD_ID,
     COLLABORATION_CHAT_ID, COLLABORATION_THREAD_ID,
     SUPPORT_CHAT_ID, SUPPORT_THREAD_ID,
@@ -949,6 +950,72 @@ async def tiktok_task(callback: CallbackQuery):
         )
         return
 
+    # 🔧 Ролик как ДОКУМЕНТ (без сжатия, можно скачать)
+    short_caption = (
+        "🎬 <b>Рекламный ролик New Chapter</b>\n\n"
+        "📥 <b>Скачайте файл</b> (нажмите на файл → «Сохранить в загрузки»)\n"
+        "и вставьте его в своё видео.\n\n"
+        "<i>Файл отправлен без сжатия — качество оригинальное.</i>"
+    )
+
+    sent_ok = False
+
+    # 1. Пытаемся отправить как документ по file_id
+    try:
+        if TIKTOK_VIDEO_DOCUMENT_ID:
+            await callback.message.answer_document(
+                document=TIKTOK_VIDEO_DOCUMENT_ID,
+                caption=short_caption,
+                parse_mode="HTML"
+            )
+            sent_ok = True
+            logger.info("✅ TikTok ролик отправлен как документ (file_id)")
+    except Exception as e:
+        logger.error(f"❌ Не удалось отправить ролик как документ (file_id): {e}")
+
+    # 2. Если не получилось — пытаемся отправить как документ из локального файла
+    if not sent_ok:
+        try:
+            if TIKTOK_VIDEO_DOCUMENT_PATH and os.path.exists(TIKTOK_VIDEO_DOCUMENT_PATH):
+                doc_file = FSInputFile(TIKTOK_VIDEO_DOCUMENT_PATH)
+                await callback.message.answer_document(
+                    document=doc_file,
+                    caption=short_caption,
+                    parse_mode="HTML"
+                )
+                sent_ok = True
+                logger.info(f"✅ TikTok ролик отправлен как документ из файла {TIKTOK_VIDEO_DOCUMENT_PATH}")
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить ролик как документ (файл): {e}")
+
+    # 3. Fallback — если документа нет, отправляем как видео (сжимается)
+    if not sent_ok:
+        try:
+            if TIKTOK_VIDEO_ID:
+                await callback.message.answer_video(
+                    video=TIKTOK_VIDEO_ID,
+                    caption="🎬 <b>Рекламный ролик New Chapter</b>",
+                    parse_mode="HTML"
+                )
+                sent_ok = True
+            elif TIKTOK_VIDEO_PATH and os.path.exists(TIKTOK_VIDEO_PATH):
+                video_file = FSInputFile(TIKTOK_VIDEO_PATH)
+                await callback.message.answer_video(
+                    video=video_file,
+                    caption="🎬 <b>Рекламный ролик New Chapter</b>",
+                    parse_mode="HTML"
+                )
+                sent_ok = True
+        except Exception as e:
+            logger.error(f"❌ Fallback видео тоже упал: {e}")
+
+    if not sent_ok:
+        logger.warning(
+            "⚠️ TikTok ролик НЕ отправлен. Ни TIKTOK_VIDEO_DOCUMENT_ID, ни "
+            "TIKTOK_VIDEO_DOCUMENT_PATH, ни TIKTOK_VIDEO_ID, ни TIKTOK_VIDEO_PATH не заданы/не работают."
+        )
+
+    # 🔧 Текст правил — отдельным сообщением (длинный, в caption не влезает)
     rules = (
         "🎬 <b>Задание Tik Tok</b>\n\n"
         "📌 Над данным текстом находится рекламный ролик New Chapter, который вы должны будете вставить в свое видео.\n"
@@ -961,26 +1028,15 @@ async def tiktok_task(callback: CallbackQuery):
         "❌ Оскорбительный контент\n"
         "❌ Содержание запрещенного контента в РФ\n\n"
         "<b>💰 Ваш доход:</b>\n"
-        "📊 За 1000 просмотров вы получаете <b>10 рублей</b>.\n"
-        "🔥 1.000.000 просмотров → <b>10.000 рублей</b>\n"
+        "📊 За 1000 просмотров вы получаете <b>8 рублей</b>.\n"
+        "🔥 1.000.000 просмотров → <b>8.000 рублей</b>\n"
         "📉 После 1 млн просмотров, последующие 1000 просмотров оплачиваются по <b>5 рублей</b> (до 500.000 просмотров).\n"
         "📉 Далее <b>2 рубля</b> за 1000 просмотров.\n"
         "💰 Максимальная выплата в неделю за ролик в Tik Tok — <b>10.000 рублей</b>.\n"
         "💳 Выплата через кошелек в @ncjobbot.\n\n"
         "Удачи! 🚀"
     )
-
-    try:
-        if TIKTOK_VIDEO_ID:
-            await callback.message.answer_video(video=TIKTOK_VIDEO_ID, caption=rules, parse_mode="HTML")
-        elif TIKTOK_VIDEO_PATH and os.path.exists(TIKTOK_VIDEO_PATH):
-            video_file = FSInputFile(TIKTOK_VIDEO_PATH)
-            await callback.message.answer_video(video=video_file, caption=rules, parse_mode="HTML")
-        else:
-            await callback.message.answer(rules, parse_mode="HTML")
-    except Exception as e:
-        logger.error(f"Ошибка отправки видео Tik Tok: {e}")
-        await callback.message.answer(rules, parse_mode="HTML")
+    await callback.message.answer(rules, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "report_tiktok")
