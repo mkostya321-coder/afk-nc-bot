@@ -49,11 +49,15 @@ INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", "instruction.jpg")
 
 REQUIRED_CHANNEL_ID = os.getenv("REQUIRED_CHANNEL_ID", "@newchapterjob")
 
-# Tik Tok
+# Tik Tok — как ВИДЕО (сжимается Telegram)
 TIKTOK_VIDEO_ID = os.getenv("TIKTOK_VIDEO_ID") or None
 TIKTOK_VIDEO_PATH = os.getenv("TIKTOK_VIDEO_PATH", "tiktok.mp4")
 TIKTOK_REPORT_CHAT_ID = os.getenv("TIKTOK_REPORT_CHAT_ID") or None
 TIKTOK_REPORT_THREAD_ID = _opt_int("TIKTOK_REPORT_THREAD_ID", 0)
+
+# 🆕 Tik Tok — как ДОКУМЕНТ (без сжатия, можно скачать)
+TIKTOK_VIDEO_DOCUMENT_ID = os.getenv("TIKTOK_VIDEO_DOCUMENT_ID") or None
+TIKTOK_VIDEO_DOCUMENT_PATH = os.getenv("TIKTOK_VIDEO_DOCUMENT_PATH", "tiktok_doc.mp4")
 
 # Сотрудничество
 COLLABORATION_CHAT_ID = os.getenv("COLLABORATION_CHAT_ID") or None
