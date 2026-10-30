@@ -35,6 +35,14 @@ def post_display(code: str) -> str:
     return POSTS.get(code, code)
 
 
+def _can_edit_promo(user_id: int) -> bool:
+    """
+    Кто может редактировать данные промоутера (ссылку на таблицу и график):
+    владелец, ГА и Старший Промоутер.
+    """
+    return is_owner(user_id) or is_ga(user_id) or is_stpromonc(user_id)
+
+
 # ============ FSM ============
 class PromoAdminEdit(StatesGroup):
     waiting_link = State()
@@ -285,7 +293,8 @@ async def show_infopromo(target_message, user, is_new=True):
 
 @router.callback_query(F.data == "promo:edit_link")
 async def promo_edit_link(callback: CallbackQuery, state: FSMContext):
-    if not (is_owner(callback.from_user.id) or is_ga(callback.from_user.id)):
+    # 🔧 FIX: разрешаем Старшему Промоутеру тоже
+    if not _can_edit_promo(callback.from_user.id):
         await callback.answer("⛔", show_alert=True)
         return
     data = await state.get_data()
@@ -299,7 +308,8 @@ async def promo_edit_link(callback: CallbackQuery, state: FSMContext):
 
 @router.message(PromoAdminEdit.waiting_link, F.text)
 async def promo_save_link(message: Message, state: FSMContext):
-    if not (is_owner(message.from_user.id) or is_ga(message.from_user.id)):
+    # 🔧 FIX: разрешаем Старшему Промоутеру тоже
+    if not _can_edit_promo(message.from_user.id):
         await state.clear()
         return
     data = await state.get_data()
@@ -317,7 +327,8 @@ async def promo_save_link(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "promo:schedule")
 async def promo_view_schedule(callback: CallbackQuery, state: FSMContext):
-    if not (is_owner(callback.from_user.id) or is_ga(callback.from_user.id)):
+    # 🔧 FIX: разрешаем Старшему Промоутеру тоже
+    if not _can_edit_promo(callback.from_user.id):
         await callback.answer("⛔", show_alert=True)
         return
     data = await state.get_data()
@@ -355,7 +366,8 @@ async def promo_back(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "promo:schedule_edit")
 async def promo_schedule_edit(callback: CallbackQuery, state: FSMContext):
-    if not (is_owner(callback.from_user.id) or is_ga(callback.from_user.id)):
+    # 🔧 FIX: разрешаем Старшему Промоутеру тоже
+    if not _can_edit_promo(callback.from_user.id):
         await callback.answer("⛔", show_alert=True)
         return
     await state.update_data(promo_schedule_draft={})
@@ -376,7 +388,8 @@ async def promo_schedule_edit(callback: CallbackQuery, state: FSMContext):
 @router.message(PromoAdminEdit.schedule_saturday)
 @router.message(PromoAdminEdit.schedule_sunday)
 async def promo_schedule_input(message: Message, state: FSMContext):
-    if not (is_owner(message.from_user.id) or is_ga(message.from_user.id)):
+    # 🔧 FIX: разрешаем Старшему Промоутеру тоже
+    if not _can_edit_promo(message.from_user.id):
         await state.clear()
         return
     if not message.text:
