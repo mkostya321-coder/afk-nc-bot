@@ -22,6 +22,29 @@ def col_letter(idx: int) -> str:
     return result
 
 
+def parse_date_ru(s):
+    """
+    Парсит дату из Google Sheets в datetime.date.
+    Понимает '1.11.2026', '01.11.2026', '2026-11-01', '..' и т.п.
+    Возвращает date | None.
+
+    Используется для корректного сравнения дат из таблицы:
+    '1.11.2026' и '01.11.2026' — это одна и та же дата, но как строки
+    они разные. Без парсинга строковое сравнение ломается.
+    """
+    if not s:
+        return None
+    raw = str(s).strip().replace("..", ".").replace(" ", "")
+    if not raw:
+        return None
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except Exception:
+            continue
+    return None
+
+
 PRICES = {
     "яндекс": 150, "яндекс негатив": 200, "google": 50, "2гис": 50, "авито": 700, "вк": 50,
     "отзовик": 100, "доктору": 100, "докдок": 100, "про докторов": 200,
