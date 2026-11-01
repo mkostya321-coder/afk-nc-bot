@@ -18,7 +18,7 @@ from bot.database import (
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
 from bot.helpers import (
     get_column_mapping, platform_from_sheet_name, business_day_key, col_letter,
-    callback_code_to_platform,
+    callback_code_to_platform, parse_date_ru,
 )
 from bot.logging_helpers import log_user_event
 from bot.middlewares import is_subscribed_cached
@@ -474,7 +474,7 @@ async def handle_quantity_input(message: Message):
         del slot_requests[user_id]
         return
 
-    today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+    today_date = datetime.now(moscow_tz).date()
     free_rows = []
     skipped_wrong_date = []
     for row_idx in row_ids:
@@ -487,9 +487,11 @@ async def handle_quantity_input(message: Message):
             continue
         if executor:
             continue
-        row_date = row[mapping["date_col"]-1].strip().replace("..", ".") if len(row) >= mapping["date_col"] else ""
-        if row_date and row_date != today_str:
-            skipped_wrong_date.append(f"{row_idx} ({row_date})")
+        row_date_raw = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
+        row_date_obj = parse_date_ru(row_date_raw)
+        # 🔧 Сравниваем как date-объекты, а не строки ('1.11.2026' == '01.11.2026')
+        if row_date_obj and row_date_obj != today_date:
+            skipped_wrong_date.append(f"{row_idx} ({row_date_raw})")
             continue
         free_rows.append(row_idx)
 
@@ -719,10 +721,15 @@ async def _write_screenshot_to_sheet(user_id: int, bot) -> bool:
 
         row_belongs = active_row in assigned_rows
 
-        today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
-        row_date = r[mapping["date_col"]-1].strip().replace("..", ".") if len(r) >= mapping["date_col"] else ""
-        if row_date and row_date != today_str:
-            logger.error(f"🚫 _write_screenshot: ОТКАЗ — строка {active_row} дата '{row_date}' ≠ '{today_str}'")
+        today_date = datetime.now(moscow_tz).date()
+        row_date_raw = r[mapping["date_col"]-1].strip() if len(r) >= mapping["date_col"] else ""
+        row_date_obj = parse_date_ru(row_date_raw)
+        # 🔧 Сравниваем как date-объекты
+        if row_date_obj and row_date_obj != today_date:
+            logger.error(
+                f"🚫 _write_screenshot: ОТКАЗ — строка {active_row} "
+                f"дата '{row_date_raw}' ≠ '{today_date.strftime('%d.%m.%Y')}'"
+            )
             return False
 
         if not k_val:
@@ -968,24 +975,27 @@ async def take_slot_start(callback: CallbackQuery):
             sheet_check = await asyncio.to_thread(spreadsheet_check.worksheet, sheet_title)
             records_check = await retry_api_call(sheet_check.get_all_values)
 
-            today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+            today_date = datetime.now(moscow_tz).date()
             for ridx in slot_info["row_ids"]:
                 if ridx - 1 >= len(records_check):
                     continue
                 rrow = records_check[ridx - 1]
                 rstatus = _norm_slots(rrow[mapping["status_col"]-1]) if len(rrow) >= mapping["status_col"] else ""
                 rexec = rrow[mapping["executor_col"]-1].strip() if len(rrow) >= mapping["executor_col"] else ""
-                rdate = rrow[mapping["date_col"]-1].strip().replace("..", ".") if len(rrow) >= mapping["date_col"] else ""
+                rdate_raw = rrow[mapping["date_col"]-1].strip() if len(rrow) >= mapping["date_col"] else ""
+                rdate_obj = parse_date_ru(rdate_raw)
                 if rexec or rstatus in ("в работе", "на модерации", "на модерации с опз"):
                     continue
-                if rdate and rdate != today_str:
+                # 🔧 Сравниваем как date-объекты ('1.11.2026' == '01.11.2026')
+                if rdate_obj and rdate_obj != today_date:
                     continue
                 free_count += 1
 
             if free_count == 0:
                 logger.warning(
                     f"🚫 take_slot: free_count=0 для msg {slot_msg_id} ({platform}), "
-                    f"sheet='{sheet_title}', row_ids={slot_info.get('row_ids')}, today='{today_str}'"
+                    f"sheet='{sheet_title}', row_ids={slot_info.get('row_ids')}, "
+                    f"today='{today_date.strftime('%d.%m.%Y')}'"
                 )
                 for ridx in slot_info["row_ids"]:
                     if ridx - 1 >= len(records_check):
@@ -994,10 +1004,11 @@ async def take_slot_start(callback: CallbackQuery):
                     rrow = records_check[ridx - 1]
                     rstatus = _norm_slots(rrow[mapping["status_col"]-1]) if len(rrow) >= mapping["status_col"] else ""
                     rexec = rrow[mapping["executor_col"]-1].strip() if len(rrow) >= mapping["executor_col"] else ""
-                    rdate = rrow[mapping["date_col"]-1].strip().replace("..", ".") if len(rrow) >= mapping["date_col"] else ""
+                    rdate_raw = rrow[mapping["date_col"]-1].strip() if len(rrow) >= mapping["date_col"] else ""
+                    rdate_obj = parse_date_ru(rdate_raw)
                     logger.warning(
                         f"   строка {ridx}: status='{rstatus}', exec='{rexec}', "
-                        f"date='{rdate}' (today='{today_str}')"
+                        f"date='{rdate_raw}' (parsed={rdate_obj}, today={today_date})"
                     )
 
                 has_physical_rows = bool(slot_info.get("row_ids"))
@@ -1233,8 +1244,9 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
 
     k_val = (row[mapping["executor_col"]-1] if len(row) >= mapping["executor_col"] else "").strip().lstrip("@").lower()
     j_val = (row[mapping["status_col"]-1] if len(row) >= mapping["status_col"] else "").strip().lower()
-    row_date = (row[mapping["date_col"]-1] if len(row) >= mapping["date_col"] else "").strip().replace("..", ".")
-    today_str = datetime.now(moscow_tz).strftime("%d.%m.%Y")
+    row_date_raw = (row[mapping["date_col"]-1] if len(row) >= mapping["date_col"] else "").strip()
+    row_date_obj = parse_date_ru(row_date_raw)
+    today_date = datetime.now(moscow_tz).date()
     u = get_user(user_id)
     my_user = (u.get("tg_username") or "").lstrip("@").lower() if u else ""
 
@@ -1243,8 +1255,9 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
         problems.append(f"K='{k_val}' ≠ @{my_user}")
     if j_val and j_val not in ("в работе", "на модерации"):
         problems.append(f"J='{j_val}'")
-    if row_date and row_date != today_str:
-        problems.append(f"дата '{row_date}' ≠ '{today_str}'")
+    # 🔧 Сравниваем как date-объекты
+    if row_date_obj and row_date_obj != today_date:
+        problems.append(f"дата '{row_date_raw}' ≠ '{today_date.strftime('%d.%m.%Y')}'")
 
     if problems:
         logger.error(f"🚫 show_review_info: ОТКАЗ — строка {row_idx}: {'; '.join(problems)}")
