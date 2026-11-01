@@ -16,7 +16,10 @@ from bot.database import (
     remove_review_takes,
 )
 from bot.google_sheets import get_client, build_slot_message, retry_api_call
-from bot.helpers import get_column_mapping, platform_from_sheet_name, business_day_key, col_letter
+from bot.helpers import (
+    get_column_mapping, platform_from_sheet_name, business_day_key, col_letter,
+    callback_code_to_platform,
+)
 from bot.logging_helpers import log_user_event
 from bot.middlewares import is_subscribed_cached
 from bot.state import active_slots, slot_requests
@@ -393,12 +396,22 @@ async def handle_quantity_input(message: Message):
         next_reset = now_msk.replace(hour=10, minute=0, second=0, microsecond=0)
         if now_msk >= next_reset:
             next_reset += timedelta(days=1)
+        # 🔧 Кнопка «Слоты в канале» — чтобы не оставаться с голым текстом
+        kb = InlineKeyboardBuilder()
+        if CHANNEL_ID and CHANNEL_ID.startswith("@"):
+            channel_url = f"https://t.me/{CHANNEL_ID.lstrip('@')}"
+        else:
+            channel_url = "https://t.me/newChapterJob"
+        kb.button(text="📢 Слоты в канале", url=channel_url)
+        kb.adjust(1)
         await message.answer(
             f"❌ <b>Лимит исчерпан</b>\n\n"
             f"По платформе <b>{platform}</b> установлен лимит <b>{limit} отзывов</b> в день.\n"
             f"Вы уже взяли сегодня: <b>{taken_today} из {limit}</b>.\n\n"
-            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.",
-            parse_mode="HTML"
+            f"🔄 Лимит сбросится <b>{next_reset.strftime('%d.%m.%Y в %H:%M')} МСК</b>.\n\n"
+            f"<i>Можно попробовать другую платформу или вернуться к слотам в канале.</i>",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
         )
         del slot_requests[user_id]
         return
@@ -879,7 +892,10 @@ async def take_slot_start(callback: CallbackQuery):
     if len(parts) < 5:
         await _safe_send(callback.bot, user_id, "Некорректный запрос.")
         return
-    _, platform_from_cb, count_str, date, time_safe = parts
+    _, platform_from_cb_code, count_str, date, time_safe = parts
+    # 🔧 Раскодируем короткий код обратно в название платформы
+    # (для обратной совместимости: если пришло старое длинное имя — тоже сработает)
+    platform_from_cb = callback_code_to_platform(platform_from_cb_code) or platform_from_cb_code
     try:
         count = int(count_str)
     except:
@@ -948,6 +964,7 @@ async def take_slot_start(callback: CallbackQuery):
     mapping = slot_info.get("mapping") or get_column_mapping(platform)
 
     free_count = 0
+    records_check = []
     try:
         client_check = get_client()
         if client_check:
@@ -970,20 +987,50 @@ async def take_slot_start(callback: CallbackQuery):
                 free_count += 1
 
             if free_count == 0:
-                await _safe_send(
-                    callback.bot, user_id,
-                    "⚠️ В этом слоте больше нет актуальных строк на сегодня.\n"
-                    "Ожидайте следующий слот."
+                # 🔧 Диагностика: почему free_count = 0
+                logger.warning(
+                    f"🚫 take_slot: free_count=0 для msg {slot_msg_id} ({platform}), "
+                    f"sheet='{sheet_title}', row_ids={slot_info.get('row_ids')}, today='{today_str}'"
                 )
-                try:
-                    await callback.bot.delete_message(chat_id=CHANNEL_ID, message_id=slot_msg_id)
-                except Exception:
-                    pass
-                try:
-                    del active_slots[slot_msg_id]
-                except KeyError:
-                    pass
-                return
+                for ridx in slot_info["row_ids"]:
+                    if ridx - 1 >= len(records_check):
+                        logger.warning(f"   строка {ridx}: ЗА ПРЕДЕЛАМИ ЛИСТА (всего строк: {len(records_check)})")
+                        continue
+                    rrow = records_check[ridx - 1]
+                    rstatus = _norm_slots(rrow[mapping["status_col"]-1]) if len(rrow) >= mapping["status_col"] else ""
+                    rexec = rrow[mapping["executor_col"]-1].strip() if len(rrow) >= mapping["executor_col"] else ""
+                    rdate = rrow[mapping["date_col"]-1].strip().replace("..", ".") if len(rrow) >= mapping["date_col"] else ""
+                    logger.warning(
+                        f"   строка {ridx}: status='{rstatus}', exec='{rexec}', "
+                        f"date='{rdate}' (today='{today_str}')"
+                    )
+
+                # 🔧 Если физически в row_ids есть строки — не удаляем слот сразу.
+                # Возможно, это временный сбой (race condition с orphan reset).
+                # Просим подождать /resume вместо удаления.
+                has_physical_rows = bool(slot_info.get("row_ids"))
+                if has_physical_rows:
+                    await _safe_send(
+                        callback.bot, user_id,
+                        "⏳ Слот временно недоступен (техническая синхронизация).\n"
+                        "Подождите 1–2 минуты и попробуйте снова или /resume."
+                    )
+                    return
+                else:
+                    await _safe_send(
+                        callback.bot, user_id,
+                        "⚠️ В этом слоте больше нет актуальных строк на сегодня.\n"
+                        "Ожидайте следующий слот."
+                    )
+                    try:
+                        await callback.bot.delete_message(chat_id=CHANNEL_ID, message_id=slot_msg_id)
+                    except Exception:
+                        pass
+                    try:
+                        del active_slots[slot_msg_id]
+                    except KeyError:
+                        pass
+                    return
     except Exception as e:
         logger.warning(f"⚠️ take_slot проверка дат: {e}")
         free_count = slot_info.get("count", count)
@@ -1282,278 +1329,4 @@ async def show_review_info(message: Message, user_id: int, row_idx: int, sheet, 
     else:
         link = row[mapping["link_col"]-1] if len(row) >= mapping["link_col"] else ""
         stars = row[mapping["stars_col"]-1] if len(row) >= mapping["stars_col"] else ""
-        gender = row[mapping["gender_col"]-1] if len(row) >= mapping["gender_col"] else ""
-        text = row[mapping["text_col"]-1] if len(row) >= mapping["text_col"] else ""
-
-        photo_link = ""
-        photo_col = mapping.get("photo_col")
-        if photo_col and len(row) >= photo_col:
-            photo_link = row[photo_col-1]
-
-        template = PLATFORM_TEMPLATES.get(platform, PLATFORM_TEMPLATES["яндекс"])
-        instruction_text = template["instruction"]
-        warning = template["warning"]
-
-        gender_clean = (gender or "").strip().upper()
-        gender_text = ""
-        gender_kind = None
-        if gender_clean in ("М", "M"):
-            gender_kind = "м"
-            gender_text = "👨 Отзыв мужской. Его должен выполнить мужчина."
-        elif gender_clean in ("Ж", "J"):
-            gender_kind = "ж"
-            gender_text = "👩 Отзыв женский. Её должна выполнить женщина."
-        else:
-            gender_text = "👤 Отзыв без пола."
-
-        mid_messages = [SNIPPET_REQ]
-        if link:
-            mid_messages.append(link)
-        if text:
-            mid_messages.append(f"📝 <b>Текст отзыва:</b>\n\n{text}")
-        else:
-            mid_messages.append("⚠️ <b>Текст отзыва не найден.</b>")
-
-        if gender_kind == "ж":
-            mid_messages.append("⚠️ <b>ВАЖНО ПРО ПОЛ!</b> Текст должна выполнить <b>ДЕВУШКА</b> от <b>женского имени</b>.")
-        elif gender_kind == "м":
-            mid_messages.append("⚠️ <b>ВАЖНО ПРО ПОЛ!</b> Текст должен выполнить <b>МУЖЧИНА</b> от <b>мужского имени</b>.")
-
-        if photo_link:
-            mid_messages.append(f"📸 <b>ФОТО обязательное к прикреплению!</b>\n\n{photo_link}\n\n<b>⚠️ ШТРАФ 50% если не прикрепить!</b>")
-
-        try:
-            await message.edit_text(mid_messages[0], parse_mode="HTML")
-        except Exception:
-            sent = await message.answer(mid_messages[0], parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-
-        for t in mid_messages[1:]:
-            sent = await message.answer(t, parse_mode="HTML")
-            extra_ids.append(sent.message_id)
-
-        final_msg = (
-            f"{instruction_text}\n\n"
-            f"⭐ Количество звёзд: {stars}\n"
-            f"👥 1 ЧЕЛОВЕК 1 ОТЗЫВ (на одной платформе)\n"
-            f"{gender_text}\n\n"
-            f"{PIN_REMINDER}\n\n"
-            "Пожалуйста, после выполнения пришлите скриншот отзыва.\n\n"
-            "Если хотите отказаться — /cancel.\n\n"
-            f"{warning}"
-        )
-        sent = await message.answer(
-            final_msg, parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardBuilder().button(
-                text="🔙 Вернуться к слоту", callback_data="back_to_slot"
-            ).as_markup()
-        )
-        extra_ids.append(sent.message_id)
-
-    request["extra_messages"] = extra_ids
-    request["active_review_row"] = row_idx
-    slot_requests[user_id] = request
-
-
-@router.callback_query(F.data == "back_to_slot")
-async def back_to_slot(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in slot_requests:
-        await callback.answer("❌ Сессия не найдена. /resume.", show_alert=True)
-        return
-    request = slot_requests[user_id]
-    if request.get("state") != "working_on_review":
-        await callback.answer("❌ Не в просмотре.", show_alert=True)
-        return
-
-    chat_id = callback.message.chat.id
-
-    for msg_id in request.get("extra_messages", []):
-        try:
-            await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception:
-            pass
-    try:
-        await callback.bot.delete_message(chat_id=chat_id, message_id=callback.message.message_id)
-    except Exception:
-        pass
-
-    request["extra_messages"] = []
-    request["state"] = "slot_selection"
-    request["active_review_row"] = None
-    slot_requests[user_id] = request
-
-    await callback.answer()
-
-    kb = _build_review_buttons(user_id)
-    if kb is None:
-        sent = await callback.message.answer("✅ Все отзывы из этого слота уже выполнены.")
-    else:
-        sent = await callback.message.answer("📋 Выберите номер отзыва:", reply_markup=kb)
-
-    if user_id in slot_requests:
-        req = slot_requests[user_id]
-        req["controls_msg_id"] = sent.message_id
-        slot_requests[user_id] = req
-
-
-# ============ СКРИНШОТ ============
-@router.message(F.photo)
-async def handle_screenshot(message: Message):
-    user_id = message.from_user.id
-
-    logger.info(f"📸 PHOTO: user={user_id}, state={(slot_requests.get(user_id) or {}).get('state')}")
-
-    if user_id not in slot_requests:
-        await message.answer(
-            "⚠️ Не нашёл вашу активную сессию со слотами.\n\n"
-            "Возможные причины:\n"
-            "• Бот перезапускался\n"
-            "• Вы уже сдали все отзывы\n"
-            "• Вы отменили задание через /cancel\n\n"
-            "Попробуйте /resume."
-        )
-        return
-
-    request = slot_requests[user_id]
-
-    if request.get("state") == "screenshot_pending":
-        await message.answer("⏳ Предыдущий скриншот ещё записывается. Подожди 1-2 минуты, потом /resume.")
-        return
-
-    if request.get("state") != "working_on_review":
-        await message.answer(
-            "❌ Сначала выберите отзыв, к которому относится скриншот:\n"
-            "1. Нажмите «🎯 Активный слот».\n"
-            "2. Тапните на номер отзыва.\n"
-            "3. Отправьте скриншот ещё раз."
-        )
-        return
-
-    active_row = request.get("active_review_row")
-    if active_row is None:
-        await message.answer("❌ Активный отзыв не найден. Выберите заново через «🎯 Активный слот».")
-        return
-
-    if active_row not in request.get("assigned_rows", []):
-        await message.answer("❌ Ошибка сессии: строка не принадлежит вам. /resume.")
-        return
-
-    sheet_title = request.get("sheet_title")
-    if not sheet_title:
-        await message.answer("❌ Потеряна сессия. /resume.")
-        return
-
-    chat_id = message.chat.id
-    for msg_id in request.get("extra_messages", []):
-        try:
-            await message.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except:
-            pass
-    request["extra_messages"] = []
-
-    platform = request.get("platform", "яндекс")
-    mapping = get_safe_mapping(request, platform)
-
-    client = get_client()
-    if not client:
-        await message.answer("❌ Ошибка доступа.")
-        return
-    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
-
-    try:
-        sheet = await asyncio.to_thread(spreadsheet.worksheet, sheet_title)
-    except Exception as e:
-        logger.error(f"❌ handle_screenshot: {e}")
-        await message.answer("❌ Лист не найден. /resume.")
-        return
-
-    review_id = await retry_api_call(sheet.cell, active_row, mapping["id_col"])
-    review_id = review_id.value if review_id else None
-    if not review_id or str(review_id).strip().lower() == "none":
-        review_id = secrets.token_hex(4)
-
-    request["screenshot_review_id"] = review_id
-    slot_requests[user_id] = request
-
-    ok = await _write_screenshot_to_sheet(user_id, message.bot)
-
-    if not ok:
-        request["state"] = "screenshot_pending"
-        slot_requests[user_id] = request
-        await message.answer(
-            "⏳ <b>Сервер перегружен.</b> Скриншот принят, но ещё не записан в таблицу.\n\n"
-            "Подожди 1-2 минуты, потом /resume.",
-            parse_mode="HTML"
-        )
-        try:
-            user = get_user(user_id)
-            user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
-            timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
-            if SCREENSHOT_CHANNEL_ID:
-                await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
-        except Exception as e:
-            logger.error(f"Ошибка отправки скрина в канал: {e}")
-        return
-
-    try:
-        user = get_user(user_id)
-        user_mention = f"@{user['tg_username']}" if user and user.get('tg_username') else f"@{message.from_user.username}"
-        timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        caption = f"{user_mention} – {timestamp}\nID: {review_id or 'Unknown'}"
-        if SCREENSHOT_CHANNEL_ID:
-            await message.bot.send_photo(chat_id=SCREENSHOT_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption)
-    except Exception as e:
-        logger.error(f"Ошибка скриншота: {e}")
-
-    ordered = request.get("ordered_reviews", [])
-    completed = request.get("completed_reviews", [])
-    for row_idx, num in ordered:
-        if row_idx == active_row:
-            if num not in completed:
-                completed.append(num)
-            break
-    request["completed_reviews"] = completed
-    request["active_review_row"] = None
-    request["screenshot_review_id"] = None
-    request["state"] = "slot_selection"
-    slot_requests[user_id] = request
-
-    total = len(ordered)
-    if len(completed) == total:
-        instr_id = request.get("instruction_msg_id")
-        if instr_id:
-            try:
-                await message.bot.delete_message(chat_id=chat_id, message_id=instr_id)
-            except Exception:
-                pass
-        controls_id = request.get("controls_msg_id")
-        if controls_id:
-            try:
-                await message.bot.delete_message(chat_id=chat_id, message_id=controls_id)
-            except Exception:
-                pass
-        await unpin_instruction(user_id, message.bot)
-        await message.answer("✅ Все отзывы отправлены на модерацию!")
-
-        try:
-            u = get_user(user_id)
-            uname = (u.get("tg_username") if u else None) or message.from_user.username or "—"
-            await log_user_event(
-                message.bot, "complete",
-                f"👤 @{uname} (ID: {user_id})\n"
-                f"📋 Платформа: {platform}\n"
-                f"✅ Сдал все: {total} шт"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ log complete: {e}")
-
-        del slot_requests[user_id]
-        return
-    await message.answer(
-        f"✅ Отзыв выполнен! Осталось {total - len(completed)}.",
-        reply_markup=InlineKeyboardBuilder().button(
-            text="🎯 Активный слот", callback_data=f"active_slot|{user_id}"
-        ).as_markup()
-    )
+        gender = row[mapping["gender_col"]
