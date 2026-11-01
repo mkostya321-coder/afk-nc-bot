@@ -171,8 +171,9 @@ def build_slot_message(platform: str, count: int, date: str, time: str):
 def _is_row_invalid_now(row: list, mapping: dict) -> bool:
     if not row:
         return True
-    d = row[mapping["date_col"]-1].strip() if len(row) >= mapping["date_col"] else ""
-    t = row[mapping["time_col"]-1].strip() if len(row) >= mapping["time_col"] else ""
+    # 🔧 Унифицировано с monitor_schedule: заменяем ".." на "."/":" как при публикации
+    d = row[mapping["date_col"]-1].strip().replace("..", ".") if len(row) >= mapping["date_col"] else ""
+    t = row[mapping["time_col"]-1].strip().replace("..", ":") if len(row) >= mapping["time_col"] else ""
     if not d or not t:
         return True
     status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
@@ -317,6 +318,14 @@ async def monitor_schedule(bot):
                 else:
                     _empty_sheets_cache.pop(sheet_name, None)
 
+                # 🔧 Собираем row_ids всех активных слотов этого листа —
+                # их "сиротами" не считаем. Иначе orphan_reset каждые 5 мин
+                # сбрасывает Q=1 и S, и слот "ломается" из-под людей.
+                active_rows_in_slots = set()
+                for _mid, _slot in active_slots.items():
+                    if _slot.get("sheet_title") == sheet_name:
+                        active_rows_in_slots.update(_slot.get("row_ids", []))
+
                 to_publish = []
                 orphan_reset_q = []
                 expired_rows = []
@@ -347,8 +356,10 @@ async def monitor_schedule(bot):
                         _row_date = _parse_date_safe(_d_norm)
 
                         # 🔧 АВТО-ФИКС СИРОТ (сравнение дат как дат!)
+                        # 🚫 НЕ трогаем строки, которые уже в активном слоте
                         has_qpo_flag = flag_first in ("1", "999") or flag_second == "1" or flag_third == "1"
                         if (has_qpo_flag
+                                and row_idx not in active_rows_in_slots
                                 and flag_final not in ("1", "999", "333", "666", "888", "222", "7")):
                             _status = _norm(row[mapping["status_col"]-1]) if len(row) >= mapping["status_col"] else ""
                             _executor = row[mapping["executor_col"]-1].strip() if len(row) >= mapping["executor_col"] else ""
@@ -516,12 +527,20 @@ async def monitor_schedule(bot):
                             s_val = rrow[mapping["id_col"]-1].strip() if len(rrow) >= mapping["id_col"] else ""
                             if not s_val or s_val == "None" or s_val.lower() == "none":
                                 s_val = ""
+                            # 🔧 ГЛАВНЫЙ ФИКС: восстанавливаем Q=1 и S=review_id всегда,
+                            # если строка принадлежит активному слоту, но флаг Q потерян
+                            # (например, после ошибочного orphan_reset или race condition)
                             if q_val != "1" or not s_val:
                                 review_id = _make_review_id(s_val)
                                 col_q = col_letter(mapping["flag_first_col"])
                                 col_s = col_letter(mapping["id_col"])
                                 sync_batch.append({"range": f"{col_q}{row_idx}", "values": [[1]]})
                                 sync_batch.append({"range": f"{col_s}{row_idx}", "values": [[review_id]]})
+                                logger.warning(
+                                    f"🔧 sync_batch: восстанавливаю Q=1, S={review_id} "
+                                    f"для '{sheet_name}' row {row_idx} "
+                                    f"(Q было '{q_val}', S было '{s_val or 'пусто'}')"
+                                )
                     except Exception as e:
                         logger.warning(f"⚠️ Синхронизация Q/S: {e}")
 
