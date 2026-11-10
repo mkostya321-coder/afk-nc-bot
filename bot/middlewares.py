@@ -26,25 +26,38 @@ SUB_CACHE_TTL = 300        # 5 минут
 
 
 async def is_subscribed(user_id: int, bot) -> bool:
-    """True = подписан. При любой ошибке — False (блокируем). С таймаутом 5 сек."""
-    try:
-        chat_member = await asyncio.wait_for(
-            bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id),
-            timeout=5.0
-        )
-        return chat_member.status in ['member', 'administrator', 'creator']
-    except asyncio.TimeoutError:
-        logger.error(f"❌ is_subscribed: TIMEOUT для {user_id} — Telegram API не отвечает")
-        return False
-    except TelegramBadRequest as e:
-        logger.error(
-            f"❌ is_subscribed: не удалось проверить {REQUIRED_CHANNEL_ID} для {user_id}: {e}. "
-            f"Убедитесь, что бот добавлен в канал как администратор."
-        )
-        return False
-    except Exception as e:
-        logger.error(f"❌ is_subscribed: неожиданная ошибка для {user_id}: {e}")
-        return False
+    """
+    True = подписан. При сетевой ошибке — retry, при окончательной неудаче — False.
+    С таймаутом 5 сек на попытку, до 3 попыток.
+    """
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            chat_member = await asyncio.wait_for(
+                bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id),
+                timeout=5.0
+            )
+            return chat_member.status in ['member', 'administrator', 'creator']
+        except asyncio.TimeoutError as e:
+            last_error = f"TIMEOUT (попытка {attempt}/3)"
+            logger.warning(f"⚠️ is_subscribed: {last_error} для {user_id}")
+            await asyncio.sleep(0.5 * attempt)
+            continue
+        except TelegramBadRequest as e:
+            # Это не сетевая, а логическая ошибка — ретрай не поможет
+            logger.error(
+                f"❌ is_subscribed: не удалось проверить {REQUIRED_CHANNEL_ID} для {user_id}: {e}. "
+                f"Убедитесь, что бот добавлен в канал как администратор."
+            )
+            return False
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"⚠️ is_subscribed: {last_error} (попытка {attempt}/3) для {user_id}")
+            await asyncio.sleep(0.5 * attempt)
+            continue
+
+    logger.error(f"❌ is_subscribed: не удалось проверить {user_id} за 3 попытки: {last_error}")
+    return False
 
 
 async def is_subscribed_cached(user_id: int, bot) -> bool:
