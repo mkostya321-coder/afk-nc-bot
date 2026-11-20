@@ -936,27 +936,17 @@ async def reset_balance(message: Message):
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             cur.execute("SELECT user_id FROM users WHERE payout >= 150")
-            rows = cur.fetchall()
-            user_ids = [row[0] for row in rows]
-            if not user_ids:
-                await message.answer("Нет юзеров с балансом >= 150₽.")
-                return
-            placeholders = ','.join(['?'] * len(user_ids))
-            cur.execute(f"""
-                UPDATE users SET payout = 0, admin_topup = 0,
-                yandex_passed=0, yandex_neg_passed=0, yandex_neg_opz_passed=0,
-                google_passed=0, gis_passed=0, avito_passed=0, vk_passed=0,
-                otzovik_passed=0, doctoru_passed=0, dokdok_passed=0, prodoctors_passed=0,
-                doctu_passed=0, top32_passed=0, zoon_passed=0, yell_passed=0,
-                yau_passed=0, yab_passed=0, hh_passed=0
-                WHERE user_id IN ({placeholders})
-            """, user_ids)
-            conn.commit()
-        await message.answer(f"✅ Балансы сброшены у {len(user_ids)} юзеров.")
-        log_action(message, f"resetbalance: {len(user_ids)}")
+            user_ids = [row[0] for row in cur.fetchall()]
+        if not user_ids:
+            await message.answer("Нет юзеров с балансом >= 150₽.")
+            return
+        n = reset_payout_fields(user_ids)
+        await message.answer(
+            f"✅ Балансы и все *_passed/*_opz_passed сброшены у {n} юзеров."
+        )
+        log_action(message, f"resetbalance: {n}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
-
 
 @router.message(Command("payout_report"))
 async def cmd_payout_report(message: Message):
