@@ -67,7 +67,7 @@ try:
     )
     from bot.database import (
         init_db, get_all_users_with_payout, save_channel_message,
-        cleanup_old_review_takes,
+        cleanup_old_review_takes, reset_payout_fields,
     )
     from bot.google_sheets import (
         monitor_schedule, update_stats_from_sheet,
