@@ -211,32 +211,47 @@ async def weekly_payout_report(bot):
                             parse_mode="HTML"
                         )
                 if user_ids:
+                    # ─── ШАГ 1: обновить статусы в таблице ───
+                    table_ok = False
                     try:
                         await mark_as_paid_in_table(user_ids)
+                        table_ok = True
                     except Exception as e:
-                        logging.error(f"mark_as_paid: {e}")
+                        logging.error(f"❌ weekly_payout mark_as_paid: {e}", exc_info=True)
 
-                    with sqlite3.connect(DB_PATH) as conn:
-                        cur = conn.cursor()
-                        placeholders = ','.join(['?'] * len(user_ids))
-                        cur.execute(f"""
-                            UPDATE users SET
-                                payout = 0,
-                                admin_topup = 0,
-                                yandex_passed = 0, yandex_neg_passed = 0, yandex_neg_opz_passed = 0,
-                                google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0,
-                                otzovik_passed = 0, doctoru_passed = 0, dokdok_passed = 0,
-                                prodoctors_passed = 0, doctu_passed = 0, top32_passed = 0,
-                                zoon_passed = 0, yell_passed = 0, yau_passed = 0, yab_passed = 0, hh_passed = 0,
-                                yandex_opz_passed = 0, google_opz_passed = 0, gis_opz_passed = 0,
-                                avito_opz_passed = 0, vk_opz_passed = 0, otzovik_opz_passed = 0,
-                                doctoru_opz_passed = 0, dokdok_opz_passed = 0, prodoctors_opz_passed = 0,
-                                doctu_opz_passed = 0, top32_opz_passed = 0, zoon_opz_passed = 0,
-                                yell_opz_passed = 0, yau_opz_passed = 0, yab_opz_passed = 0, hh_opz_passed = 0
-                            WHERE user_id IN ({placeholders})
-                        """, user_ids)
-                        conn.commit()
-                    logging.info(f"✅ Обнулены у {len(user_ids)} юзеров")
+                    if not table_ok:
+                        # БД не обнуляем — иначе двойная оплата
+                        err_msg = (
+                            f"⚠️ <b>ВНИМАНИЕ: выплаты НЕ обнулены!</b>\n\n"
+                            f"mark_as_paid_in_table упал — таблица не обновлена.\n"
+                            f"Затронуто юзеров: {len(user_ids)}\n\n"
+                            f"Разберитесь вручную и запустите /payout_report."
+                        )
+                        logging.error(err_msg)
+                        if LOG_CHANNEL_ID:
+                            try:
+                                await bot.send_message(LOG_CHANNEL_ID, err_msg, parse_mode="HTML")
+                            except Exception:
+                                pass
+                    else:
+                        # ─── ШАГ 2: обнулить в БД ───
+                        try:
+                            n = reset_payout_fields(user_ids)
+                            logging.info(f"✅ Обнулены у {n} юзеров")
+                        except Exception as e:
+                            logging.error(f"❌ reset_payout_fields: {e}", exc_info=True)
+                            if LOG_CHANNEL_ID:
+                                try:
+                                    await bot.send_message(
+                                        LOG_CHANNEL_ID,
+                                        f"❌ <b>Таблица обновлена, но БД не обнулена!</b>\n\n"
+                                        f"⚠️ НЕ запускайте повторно — иначе двойная оплата.\n"
+                                        f"Ошибка: <code>{e}</code>\n"
+                                        f"user_ids: <code>{user_ids}</code>",
+                                        parse_mode="HTML"
+                                    )
+                                except Exception:
+                                    pass
             else:
                 if REPORT_CHAT_ID:
                     await bot.send_message(
