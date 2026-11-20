@@ -1428,59 +1428,102 @@ async def update_stats_from_sheet_once(bot=None):
         logger.error(f"❌ Ошибка: {e}", exc_info=True)
 
 
-async def mark_as_paid_in_table(user_ids: list):
-    try:
-        client = get_client()
-        if not client:
-            return
-        spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
-        users_map = {}
-        for uid in user_ids:
-            user = get_user(uid)
-            if user:
-                users_map[uid] = user.get('tg_username', '').lower()
+async def mark_as_paid_in_table(user_ids: list) -> int:
+    """
+    Помечает строки в таблице как «В отчете ИСПЛ» для указанных user_ids.
 
-        worksheets = await asyncio.to_thread(spreadsheet.worksheets)
-        for sheet in worksheets:
+    Возвращает количество обновлённых строк.
+
+    Бросает RuntimeError, если:
+      • get_client() вернул None (нет доступа к Google Sheets),
+      • хотя бы один лист не удалось прочитать или записать.
+
+    ⚠️ Критично для атомарности: вызывающий код НЕ должен обнулять
+    payout в БД, если эта функция бросила исключение — иначе данные
+    в таблице и в БД разойдутся.
+    """
+    if not user_ids:
+        return 0
+
+    client = get_client()
+    if not client:
+        raise RuntimeError(
+            "mark_as_paid_in_table: get_client() вернул None "
+            "(проверь google_key.json / доступ к Sheets)"
+        )
+
+    spreadsheet = await asyncio.to_thread(client.open_by_key, SHEET_ID)
+
+    users_map = {}
+    for uid in user_ids:
+        user = get_user(uid)
+        if user:
+            users_map[uid] = (user.get('tg_username') or '').lower()
+
+    worksheets = await asyncio.to_thread(spreadsheet.worksheets)
+
+    total_updated = 0
+    errors = []
+
+    for sheet in worksheets:
+        try:
+            records = await retry_api_call(sheet.get_all_values)
+        except Exception as e:
+            errors.append(f"лист «{sheet.title}» — чтение: {e}")
+            logger.error(f"❌ mark_as_paid read '{sheet.title}': {e}")
+            continue
+
+        if len(records) < 2:
+            continue
+
+        platform = platform_from_sheet_name(sheet.title)
+        headers_row = records[0] if records else None
+        mapping = (
+            get_column_mapping(platform, headers_row)
+            if platform
+            else get_column_mapping("яндекс", headers_row)
+        )
+
+        batch = []
+        for row_idx, row in enumerate(records[1:], start=2):
+            if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
+                continue
+            e_val = row[mapping["update_col"] - 1].strip()
+            if e_val != "1":
+                continue
+            status = _norm(row[mapping["status_col"] - 1])
+            if status not in ("опубликован", "опубликовано", "опубликован опз", "опубликовано опз"):
+                continue
+            executor = row[mapping["executor_col"] - 1].strip().lstrip("@").lower()
+            if not executor:
+                continue
+            matched = None
+            for uid, uname in users_map.items():
+                if uname and executor == uname:
+                    matched = uid
+                    break
+            if matched:
+                col = col_letter(mapping["status_col"])
+                batch.append({"range": f"{col}{row_idx}", "values": [["В отчете ИСПЛ"]]})
+
+        if batch:
             try:
-                records = await retry_api_call(sheet.get_all_values)
-            except:
-                continue
-            if len(records) < 2:
-                continue
-            platform = platform_from_sheet_name(sheet.title)
-            headers_row = records[0] if records else None
-            mapping = get_column_mapping(platform, headers_row) if platform else get_column_mapping("яндекс", headers_row)
-            batch = []
-            for row_idx, row in enumerate(records[1:], start=2):
-                if len(row) < max(mapping["status_col"], mapping["executor_col"], mapping["update_col"]):
-                    continue
-                e_val = row[mapping["update_col"]-1].strip()
-                if e_val != "1":
-                    continue
-                status = _norm(row[mapping["status_col"]-1])
-                if status not in ("опубликован", "опубликовано", "опубликован опз", "опубликовано опз"):
-                    continue
-                executor = row[mapping["executor_col"]-1].strip().lstrip("@").lower()
-                if not executor:
-                    continue
-                matched = None
-                for uid, uname in users_map.items():
-                    if uname and executor == uname:
-                        matched = uid
-                        break
-                if matched:
-                    col = col_letter(mapping["status_col"])
-                    batch.append({"range": f"{col}{row_idx}", "values": [["В отчете ИСПЛ"]]})
-            if batch:
-                try:
-                    for i in range(0, len(batch), 50):
-                        await retry_api_call(sheet.batch_update, batch[i:i+50])
-                        await asyncio.sleep(0.6)
-                except Exception as e:
-                    logger.error(f"❌ Статус: {e}")
-    except Exception as e:
-        logger.error(f"❌ mark_as_paid: {e}")
+                for i in range(0, len(batch), 50):
+                    await retry_api_call(sheet.batch_update, batch[i:i+50])
+                    await asyncio.sleep(0.6)
+                total_updated += len(batch)
+                logger.info(f"✅ mark_as_paid '{sheet.title}': {len(batch)} строк → «В отчете ИСПЛ»")
+            except Exception as e:
+                errors.append(f"лист «{sheet.title}» — запись: {e}")
+                logger.error(f"❌ mark_as_paid write '{sheet.title}': {e}")
+
+    if errors:
+        raise RuntimeError(
+            "mark_as_paid_in_table: не удалось обновить часть листов:\n"
+            + "\n".join(errors)
+        )
+
+    return total_updated
 
 
 async def cleanup_channel(bot):
