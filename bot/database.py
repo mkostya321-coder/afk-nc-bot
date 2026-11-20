@@ -527,7 +527,7 @@ def get_all_registered_users():
         return [dict(row) for row in cur.fetchall()]
 
 
-# ============ ЛИМИТЫ (ИСПРАВЛЕНО: TZ + возврат) ============
+# ============ ЛИМИТЫ ============
 def add_review_take(user_id: int, platform: str):
     """Записывает взятие отзыва. Время — МСК без TZ (для корректного сравнения)."""
     moscow_tz = pytz.timezone("Europe/Moscow")
@@ -542,10 +542,6 @@ def add_review_take(user_id: int, platform: str):
 
 
 def remove_review_takes(user_id: int, platform: str, count: int) -> int:
-    """
-    Удаляет COUNT последних записей из review_takes.
-    Возвращает количество удалённых. Используется при /cancel.
-    """
     if count <= 0:
         return 0
     with sqlite3.connect(DB_PATH) as conn:
@@ -566,10 +562,6 @@ def remove_review_takes(user_id: int, platform: str, count: int) -> int:
 
 
 def count_review_takes_last_24h(user_id: int, platform: str) -> int:
-    """
-    Считает взятия с последнего сброса (10:00 МСК).
-    Оба времени — МСК без TZ.
-    """
     moscow_tz = pytz.timezone("Europe/Moscow")
     now = datetime.now(moscow_tz)
     today_10am = now.replace(hour=10, minute=0, second=0, microsecond=0)
@@ -803,3 +795,41 @@ def get_slot_request(user_id: int) -> Optional[dict]:
         if not row:
             return None
         return _load_request_row(row)
+
+
+# ============ АТОМАРНЫЙ СБРОС ВЫПЛАТНЫХ ПОЛЕЙ (НОВОЕ) ============
+PAYOUT_RESET_COLUMNS = (
+    "payout", "admin_topup",
+    # passed (обычные)
+    "yandex_passed", "yandex_neg_passed",
+    "google_passed", "gis_passed", "avito_passed", "vk_passed",
+    "otzovik_passed", "doctoru_passed", "dokdok_passed", "prodoctors_passed",
+    "doctu_passed", "top32_passed", "zoon_passed", "yell_passed",
+    "yau_passed", "yab_passed", "hh_passed",
+    # opz_passed (все платформы)
+    "yandex_opz_passed", "yandex_neg_opz_passed",
+    "google_opz_passed", "gis_opz_passed", "avito_opz_passed", "vk_opz_passed",
+    "otzovik_opz_passed", "doctoru_opz_passed", "dokdok_opz_passed", "prodoctors_opz_passed",
+    "doctu_opz_passed", "top32_opz_passed", "zoon_opz_passed", "yell_opz_passed",
+    "yau_opz_passed", "yab_opz_passed", "hh_opz_passed",
+)
+
+
+def reset_payout_fields(user_ids: list) -> int:
+    """
+    Обнуляет все поля выплат (payout, admin_topup, все *_passed и *_opz_passed)
+    у указанных user_ids. Возвращает количество затронутых строк.
+    """
+    if not user_ids:
+        return 0
+    set_clause = ", ".join(f"{c} = 0" for c in PAYOUT_RESET_COLUMNS)
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        placeholders = ",".join("?" * len(user_ids))
+        cur.execute(
+            f"UPDATE users SET {set_clause} WHERE user_id IN ({placeholders})",
+            user_ids,
+        )
+        n = cur.rowcount
+        conn.commit()
+        return n
