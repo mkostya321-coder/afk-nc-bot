@@ -997,7 +997,6 @@ async def cmd_payout_report(message: Message):
             return
 
         # ─── ШАГ 1: обновить статусы в таблице ───
-        # Если упало → выходим, БД НЕ трогаем.
         try:
             from bot.google_sheets import mark_as_paid_in_table
             updated = await mark_as_paid_in_table(user_ids)
@@ -1038,74 +1037,6 @@ async def cmd_payout_report(message: Message):
         await message.answer(f"✅ Обнулено у {n} юзеров.")
         log_action(message, f"/payout_report: {len(user_ids)} оплачено, БД обнулена")
 
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-        log_action(message, f"/payout_report: {e}")
-
-    try:
-        users = get_all_users_with_payout()
-        if not users:
-            await message.answer("📭 Нет юзеров с балансом >= 150₽.")
-            return
-
-        text_lines = ["<b>📋 Список на выплату</b>\n"]
-        user_ids = []
-        for u in users:
-            username = u.get('tg_username') or u.get('username') or str(u['user_id'])
-            phone = u.get('phone_card') or '—'
-            bank = u.get('bank') or '—'
-            admin_topup = u.get('admin_topup', 0)
-            extra = f"\n   (в т.ч. ручное: {admin_topup}₽)" if admin_topup > 0 else ""
-            line = (
-                f"👤 @{username} (ID: {u['user_id']})\n"
-                f"💰 Сумма: {u['payout']}₽{extra}\n"
-                f"📞 {phone}\n"
-                f"🏦 {bank}\n"
-                f"──────────────"
-            )
-            text_lines.append(line)
-            user_ids.append(u['user_id'])
-        full_text = "\n".join(text_lines)
-        max_len = 4000
-        from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
-
-        if not REPORT_CHAT_ID:
-            await message.answer("⚠️ REPORT_CHAT_ID не задан.")
-        else:
-            for i in range(0, len(full_text), max_len):
-                chunk = full_text[i:i+max_len]
-                await message.bot.send_message(
-                    chat_id=REPORT_CHAT_ID, text=chunk,
-                    message_thread_id=REPORT_THREAD_ID or None,
-                    parse_mode="HTML"
-                )
-
-        if user_ids:
-            try:
-                from bot.google_sheets import mark_as_paid_in_table
-                await mark_as_paid_in_table(user_ids)
-                await message.answer("✅ Строки → 'В отчете ИСПЛ'.")
-            except Exception as e:
-                logger.error(f"mark_as_paid: {e}")
-                await message.answer(f"⚠️ Ошибка: {e}")
-
-            with sqlite3.connect(DB_PATH) as conn:
-                cur = conn.cursor()
-                placeholders = ','.join(['?'] * len(user_ids))
-                cur.execute(f"""
-                    UPDATE users SET
-                        payout = 0, admin_topup = 0,
-                        yandex_passed = 0, yandex_neg_passed = 0, yandex_neg_opz_passed = 0,
-                        google_passed = 0, gis_passed = 0, avito_passed = 0, vk_passed = 0,
-                        otzovik_passed = 0, doctoru_passed = 0, dokdok_passed = 0,
-                        prodoctors_passed = 0, doctu_passed = 0, top32_passed = 0,
-                        zoon_passed = 0, yell_passed = 0, yau_passed = 0, yab_passed = 0, hh_passed = 0
-                    WHERE user_id IN ({placeholders})
-                """, user_ids)
-                conn.commit()
-            await message.answer(f"✅ Обнулено у {len(user_ids)} юзеров.")
-
-        log_action(message, f"/payout_report: {len(user_ids)}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
         log_action(message, f"/payout_report: {e}")
