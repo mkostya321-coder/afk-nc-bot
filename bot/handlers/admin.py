@@ -986,6 +986,95 @@ async def cmd_payout_report(message: Message):
             )
             text_lines.append(line)
             user_ids.append(u['user_id'])
+
+        full_text = "\n".join(text_lines)
+        max_len = 4000
+        from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
+
+        if not REPORT_CHAT_ID:
+            await message.answer("⚠️ REPORT_CHAT_ID не задан.")
+        else:
+            for i in range(0, len(full_text), max_len):
+                chunk = full_text[i:i+max_len]
+                await message.bot.send_message(
+                    chat_id=REPORT_CHAT_ID, text=chunk,
+                    message_thread_id=REPORT_THREAD_ID or None,
+                    parse_mode="HTML"
+                )
+
+        if not user_ids:
+            log_action(message, "/payout_report: пустой список")
+            return
+
+        # ─── ШАГ 1: обновить статусы в таблице ───
+        # Если упало → выходим, БД НЕ трогаем.
+        try:
+            from bot.google_sheets import mark_as_paid_in_table
+            updated = await mark_as_paid_in_table(user_ids)
+        except Exception as e:
+            logger.error(f"mark_as_paid: {e}", exc_info=True)
+            await message.answer(
+                f"❌ <b>ОШИБКА обновления таблицы.</b>\n\n"
+                f"<b>Балансы в БД НЕ обнулены</b> — данные в таблице и БД не разошлись.\n\n"
+                f"Причина: <code>{e}</code>\n\n"
+                f"Разберитесь с Google Sheets и запустите /payout_report ещё раз.",
+                parse_mode="HTML"
+            )
+            log_action(message, f"/payout_report: mark упал — {e}")
+            return
+
+        await message.answer(f"✅ Строки → «В отчете ИСПЛ» (обновлено {updated}).")
+
+        # ─── ШАГ 2: обнулить в БД ───
+        try:
+            n = reset_payout_fields(user_ids)
+        except Exception as e:
+            logger.error(f"reset_payout_fields: {e}", exc_info=True)
+            await message.answer(
+                f"⚠️ <b>Таблица обновлена, но обнулить БД не удалось!</b>\n\n"
+                f"⚠️ <b>НЕ запускайте /payout_report повторно</b> — иначе двойная оплата.\n\n"
+                f"Причина: <code>{e}</code>\n\n"
+                f"Обнулите вручную в SQLite:\n"
+                f"<code>UPDATE users SET payout=0, admin_topup=0, "
+                f"yandex_passed=0, google_passed=0, gis_passed=0, "
+                f"yandex_opz_passed=0, google_opz_passed=0, gis_opz_passed=0 "
+                f"WHERE user_id IN ({','.join(map(str, user_ids))})</code>\n\n"
+                f"<i>(полный список полей — см. PAYOUT_RESET_COLUMNS в database.py)</i>",
+                parse_mode="HTML"
+            )
+            log_action(message, f"/payout_report: reset упал — {e}")
+            return
+
+        await message.answer(f"✅ Обнулено у {n} юзеров.")
+        log_action(message, f"/payout_report: {len(user_ids)} оплачено, БД обнулена")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        log_action(message, f"/payout_report: {e}")
+
+    try:
+        users = get_all_users_with_payout()
+        if not users:
+            await message.answer("📭 Нет юзеров с балансом >= 150₽.")
+            return
+
+        text_lines = ["<b>📋 Список на выплату</b>\n"]
+        user_ids = []
+        for u in users:
+            username = u.get('tg_username') or u.get('username') or str(u['user_id'])
+            phone = u.get('phone_card') or '—'
+            bank = u.get('bank') or '—'
+            admin_topup = u.get('admin_topup', 0)
+            extra = f"\n   (в т.ч. ручное: {admin_topup}₽)" if admin_topup > 0 else ""
+            line = (
+                f"👤 @{username} (ID: {u['user_id']})\n"
+                f"💰 Сумма: {u['payout']}₽{extra}\n"
+                f"📞 {phone}\n"
+                f"🏦 {bank}\n"
+                f"──────────────"
+            )
+            text_lines.append(line)
+            user_ids.append(u['user_id'])
         full_text = "\n".join(text_lines)
         max_len = 4000
         from bot.config import REPORT_CHAT_ID, REPORT_THREAD_ID
