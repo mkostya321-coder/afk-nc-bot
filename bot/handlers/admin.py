@@ -14,6 +14,7 @@ from bot.database import (
     get_limit, set_limit, get_all_registered_users, get_all_users_with_payout,
     get_user_limit, set_user_limit, reset_user_limit, get_effective_limit,
     remove_last_warning, remove_all_warnings, get_all_users_with_active_warnings,
+    reset_payout_fields,
 )
 from bot.helpers import match_platform, PRICES, platform_from_sheet_name, col_letter
 from bot.logging_helpers import log_user_event
